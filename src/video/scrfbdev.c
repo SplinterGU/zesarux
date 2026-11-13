@@ -122,6 +122,9 @@ The scancodes in translated scancode set 2 are given in hex. Between parentheses
 #include "sms.h"
 #include "svi.h"
 #include "pcw.h"
+#include "baseconf.h"
+#include "scorpion.h"
+#include "atmturbo.h"
 
 //donde apunta el puntero de doble buffer. O si no hay doble buffer, apunta directamente a memoria de pantalla
 /*
@@ -456,7 +459,6 @@ void scrfbdev_refresca_pantalla(void)
 	if (MACHINE_IS_ZX8081) {
 
 
-		//scr_refresca_pantalla_rainbow_comun();
 		scrfbdev_refresca_pantalla_zx81();
 	}
 
@@ -472,6 +474,18 @@ void scrfbdev_refresca_pantalla(void)
 	else if (MACHINE_IS_SPECTRUM) {
 
 		if (MACHINE_IS_TSCONF)	screen_tsconf_refresca_pantalla();
+
+        else if (MACHINE_IS_BASECONF)	{
+            baseconf_refresca_pantalla();
+        }
+
+        else if (MACHINE_IS_SCORPION_GMX)	{
+            scorpiongmx_refresca_pantalla();
+        }
+
+        else if (MACHINE_IS_ATM_TURBO)	{
+            atmturbo_refresca_pantalla();
+        }
 
 		  else { //Spectrum no TSConf
 
@@ -492,7 +506,7 @@ void scrfbdev_refresca_pantalla(void)
 
 		else {
 			//modo rainbow - real video
-			scr_refresca_pantalla_rainbow_comun();
+			scr_refresca_pantalla_rainbow_comun_spectrum();
 		}
 		}
 	}
@@ -570,7 +584,7 @@ void scrfbdev_set_fullscreen(void)
 	//debug_printf (VERBOSE_ERR,"fbdev: Full screen mode not supported on this video driver");
 
 	scrfbdev_end();
-	ventana_fullscreen=1;
+    change_variable_ventana_fullscreen(1);
 	scrfbdev_init();
 
 	modificado_border.v=1;
@@ -582,7 +596,7 @@ void scrfbdev_reset_fullscreen(void)
 	//debug_printf (VERBOSE_ERR,"fbdev: Full screen mode not supported on this video driver");
 
 	scrfbdev_end();
-	ventana_fullscreen=0;
+    change_variable_ventana_fullscreen(0);
 
 	zoom_x=zoom_x_original;
 	zoom_y=zoom_y_original;
@@ -1878,7 +1892,7 @@ void scrfbdev_detectedchar_print(z80_byte caracter)
 //Estos valores no deben ser mayores de OVERLAY_SCREEN_MAX_WIDTH y OVERLAY_SCREEN_MAX_HEIGTH
 int scrfbdev_get_menu_width(void)
 {
-        int max=screen_get_emulated_display_width_no_zoom_border_en()/menu_char_width/menu_gui_zoom;
+        int max=screen_get_emulated_display_width_no_zoom_border_en()/menu_char_width/menu_gui_zoom/screen_reduce_menu_ancho;
         if (max>OVERLAY_SCREEN_MAX_WIDTH) max=OVERLAY_SCREEN_MAX_WIDTH;
 
                 //printf ("max x: %d %d\n",max,screen_get_emulated_display_width_no_zoom_border_en());
@@ -1889,19 +1903,14 @@ int scrfbdev_get_menu_width(void)
 
 int scrfbdev_get_menu_height(void)
 {
-        int max=screen_get_emulated_display_height_no_zoom_border_en()/8/menu_gui_zoom;
+        int max=screen_get_emulated_display_height_no_zoom_border_en()/8/menu_gui_zoom/screen_reduce_menu_alto;
         if (max>OVERLAY_SCREEN_MAX_HEIGTH) max=OVERLAY_SCREEN_MAX_HEIGTH;
 
                 //printf ("max y: %d %d\n",max,screen_get_emulated_display_height_no_zoom_border_en());
         return max;
 }
 
-/*
-int scrfbdev_driver_can_ext_desktop (void)
-{
-        return 0;
-}
-*/
+
 
 
 //Fbdev video drivers
@@ -1924,6 +1933,8 @@ int scrfbdev_init (void){
 	scr_reset_fullscreen=scrfbdev_reset_fullscreen;
 	scr_z88_cpc_load_keymap=scrfbdev_z88_cpc_load_keymap;
 	scr_detectedchar_print=scrfbdev_detectedchar_print;
+    scr_update_window_title=NULL;
+    scr_get_text_clipboard=NULL;
 
 
 	//int ancho_minimo=ANCHO_PANTALLA+LEFT_BORDER_NO_ZOOM*2*border_enabled.v;

@@ -30,6 +30,7 @@
 #include "debug.h"
 #include "screen.h"
 #include "utils.h"
+#include "utils_math.h"
 #include "zx8081.h"
 #include "jupiterace.h"
 #include "autoselectoptions.h"
@@ -310,25 +311,80 @@ int audiorecord_input_write_to_disk_output_buffer_pos=0;
 //buffer de escritura, para no escribir byte a byte
 z80_byte audiorecord_input_write_to_disk_mem_buffer[AUDIO_RECORD_WRITE_DISK_OUTPUT_BUFFER];
 
-void audiorecord_input_write_to_disk_enable_capture(void)
+#define AUDIORECORD_WRITE_DISK_FILE_TYPE_RAW 0
+#define AUDIORECORD_WRITE_DISK_FILE_TYPE_WAV 1
+
+int audiorecord_input_write_to_disk_file_type=AUDIORECORD_WRITE_DISK_FILE_TYPE_RAW;
+
+
+#ifdef USE_SNDFILE
+
+SF_INFO audiorecord_input_write_to_disk_wav_info;
+SNDFILE *audiorecord_input_write_to_disk_output_wavfile;
+
+
+void audiorecord_input_write_to_disk_send_frame_wav(void)
 {
-    ptr_audiorecord_input_write_to_disk=fopen(audiorecord_input_write_to_disk_file_name,"wb");
-    if (!ptr_audiorecord_input_write_to_disk) {
-        debug_printf(VERBOSE_ERR,"Unable to open file output %s",audiorecord_input_write_to_disk_file_name);
-        return;
-    }
+
+        sf_write_raw(audiorecord_input_write_to_disk_output_wavfile,audiorecord_input_write_to_disk_mem_buffer,AUDIO_RECORD_WRITE_DISK_OUTPUT_BUFFER);
+}
+
+void audiorecord_input_write_to_disk_enable_capture_wav(void)
+{
+
+
+	audiorecord_input_write_to_disk_wav_info.format=SF_FORMAT_WAV | SF_FORMAT_PCM_U8;
+	audiorecord_input_write_to_disk_wav_info.samplerate=audiorecord_input_write_to_disk_output_freq;
+	audiorecord_input_write_to_disk_wav_info.channels=1;
+	audiorecord_input_write_to_disk_wav_info.frames= 123456789 ; /* Wrong length. Library should correct this on sf_close. */
+
+
+	// open output file
+	audiorecord_input_write_to_disk_output_wavfile = sf_open(audiorecord_input_write_to_disk_file_name, SFM_WRITE, &audiorecord_input_write_to_disk_wav_info);
+
+	//printf ("open wav\n");
+
+	if (audiorecord_input_write_to_disk_output_wavfile==NULL) {
+		debug_printf (VERBOSE_ERR,"Failed with error: %s",sf_strerror(NULL));
+		return;
+	}
 
     audiorecord_input_write_to_disk_enabled=1;
     audiorecord_input_write_to_disk_output_buffer_pos=0;
 
-    //Cambiar samplerate si RWA
-    if (!util_compare_file_extension(audiorecord_input_write_to_disk_file_name,"rwa")) {
-        audiorecord_input_write_to_disk_output_freq=15600;
+
+}
+
+
+
+
+#endif
+
+
+
+void audiorecord_input_write_to_disk_enable_capture(void)
+{
+
+    if (!util_compare_file_extension(audiorecord_input_write_to_disk_file_name,"wav")) {
+#ifdef USE_SNDFILE
+        audiorecord_input_write_to_disk_file_type=AUDIORECORD_WRITE_DISK_FILE_TYPE_WAV;
+        audiorecord_input_write_to_disk_enable_capture_wav();
+#else
+        debug_printf(VERBOSE_ERR,"ZEsarUX is not compiled with libsndfile support");
+#endif
     }
 
-    //Y si es RAW, consideramos que es misma frecuencia a la que se captura
-    if (!util_compare_file_extension(audiorecord_input_write_to_disk_file_name,"raw")) {
-        audiorecord_input_write_to_disk_output_freq=AUDIO_RECORD_FREQUENCY;
+    else {
+        audiorecord_input_write_to_disk_file_type=AUDIORECORD_WRITE_DISK_FILE_TYPE_RAW;
+        ptr_audiorecord_input_write_to_disk=fopen(audiorecord_input_write_to_disk_file_name,"wb");
+        if (!ptr_audiorecord_input_write_to_disk) {
+            debug_printf(VERBOSE_ERR,"Unable to open file output %s",audiorecord_input_write_to_disk_file_name);
+            return;
+        }
+
+        audiorecord_input_write_to_disk_enabled=1;
+        audiorecord_input_write_to_disk_output_buffer_pos=0;
+
     }
 
 }
@@ -336,16 +392,35 @@ void audiorecord_input_write_to_disk_enable_capture(void)
 void audiorecord_input_write_to_disk_disable_capture(void)
 {
     if (audiorecord_input_write_to_disk_enabled) {
-        //escribir lo que haya leido del trozo del buffer
-        fwrite(audiorecord_input_write_to_disk_mem_buffer, 1, audiorecord_input_write_to_disk_output_buffer_pos, ptr_audiorecord_input_write_to_disk);
 
-        fclose(ptr_audiorecord_input_write_to_disk);
+
+#ifdef USE_SNDFILE
+
+        if (audiorecord_input_write_to_disk_file_type==AUDIORECORD_WRITE_DISK_FILE_TYPE_WAV) {
+            //escribir lo que haya leido del trozo del buffer
+            sf_write_raw(audiorecord_input_write_to_disk_output_wavfile,audiorecord_input_write_to_disk_mem_buffer,audiorecord_input_write_to_disk_output_buffer_pos);
+
+            sf_close(audiorecord_input_write_to_disk_output_wavfile);
+        }
+
+#endif
+
+        if (audiorecord_input_write_to_disk_file_type==AUDIORECORD_WRITE_DISK_FILE_TYPE_RAW) {
+            //escribir lo que haya leido del trozo del buffer
+            fwrite(audiorecord_input_write_to_disk_mem_buffer, 1, audiorecord_input_write_to_disk_output_buffer_pos, ptr_audiorecord_input_write_to_disk);
+
+            fclose(ptr_audiorecord_input_write_to_disk);
+        }
+
+
         audiorecord_input_write_to_disk_enabled=0;
+
     }
 
 }
 
 //Retornar minutos y segundos escritos del archivo
+//Nota: esto es exacto para un archivo en crudo. Pero para un wav no es preciso, aunque sirve como aproximado
 void audiorecord_input_write_to_disk_time_size(int *minutos,int *segundos)
 {
 
@@ -380,18 +455,6 @@ long long audiorecord_input_write_to_disk_total_size(void)
 
 void audiorecord_input_write_to_disk_save_byte(z80_byte valor_escribir)
 {
-    /*if (!audiorecord_input_write_to_disk_file_opened) {
-        //abrir archivo. TEMPORAL para abrirlo sobre la marcha
-
-        ptr_audiorecord_input_write_to_disk=fopen(audiorecord_input_write_to_disk_file_name,"wb");
-        if (!ptr_audiorecord_input_write_to_disk) {
-            debug_printf(VERBOSE_ERR,"Unable to open file output %s",audiorecord_input_write_to_disk_file_name);
-            return;
-        }
-
-        audiorecord_input_write_to_disk_file_opened=1;
-
-    }*/
 
     //escribir byte en archivo. En bloques de 1KB
     audiorecord_input_write_to_disk_mem_buffer[audiorecord_input_write_to_disk_output_buffer_pos++]=valor_escribir;
@@ -400,7 +463,15 @@ void audiorecord_input_write_to_disk_save_byte(z80_byte valor_escribir)
         audiorecord_input_write_to_disk_output_buffer_pos=0;
 
         //flush a disco
-        fwrite(audiorecord_input_write_to_disk_mem_buffer, 1, AUDIO_RECORD_WRITE_DISK_OUTPUT_BUFFER, ptr_audiorecord_input_write_to_disk);
+        if (audiorecord_input_write_to_disk_file_type==AUDIORECORD_WRITE_DISK_FILE_TYPE_RAW) {
+            fwrite(audiorecord_input_write_to_disk_mem_buffer, 1, AUDIO_RECORD_WRITE_DISK_OUTPUT_BUFFER, ptr_audiorecord_input_write_to_disk);
+        }
+
+#ifdef USE_SNDFILE
+        if (audiorecord_input_write_to_disk_file_type==AUDIORECORD_WRITE_DISK_FILE_TYPE_WAV) {
+            audiorecord_input_write_to_disk_send_frame_wav();
+        }
+#endif
 
     }
 }
@@ -630,12 +701,6 @@ z80_bit audio_noreset_audiobuffer_full={0};
 //Frecuencia teniendo en cuenta la velocidad de la cpu. inicializado a frecuencia normal
 int frecuencia_sonido_variable=FRECUENCIA_CONSTANTE_NORMAL_SONIDO;
 
-//Detectar cuando se hace un SAVE desde rom (spectrum) y enviar el sonido solo del bit MIC del puerto FEH (y no el EAR)
-//Por defecto desactivado para no interferir con otras roms que puedan generar sonido en esas direcciones
-z80_bit output_beep_filter_on_rom_save={0};
-
-z80_bit output_beep_filter_alter_volume={0};
-char output_beep_filter_volume=122;
 
 
 //Valor del sample de sonido que se envia cada vez. Usado en cada core_
@@ -807,6 +872,7 @@ z80_bit beeper_enabled={1};
 //Si la salida a la tarjeta de sonido solo tiene dos valores: 0 o 1 (+127 o -128 realmente)
 z80_bit audio_resample_1bit={0};
 
+z80_bit audio_nagra_effect={0};
 
 //Similar a silence_detection_counter pero solo para operaciones del beeper
 int beeper_silence_detection_counter=0;
@@ -1138,9 +1204,8 @@ void aofile_send_frame(char *buffer)
 	//printf ("buffer: %p ptr_aofile: %p\n",buffer,ptr_aofile);
 
 	//copiamos a buffer temporal pasandolo a unsigned
-	//Esto conviene por dos cosas:
-	//1) aofile a wav, solo deja generar archivos de 8 bit unsigned
-	//2) mplayer, por ejemplo, al reproducir un .raw espera un unsigned (y no se como decirle que espere un signed)
+	//Esto conviene por:
+	//aofile a wav, solo deja generar archivos de 8 bit unsigned
 	//memcpy(aofile_buffer,buffer,AUDIO_BUFFER_SIZE);
 
 
@@ -1258,10 +1323,6 @@ void envio_audio(void)
 {
 
 
-
-
-
-
 	//Si aofile, silencio=0
 	if (aofile_inserted.v) reset_silence_detection_counter();
 
@@ -1293,7 +1354,13 @@ void envio_audio(void)
 	//para aumentar buffer sonido
 	contador_frames_veces_buffer_audio++;
 
-	if (contador_frames_veces_buffer_audio==FRAMES_VECES_BUFFER_AUDIO) {
+    int frames_por_buffer_audio=FRAMES_VECES_BUFFER_AUDIO;
+
+    if (machine_60hz.v) {
+        frames_por_buffer_audio=6;
+    }
+
+	if (contador_frames_veces_buffer_audio>=frames_por_buffer_audio) {
 		contador_frames_veces_buffer_audio=0;
 
 	        //Parche para maquinas que no generan 312 lineas, porque si enviamos menos sonido se escuchara un click al final
@@ -1477,6 +1544,59 @@ int audio_adjust_volume(int valor_enviar)
                                 return v;
 }
 
+#define FREQ_PLUS 12800
+int grados_nagra=0;
+void audio_apply_nagra_effect(void)
+{
+
+    int valor_sin=util_get_cosine(grados_nagra);
+
+    int izq=audio_valor_enviar_sonido_izquierdo;
+    int der=audio_valor_enviar_sonido_derecho;
+
+    izq=(izq*valor_sin)/10000;
+    der=(der*valor_sin)/10000;
+
+    audio_valor_enviar_sonido_izquierdo=izq;
+    audio_valor_enviar_sonido_derecho=der;
+
+}
+
+void audio_apply_nagra_effect_mono(void)
+{
+
+    int valor_sin=util_get_cosine(grados_nagra);
+
+    audio_valor_enviar_sonido=(audio_valor_enviar_sonido*valor_sin)/10000;
+
+}
+
+
+
+
+void audio_apply_nagra_effect_beeper(void)
+{
+
+    int valor_sin=util_get_cosine(grados_nagra);
+
+    int izq=value_beeper;
+
+    izq=(izq*valor_sin)/10000;
+
+    value_beeper=izq;
+
+
+}
+
+void audio_apply_nagra_effect_next(void)
+{
+    int inc=(360*FREQ_PLUS)/FRECUENCIA_SONIDO;
+
+    grados_nagra +=inc;
+}
+
+
+
 /* Frecuencias notas musicales, incluido longitud de onda
 extraido de http://www.phy.mtu.edu/~suits/notefreqs.html
 y
@@ -1612,8 +1732,10 @@ B9 	15804.264 	2.2
 //#define NOTAS_MUSICALES_NOTAS_POR_OCTAVA 12
 //sacamos la lista con: cat audio.c|sed 's/\..*//'|awk '{printf "\{\"%s\",%s\},\n",$1,$2}'
 
+#define MID_FORMAT_INITIAL_NOTE_OFFSET 12
+
 nota_musical tabla_notas_musicales[MAX_NOTAS_MUSICALES]={
-{"C0",16},
+{"C0",16},       //valor 12 en codificacion midi
 {"C#0",17},
 {"D0",18},
 {"D#0",19},
@@ -1621,7 +1743,7 @@ nota_musical tabla_notas_musicales[MAX_NOTAS_MUSICALES]={
 {"F0",21},
 {"F#0",23},
 {"G0",24},
-{"G#0",25},
+{"G#0",25},   //20 en codificacion midi
 {"A0",27},
 {"A#0",29},
 {"B0",30},
@@ -1631,7 +1753,7 @@ nota_musical tabla_notas_musicales[MAX_NOTAS_MUSICALES]={
 {"D#1",38},
 {"E1",41},
 {"F1",43},
-{"F#1",46},
+{"F#1",46},  //30 en codificacion midi
 {"G1",49},
 {"G#1",51},
 {"A1",55},
@@ -1641,7 +1763,7 @@ nota_musical tabla_notas_musicales[MAX_NOTAS_MUSICALES]={
 {"C#2",69},
 {"D2",73},
 {"D#2",77},
-{"E2",82},
+{"E2",82},  //40 en codificacion midi
 {"F2",87},
 {"F#2",92},
 {"G2",98},
@@ -1651,31 +1773,27 @@ nota_musical tabla_notas_musicales[MAX_NOTAS_MUSICALES]={
 {"B2",123},
 {"C3",130},
 {"C#3",138},
-{"D3",146},
+{"D3",146}, //50 en codificacion midi
 {"D#3",155},
 {"E3",164},
 {"F3",174},
 {"F#3",185},
 {"G3",196},
 {"G#3",207},
-
-
 {"A3",220},
 {"A#3",233},
 {"B3",246},
-
-{"C4",261},
+{"C4",261}, //60 en codificacion midi
 {"C#4",277},
 {"D4",293},
 {"D#4",311},
 {"E4",329},
-
 {"F4",349},
 {"F#4",369},
 {"G4",392},
 {"G#4",415},
 {"A4",440},
-{"A#4",466},
+{"A#4",466}, //70 en codificacion midi
 {"B4",493},
 {"C5",523},
 {"C#5",554},
@@ -1685,18 +1803,17 @@ nota_musical tabla_notas_musicales[MAX_NOTAS_MUSICALES]={
 {"F5",698},
 {"F#5",739},
 {"G5",783},
-{"G#5",830},
+{"G#5",830}, //80 en codificacion midi
 {"A5",880},
 {"A#5",932},
 {"B5",987},
 {"C6",1046},
-
 {"C#6",1108},
 {"D6",1174},
 {"D#6",1244},
 {"E6",1318},
 {"F6",1396},
-{"F#6",1479},
+{"F#6",1479}, //90 en codificacion midi
 {"G6",1567},
 {"G#6",1661},
 {"A6",1760},
@@ -1706,7 +1823,7 @@ nota_musical tabla_notas_musicales[MAX_NOTAS_MUSICALES]={
 {"C#7",2217},
 {"D7",2349},
 {"D#7",2489},
-{"E7",2637},
+{"E7",2637}, //100 en codificacion midi
 {"F7",2793},
 {"F#7",2959},
 {"G7",3135},
@@ -1716,7 +1833,7 @@ nota_musical tabla_notas_musicales[MAX_NOTAS_MUSICALES]={
 {"B7",3951},
 {"C8",4186},
 {"C#8",4434},
-{"D8",4698},
+{"D8",4698}, //110 en codificacion midi
 {"D#8",4978},
 {"E8",5274},
 {"F8",5587},
@@ -1726,15 +1843,15 @@ nota_musical tabla_notas_musicales[MAX_NOTAS_MUSICALES]={
 {"A8",7040},
 {"A#8",7458},
 {"B8",7902},
-{"C9",8372},
+{"C9",8372}, //120 en codificacion midi
 {"C#9",8869},
 {"D9",9397},
 {"D#9",9956},
 {"E9",10548},
 {"F9",11175},
 {"F#9",11839},
-{"G9",12543},
-{"G#9",13289},
+{"G9",12543}, //127 en codificacion midi
+{"G#9",13289}, //a partir de 128 no tiene sentido en estandar midi
 {"A9",14080},
 {"A#9",14917},
 {"B9",15804}
@@ -1750,8 +1867,11 @@ char *unknown_nota_musical="XX";
 //Si no coincide, retornar -1
 int get_mid_number_note(char *str)
 {
+    //TODO: en teoria valores de notas midi mayores de 127 no existen, por tanto G#9, A9, A#9 y B9 no existen en midi
+    //Por tanto esta funcion deberia evitar esas notas finales no válidas
+
 	//nota_musical tabla_notas_musicales[MAX_NOTAS_MUSICALES]={
-	const int offset_inicial=12;  //C0=12
+	const int offset_inicial=MID_FORMAT_INITIAL_NOTE_OFFSET;  //C0=12
 
 	//cadena vacia, -1
 	if (str[0]==0) return -1;
@@ -1763,6 +1883,16 @@ int get_mid_number_note(char *str)
 
 	return -1;
 }
+
+
+//devuelve nombre nota, segun su valor de nota midi
+char *get_note_name_by_mid_number(int index)
+{
+	if (index<MID_FORMAT_INITIAL_NOTE_OFFSET || index>=MID_FORMAT_INITIAL_NOTE_OFFSET+MAX_NOTAS_MUSICALES) return unknown_nota_musical;
+
+	else return tabla_notas_musicales[index-MID_FORMAT_INITIAL_NOTE_OFFSET].nombre;
+}
+
 
 //convertir nombre nota en formato string a frecuencia
 //Si no coincide, retornar -1
@@ -1813,84 +1943,6 @@ char *get_note_name(int frecuencia)
 	return tabla_notas_musicales[indice_result].nombre;
 }
 
-//Devuelve indice a nota de la que mas se aproxime segun pitch de entrada QL
-//devuelve nombre nota, segun su frecuencia se aproxime lo maximo
-//-1 si no se encuentra
-/*
-int get_note_index_from_ql_pitch(int pitch)
-{
-
-	int i;
-
-	for (i=0;i<MAX_NOTAS_MUSICALES;i++) {
-        int valor_tabla=tabla_notas_musicales[i].ql_beep_pitch;
-        if (valor_tabla>=0) {
-            //Solo valores validos. Evitar los <0
-
-            //Si valor en la tabla es menor o igual, lo hemos encontrado
-            //dado que los valores de pitch en la tabla van decrementando a medida que avanzamos
-            if (valor_tabla<=pitch) {
-
-                if (valor_tabla==pitch) return i;
-                else return -1;
-
-
-            }
-
-        }
-
-	}
-
-    //TODO: valores que no se puedan sacar de la tabla, hacer un calculo estimado
-
-    return -1;
-
-}
-*/
-/*
-float aproximate_frequency_from_ql_pitch(int pitch)
-{
-    int a=11447;
-    float b=10.6;
-    float f=a/(pitch+b-0.5);
-
-    return f;
-}
-*/
-
-/*
-int get_note_frequency_from_ql_pitch(int pitch)
-{
-    int indice=get_note_index_from_ql_pitch(pitch);
-
-    //Esto no deberia suceder ya, pero por si acaso
-    if (indice<0) {
-        //printf("indice < 0\n");
-        return -1;
-    }
-
-    //Si no es el pitch exacto, hacer una media con el anterior. Siempre que no sea el primer elemento
-    if (pitch==tabla_notas_musicales[indice].ql_beep_pitch) return tabla_notas_musicales[indice].frecuencia;
-
-    //No es exacto
-    //Es el primero? Volver tal cual
-    if (indice==0) return tabla_notas_musicales[indice].frecuencia;
-
-
-    //Hacer media
-    //printf("Hacemos media\n");
-
-    int frecuencia_actual=tabla_notas_musicales[indice].frecuencia;
-    int frecuencia_anterior=tabla_notas_musicales[indice-1].frecuencia;
-
-    int diferencia=frecuencia_actual-frecuencia_anterior;
-    int media=diferencia/2;
-
-    int frecuencia_final=frecuencia_anterior+media;
-
-    return frecuencia_final;
-}
-*/
 
 //devuelve nombre nota, segun su indice (igual que el pitch)
 char *get_note_name_by_index(int index)
@@ -2056,6 +2108,13 @@ void audiodac_mix(void)
 {
 	//Pasar valor a signed
 	char valor_signed_audiodac=(audiodac_last_value_data-128);
+
+
+    if (audio_nagra_effect.v) {
+        int valor_sin=util_get_cosine(grados_nagra);
+
+        valor_signed_audiodac=(valor_signed_audiodac*valor_sin)/10000;
+    }
 
 	//Mezclar con el valor de salida
 	int v;
@@ -2406,7 +2465,7 @@ void audio_menu_tone_generator_play_note(char *nota,int duracion)
 }
 
 
-
+//Detener sonido en curso
 void audio_menu_tone_generator_stop(void)
 {
     audio_menu_tone_generator_active.v=0;
@@ -2460,10 +2519,13 @@ void audio_menu_tone_generator_get_output(char *valor_sonido_izquierdo,char *val
 
 char previous_valor_sonido_izquierdo,previous_valor_sonido_derecho;
 
+static int audio_contador_remuestreo_60hz=0;
+
 void audio_send_stereo_sample(char valor_sonido_izquierdo,char valor_sonido_derecho)
 {
 
 	int limite_buffer_audio;
+	int enviar_muestra=1;
 
 	limite_buffer_audio=AUDIO_BUFFER_SIZE*2;
 
@@ -2481,13 +2543,39 @@ void audio_send_stereo_sample(char valor_sonido_izquierdo,char valor_sonido_dere
     if (audio_menu_tone_generator_active.v) {
         audio_menu_tone_generator_get_output(&valor_sonido_izquierdo,&valor_sonido_derecho);
         audio_menu_tone_generator_timer_event();
+        reset_silence_detection_counter();
     }
 
-	audio_buffer[audio_buffer_indice]=valor_sonido_izquierdo;
-	audio_buffer[audio_buffer_indice+1]=valor_sonido_derecho;
+	//A 60 Hz, 6 frames de 262 lineas generan 1572 muestras, pero el buffer
+	//solo admite 1560 (5 frames de 312 lineas). Como 1572/1560=131/130,
+	//se deben convertir cada 131 muestras generadas en 130 muestras de salida.
+	//Fusionar una de cada 131 con la anterior no es un remuestreo perfecto,
+	//pero es la solucion mas sencilla y evita cambiar la frecuencia de audio
+	//de 15600 Hz a 15720 Hz (262 lineas * 60 frames) en todos los drivers.
+	if (machine_60hz.v) {
+		audio_contador_remuestreo_60hz++;
 
-	if (audio_buffer_indice<limite_buffer_audio-2) {
-		audio_buffer_indice+=2;
+		if (audio_contador_remuestreo_60hz>=131) {
+			audio_contador_remuestreo_60hz=0;
+
+			if (audio_buffer_indice>=2) {
+				audio_buffer[audio_buffer_indice-2]=((int)audio_buffer[audio_buffer_indice-2]+valor_sonido_izquierdo)/2;
+				audio_buffer[audio_buffer_indice-1]=((int)audio_buffer[audio_buffer_indice-1]+valor_sonido_derecho)/2;
+				enviar_muestra=0;
+			}
+		}
+	}
+	else {
+		audio_contador_remuestreo_60hz=0;
+	}
+
+	if (enviar_muestra) {
+		audio_buffer[audio_buffer_indice]=valor_sonido_izquierdo;
+		audio_buffer[audio_buffer_indice+1]=valor_sonido_derecho;
+
+		if (audio_buffer_indice<limite_buffer_audio-2) {
+			audio_buffer_indice+=2;
+		}
 	}
 	//else {
 	//	printf ("NO. %d %d\n",audio_buffer_indice,limite_buffer_audio-2);
@@ -2521,6 +2609,34 @@ void audiodac_send_sample_value(z80_byte value)
 	reset_silence_detection_counter();
 }
 
+const char *audio_get_chip_info_string_ay="General Instrument AY-3-8910";
+const char *audio_get_chip_info_string_intel="Intel 8049";
+const char *audio_get_chip_info_string_sn="Texas Instruments SN76489AN";
+const char *audio_get_chip_info_string_philips="Philips SAA 1099";
+const char *audio_get_chip_info_string_none="";
+
+const char *audio_get_chip_name(void)
+{
+    if (sn_chip_present.v) {
+		return audio_get_chip_info_string_sn;
+	}
+
+	else if (i8049_chip_present) {
+		return audio_get_chip_info_string_intel;
+	}
+
+    else if (MACHINE_IS_SAM) {
+        return audio_get_chip_info_string_philips;
+    }
+
+	else if (ay_chip_present.v) {
+		return audio_get_chip_info_string_ay;
+	}
+
+    else {
+        return audio_get_chip_info_string_none;
+    }
+}
 
 //Funciones midi
 
@@ -3374,11 +3490,17 @@ void audio_midi_raw_parse_value(z80_byte value)
 	}
 }
 
+z80_byte last_audio_midi_output_raw_value=0;
 
+z80_byte get_last_audio_midi_output_raw_value(void)
+{
+    return last_audio_midi_output_raw_value;
+}
 
 void audio_midi_output_raw(z80_byte value)
 {
 
+    last_audio_midi_output_raw_value=value;
 
 	if (audio_midi_output_initialized==0) return;
 
@@ -3395,7 +3517,7 @@ alsa_midi_raw(value);
 
 
 #ifdef MINGW
-//De momento no va
+
 
 
 windows_midi_raw(value);
@@ -3409,9 +3531,24 @@ audio_midi_raw_parse_value(value);
 
 }
 
+struct s_status_midi_out status_midi_out_channels[256];
+
+void init_status_midi_out_channels(void)
+{
+    int i;
+
+    for (i=0;i<256;i++) status_midi_out_channels[i].note_on=0;
+}
+
 //TODO: windows y coreaudio siempre usan canal 0. Mientras que alsa si que tiene canales distintos
 int audio_midi_output_note_on(unsigned char channel, unsigned char note)
 {
+    //Nota mayor que 127 no tiene sentido en midi, en teoria solo usa 7 bits
+    if (note>127) return 0;
+
+    status_midi_out_channels[channel].note_on=1;
+    status_midi_out_channels[channel].note=note;
+
 	#ifdef COMPILE_ALSA
 	return alsa_note_on(channel,note,ALSA_MID_VELOCITY);
 	#endif
@@ -3428,6 +3565,11 @@ int audio_midi_output_note_on(unsigned char channel, unsigned char note)
 
 int audio_midi_output_note_off(unsigned char channel, unsigned char note)
 {
+    //Nota mayor que 127 no tiene sentido en midi, en teoria solo usa 7 bits
+    if (note>127) return 0;
+
+    status_midi_out_channels[channel].note_on=0;
+
 	#ifdef COMPILE_ALSA
 	return alsa_note_off(channel,note,ALSA_MID_VELOCITY);
 	#endif
@@ -3518,7 +3660,7 @@ void audio_midi_output_finish(void)
 	//No hay nada que finalizar?
 	if (!audio_midi_output_initialized) return;
 
-	debug_printf (VERBOSE_DEBUG,"Closing midi output");
+	DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: Closing midi output");
 
 #ifdef COMPILE_ALSA
 
@@ -3566,11 +3708,13 @@ int audio_midi_available(void)
 int audio_midi_output_init(void)
 {
 
+    init_status_midi_out_channels();
+
 	//Aqui no se puede entrar desde menu, pero si desde command line, y podria intentar activarse cuando no hay dichos drivers disponibles
 	if (!audio_midi_available()) return 0;
 
 
-	debug_printf (VERBOSE_DEBUG,"Initializing midi output");
+	DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: Initializing midi output");
 
 #ifdef COMPILE_ALSA
 
@@ -3675,7 +3819,7 @@ int audio_retorna_frecuencia_canal(int canal,int chip)
     }
 
 
-    else if (i8049_chip_present) {
+    else if (i8049_chip_present && !menu_ay_registers_ql_selected_ay) {
         if (canal==0) freq=ql_ipc_get_frecuency_sound_current_pitch();
         else freq=0;
 
@@ -3712,7 +3856,7 @@ int audio_si_canal_tono(int chip,int canal)
 
     }
 
-    else if (i8049_chip_present) {
+    else if (i8049_chip_present && !menu_ay_registers_ql_selected_ay) {
         if (canal==0) {
             if (!ql_audio_playing) {
                 return 0;
@@ -3879,7 +4023,7 @@ void audio_midi_output_frame_event(void)
 
 					    if (nota_numero<0) {
 					        //Nota invalida. no se deberia llegar aqui nunca
-					        debug_printf (VERBOSE_DEBUG,"Invalid note %s",midi_output_nota_sonando[canal_final]);
+					        DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: Invalid note %s",midi_output_nota_sonando[canal_final]);
         				}
 						else audio_midi_output_note_off(canal_final,nota_numero);
 					}
@@ -3887,12 +4031,12 @@ void audio_midi_output_frame_event(void)
 
 					//note on si no es un silencio
 					if (nota[0]!=0) {
-                        debug_printf(VERBOSE_DEBUG,"Midi output: sending note channel %d note %s",canal_final,nota);
+                        DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: sending note channel %d note %s",canal_final,nota);
                     	int nota_numero=get_mid_number_note(nota);
 
                         if (nota_numero<0) {
                             //Nota invalida. no se deberia llegar aqui nunca
-                            debug_printf (VERBOSE_DEBUG,"Invalid note %s",nota);
+                            DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: Invalid note %s",nota);
                         }
                         else {
 
@@ -4221,7 +4365,7 @@ buffer.dwFlags=0;
 midiOutPrepareHeader((HMIDIOUT)lphStream,&buffer,sizeof(MIDIHDR));
 
 midiStreamOut(lphStream,&buffer,sizeof(MIDIHDR));
-printf("Enviando windows_midi raw value %02XH\n",value);
+//printf("Enviando windows_midi raw value %02XH\n",value);
 
   /*windows_midi_message mensaje;
 
@@ -4245,7 +4389,7 @@ printf("Enviando windows_midi raw value %02XH\n",value);
 int windows_note_on(unsigned char channel, unsigned char note,unsigned char velocity)
 {
 
-  debug_printf (VERBOSE_PARANOID,"noteon event channel %d note %d velocity %d",channel,note,velocity);
+  DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: windows: noteon event channel %d note %d velocity %d",channel,note,velocity);
 
   windows_midi_message mensaje;
 
@@ -4263,7 +4407,7 @@ int windows_note_on(unsigned char channel, unsigned char note,unsigned char velo
 int windows_note_off(unsigned char channel, unsigned char note,unsigned char velocity)
 {
 
-  debug_printf (VERBOSE_PARANOID,"noteoff event channel %d note %d velocity %d",channel,note,velocity);
+  DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: windows: noteoff event channel %d note %d velocity %d",channel,note,velocity);
 
   windows_midi_message mensaje;
 
@@ -4282,7 +4426,7 @@ int windows_note_off(unsigned char channel, unsigned char note,unsigned char vel
 int windows_change_instrument(unsigned char instrument)
 {
 
-  debug_printf (VERBOSE_PARANOID,"change instrument event instrument %d",instrument);
+  DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: windows: change instrument event instrument %d",instrument);
 
   windows_midi_message mensaje;
 

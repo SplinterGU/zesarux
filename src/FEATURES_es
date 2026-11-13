@@ -7,18 +7,21 @@
     * Sinclair ZX Spectrum modelos: 16k, 48k (Inglés y Español), 48k+ (Inglés y Español), Spectrum 128k (Inglés y Español), Spectrum +2 (Inglés, Español y Francés), Spectrum +2A (Inglés y Español), Spectrum +3 (Inglés y Español)
     * Sinclair QL
     * Cambridge Z88
-    * Microdigital TK80, TK82, TK82C, TK83, TK85, TK90X (Portugués y Español), TK95 (Portugués y Español)
+    * Microdigital TK80, TK82, TK82C, TK83, TK85, TK90X (Portugués y Español, ULA Ferranti y Microdigital), TK95 (Portugués y Español)
     * Czerweny CZ 1000, CZ 1500, CZ 1000 Plus, CZ 1500 Plus, CZ 2000, CZ Spectrum, CZ Spectrum Plus
     * Timex Sinclair 1000, 1500, 2068
     * Timex Computer 2048, 2068
     * Inves Spectrum +
     * Sam Coupe
     * Pentagon
+    * Scorpion ZS-256, Scorpion ZS-256 Turbo+, Scorpion GMX
+    * ATM Turbo 1, ATM Turbo 2, ATM Turbo 2+, ATM Turbo 3
+    * Didaktik Gama
     * Chloe 140 SE, 280 SE
     * Chrome
     * Prism
     * ZX-Uno
-    * ZX-Evolution BaseConf (beta)
+    * ZX-Evolution BaseConf
     * ZX-Evolution TS-Conf
     * ZX Spectrum Next
     * Jupiter Ace
@@ -33,6 +36,8 @@
 * Es el único emulador de las máquinas: Chloe 140/280, Prism y Chrome
 
 * Emulación casi perfecta de los tiempos de todas las máquinas Spectrum
+
+* Soporta modos de 60 Hz en Master System, SG1000, MSX, Colecovision, Spectravideo y Timex Sinclair 2068
 
 * Emula flags y características no documentadas del Z80 y registro MEMPTR
 
@@ -68,7 +73,13 @@
 
 * Emula modos hi-res en ZX Spectrum (efectos rainbow y otros) y ZX80/ZX81 (UDG, CHR$128, WRX, HRG y otros modos hi-res)
 
-* Soporta reducir la pantalla a 192x144 (escala 0.75)
+* Soporta un montón de efectos de video:
+    - Reducir, Temblar, Invertir Vertical, Invertir Horizontal, Rotar, Remolino, Interferencias, Mar, Ondas, Campo Magnético, Cizalla, Lente, Radar
+    - Zoom, Zoom Mouse, Pixelar, Desenfocar, Borde Sombreado, LED, LED RGB, Pérdida Hsync, Pérdida Vsync, Scroll Horizontal, Scroll Vertical, Fade In, Fade Out, Fade InOut
+    - Scanlines, Sepia, Rojo, RGB, Decolorizar, Persistencia, Contraste, Brillo, Nagravision, Lineas Aleatorias, Decodificar Nagravision, Ordenar Parecidos, Rebote Logo
+    - Restaurar Original, Copiar a buffer, Mezclar desde Buffer, Cargar BMP
+
+* Puede generar imágenes anaglifas para gafas 3D (gafas rojo-azul)
 
 * Usa su propio potente entorno de ventanas (ZX Vision) dentro de la ventana de la aplicación, teniendo el mismo estilo del GUI en todas las plataformas. Permite tener una vista extendida para ubicar menus y ventanas multitarea dentro del GUI (ZX Desktop)
 
@@ -86,7 +97,7 @@
 
 * Premite grabar pantalla a formatos: SCR, PBM, BMP, TXT, STL (Modelo 3D)
 
-* Permite cargar desde cinta real (cualquier fuente externa de sonido, como lector de casette, reproductor mp3, etc)
+* Permite cargar desde cinta real (cualquier fuente externa de sonido, como lector de casette, reproductor mp3, etc), con herramientas para ver la forma de onda y el espectro de frecuencias de la cinta y ayudar a ajustar el azimut
 
 * Soporta carga de cinta real mediante formatos de archivos: RWA, SMP, WAV, TZX, PZX, CDT, TAP, P, P81, O. Soporta carga turbo de cintas o cualquier otro tipo de carga de cintas para rutinas de carga estándar/no estándar
 
@@ -94,7 +105,11 @@
 
 * Soporta carga de cinta real mediante archivos de formatos (RWA, SMP, WAV) en rutinas ROM estándar para ZX Spectrum, ZX80, ZX81, Amstrad CPC, Jupiter Ace
 
+* Convierte grabaciones de cintas ZX81 a archivos P/P81, con una vista de la forma de onda y de los pulsos, bits y bytes decodificados
+
 * Simula carga de cinta real en rutinas ROM estándar para ZX Spectrum, ZX80, ZX81
+
+* Soporta traps de grabación de cinta para Super Tape Copier y Lao Copy 2
 
 * Soporta formatos de snapshot: ZSF, ZX, Z80, SP, SPG, NEX, SNA, P, P81, O, Z81, ACE
 
@@ -108,6 +123,8 @@
 
 * Soporta formatos de cartucho: DCK, ROM, COL, SG
 
+* Soporta cartuchos MSX con mappers de memoria ASCII de 8 KB y 16 KB, Konami (con o sin SCC) y R-Type
+
 * Soporta reproducción RZX
 
 * Emula los siguientes Interfaces de Copia: Defcon, Dinamid3, Hilow Barbanegra, Interface007, Microhobby Pokeador Automatico, Multiface (One, 128 y Three), Phoenix, Ramjet, Spec-Mate, Transtape
@@ -118,9 +135,9 @@
 
 * Emula controladora de disco Nec PD765, utilizada en Spectrum +3, CPC 664, CPC 6128, PCW
 
-* Emula ZX Microdrive en ZX Spectrum y QL: en ZX Spectrum soporta MDR (formato de sistema de archivos estándar) y formato en crudo "raw" (extensión RMD). En QL se simula mediante traps a la rom accediendo a archivos de tu ordenador y también desde (formato QLAY)
+* Emula ZX Microdrive en ZX Spectrum y QL: en ZX Spectrum soporta MDR (formato de sistema de archivos estándar) y formato en crudo "raw" (extensión RMD), incluidas zonas de separación, bytes de sincronización y sectores defectuosos. En QL se simula mediante traps a la rom accediendo a archivos de tu ordenador y también desde MDV (formato QLAY)
 
-* Emula Betadisk/TR-DOS. Soporte directo para archivos .trd. scl files pueden convertirse desde el selector de archivos pulsando espacio
+* Emula Betadisk/TR-DOS. Soporte directo para archivos .trd. Los archivos .scl se pueden cargar de forma inteligente o convertir desde el selector de archivos pulsando espacio
 
 * Emula ZX Spectrum MMC Interfaces: ZXMMC, ZXMMC+, DivMMC
 
@@ -146,11 +163,15 @@
 
 * Soporta tarjetas RAM, EPROM, Intel Flash y Hybrid (RAM+EPROM) en Z88
 
-* Soporta QL microdrive/floppy acceso de archivos usando archivos de tu ordenador. Permite leer cabeceras tipo Q-emuLator. Permite EXECutar archivos sin cabeceras
+* Soporta acceso a archivos de microdrive y disquete del QL desde archivos del ordenador, imágenes MDV, IMG QDOS QL5A/QL5B y WIN, y una segunda unidad de disquete. Permite leer cabeceras tipo Q-emuLator, ejecutar archivos sin cabeceras y cargar de forma inteligente archivos de arranque, BASIC y ejecutables
+
+* Emula ratón QIMI del QL, ROM adicionales, relación de aspecto de vídeo y paleta Vision-QL configurables, y selección de fuente y zona horaria del reloj de tiempo real
 
 * Soporta formatos comprimidos zip (con decompresor interno), y tar, rar, gz a través de utilidades externas
 
 * Emula AY Audio Chip, Turbosound (2 canales AY), 3 Canales AY, canales MIDI, diferentes DAC: Specdrum, Covox, ACB/ABC/BAC/CBA Stereo
+
+* Permite seleccionar el audio Beeper y MIC en Spectrum
 
 * Emula General Sound
 
@@ -162,7 +183,9 @@
 
 * Simulación experimental del Chip de Audio del Sam Coupe
 
-* Emula sonido i8049 del QL
+* Emula sonido i8049 y Qsound del QL
+
+* Simula efecto de Audio Nagravision
 
 * Soporta tamaño RAM hasta 1024 KB en Spectrum y Pentagon
 
@@ -171,6 +194,10 @@
 * Soporta RAM packs en Jupiter Ace hasta 51 KB
 
 * Emulación Joystick con joystick real (en GNU/Linux y Windows) y cursores de teclado: Kempston, Sinclair 1&2, Cursor Joystick, Cursor & Shift, OPQA, Fuller, Zebra, Mikro-Gen, ZXPand, SAM Coupe Cursors, CPC, MSX, Spectravideo, Cascade, DKTronics. Función autodisparo también
+
+* Los botones del joystick pueden activar acciones configurables de teclas F, como reiniciar la CPU, lanzar una NMI o abrir una ventana
+
+* Permitir usar un joystick de tipo volante en juegos de carreras de Spectrum como un mando analógico
 
 * Teclado en pantalla útil para jugar con joystick, dos tipos: uno con letras de teclado, y otras con palabras, útil para jugar a Aventuras Conversacionales. También una utilidad para extraer palabras de aventuras conversacionales (Daad, Paws, Quill y Gac)
 
@@ -182,7 +209,7 @@
 
 * Emulación de ZX Printer
 
-* Emulación de Lightgun: Casi perfecta emulación de Gunstick de MHT Ingenieros S.L y emulación experimental de Magnum Light Phaser
+* Emulación de Entrada Óptica: Emula Gunstick de MHT Ingenieros S.L, Magnum Light Phaser, Stack Light Rifle, Defender Light Gun, Trojan Light Pen, Datel Lightwriter, Spectrum Doodler Lightpen
 
 * Emulación Kempston mouse
 
@@ -194,7 +221,9 @@
 
 * Puede buscar online juegos de Spectrum
 
-* Soporta archivo de texto de entrada ("Input spool text file") para simular pulsaciones de teclado
+* Soporta Enviar Texto como pulsaciones de teclado, leyendo desde un archivo de texto o el portapapeles del sistema en Mac, Windows, GNU/Linux (SDL2, Xwindow)
+
+* Soporta drag & drop en sistemas: Mac, Windows, GNU/Linux (SDL2, Xwindow)
 
 * Soporta leer Pokes de archivos .POK
 
@@ -220,13 +249,13 @@
 
 * Puede generar Snapshots Automáticos en RAM y también realizar operación de Rebobinado
 
-* Potentes características de debug: Debugging hacia atrás, Historial de CPU, Ensamblador, Registros, Desensamblador, Breakpoints Condicionales usando expresiones de texto, Watches, Paso-a-paso, Paso-por-encima, EjecutarHasta, Ver posición del electrón de TV, Cargar código fuente, Editor Hexadecimal, Ver Sprites, Ver Tiles, Buscar bytes, Buscador de vidas infinitas, registro de transacciones de CPU, Ver BASIC, Ver variables BASIC, mensajes de debug en consola
+* Potentes características de debug: Debugging hacia atrás, Historial de CPU, Ensamblador, Registros, Desensamblador, Breakpoints Condicionales usando expresiones de texto, Watches, Paso-a-paso, Paso-por-encima, EjecutarHasta, Ver posición del electrón de TV, Cargar código fuente, Editor Hexadecimal, Ver Sprites, Ver Tiles, Buscar bytes, Buscador de vidas infinitas, registro de transacciones de CPU, Ver BASIC, Ver variables BASIC, Ver Pila del GOSUB de BASIC, mensajes de debug en consola
 
 * Debugger de Aventuras Conversacionales: En un aventura conversacional de Quill/Paws/Daad/Gac puedes ejecutar un condacto Paso a Paso, ver flags/objetos, listar mensajes (objetos, mensajes usuario/sistema, localizaciones, tokens de compresión, vocabulario), conexiones, mapa localizaciones. Puedes también ver gráficos de aventuras hechas con Quill, Paws, Daad or Gac.
 
 * Uso de inteligencia artificial para obtener imágenes realistas para el texto de descripción de la ubicación en Aventuras Conversacionales
 
-* Menú de utilidades de Archivos: Permite ver, expandir y convertir diferentes formatos de archivos comunes: tap, tzx, trd, dsk, mdv, hdf, etc. También puede navegar dentro de imágenes de sistemas de archivos (.mmc, .img, etc)
+* Menú de utilidades de Archivos: Permite ver, expandir y convertir diferentes formatos de archivos comunes: tap, tzx, trd, dsk, mdv, hdf, archivos Hobeta, etc. También puede navegar dentro de imágenes de sistemas de archivos (.mmc, .img, etc)
 
 * Accesibilidad: Print char traps permite capturar texto generado desde casi cualquier programa o juego, que usen llamadas estándar a la ROM (RST 10H) o incluso rutinas de impresión de caracteres no estándar. Puede enviar texto generado desde un juego a un programa de texto-a-voz (text to speech). Está preparado para soporte de texto a voz para personas ciegas o con problemas de visión. El menú del emulador también se puede leer por un programa de texto-a-voz.
 
@@ -240,7 +269,6 @@
 
 * Soporta ejecución en Docker, probado en contenedores Debian, Ubuntu y Fedora
 
-* Otras características: Visualmem menu, CPU Statistics, Juguete ZXeyes, Juguete ZXlife, Tabla Ascii, Sensors
+* Otras características: Visualmem menu, CPU Statistics, juguetes ZXeyes, ZXlife, Clive y Simón, Reloj, Calculadora, Tabla Ascii, Sensors
 
 * Incluye siete huevos de pascua. Puedes encontrarlos? :)
-

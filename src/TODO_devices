@@ -25,6 +25,7 @@ Y los ST0, ST1, etc de resultado, deben retornar los que hay en DSK? respuesta d
 
 -sonido simulado de datos de floppy: de manera similar al microdrive, generamos sonido segun los bytes leidos. Pero para eso se necesita
 que lea/escriba a velocidad real (o sea mas lento que como hace ahora). Ahora las transferencias de sectores se hacen de golpe cada sector
+-Sonido de lectura y escritura de floppy +3, según codificación. Manchester? Mfm?
 
 -mejorar dsk_extended_get_start_track. se tiene que parecer mas al basico
 
@@ -42,7 +43,7 @@ que lea/escriba a velocidad real (o sea mas lento que como hace ahora). Ahora la
 -PD765: write sector. control de EOT? se puede escribir mas de un sector seguido?
 -implementar write deleted data? quiza tan facil como escribir igual pero con bits de (st1?st2?) diciendo que está borrado
 
--Sonido de lectura y escritura de floppy +3, según codificación. Manchester? Mfm?
+
 -----------------------
 
 
@@ -53,12 +54,44 @@ ejemplo badlands.dsk y rutina en la 2114h que esta en los traps
 
 -----------------------
 
+--- ESXDOS handler ---
+
+-chdir en esxdos handler acaba cambiando directorio realmente para emulador??
+
+-soporte LFN para esxdos handler. quiza acortar archivos al listar con "dir" y similares. que hacer si hacen fopen de archivo largo?
+acortar archivo... pero habra que acortar tambien ruta subdirectorios....
+complicado. quiza ver mejor como gestiona los nombres largos desde nextos
+
+-"overlay" esxdos handler: sobreponer una segunda carpeta sobre la principal
+Asi se puede tener una raiz por ejemplo para divmmc comun, y luego mapear carpetas adicionales para pruebas
+O quiza, en vez de overlay, una segunda unidad de disco
+
+-Esxdos. Decidir hl o ix según si está paginada la memoria divmmc?
+
+Unhandled ESXDOS_RST8: B3H !!
+
+al abrir, que pruebe con mayusculas y luego minusculas
+quiza habra problemas con rutas como : /BIN/paco
+
+si subo todo a mayusculas->no ira
+si subo todo a minusculas->no ira
+quiza aqui entonces mejor que el usuario tenga su ruta bien creada en disco todo minusculas o todo mayusculas
+ver que hace zxpand aqui....
+
+*recomendar que o bien usen todo mayusculas o todo minusculas... en mac o windows no hay problemas, en linux si
+-FAQ esxdos handler. Comentar mayúsculas etc
+
+-Evitar el uso de ../../ etc en esxdos handler para evitar que puedan salir del root de esxdos. Esto también está planteado para zxpand
+
+
+------------------
+
 
 --- Betadisk ---
 
 -betadisk: nmi no parece guardar el snapshot, aunque lo intenta
 
--para siguiente version: revisar betadisk. quiza demos de generalsound en scl/trd fallan por eso:
+-evisar betadisk. quiza demos de generalsound en scl/trd fallan por eso:
 * revisar puertos de estado: FF, 1F, etc...
 * rutinas de salto a la rom de betadisk desde Chase HQ, quiza un trap para esa rutina?
 
@@ -186,6 +219,16 @@ Con Fuse tampoco encuentra ese archivo
 La particularidad es que ese archivo tiene bloques a final de microdrive y al principio
 -esa conversion de rmd a mdr, sin archivos (solo con el formateo) pasa de 126 a 125 sectores...
 
+
+-en menu storage-microdrive, menus que aparecen para un tipo de microdrive (rmd o mdr), no se podria hacer que para los menus no soportados, hiciera conversión?
+Ejemplo: tenemos un rmd y no aparecerá Chkdsk. Podemos hacer que aparezca chkdsk haciendo que primero convierta ese rmd a mdr? tiene sentido?
+O quiza mejor que sea el usuario el que convierta a rmd o mdr y asi tener los menus que faltan. Pero en este ultimo caso, estaria en las mismas,
+los otros menus no aparecerían. La gracia es que todos pudieran aparecer haciendo conversiones adecuadas
+Quiza menus como estiramiento no hacer que aparezca si el tipo no es el correcto
+Ver expandido ya lo hace: para los rmd, primero convierte a mdr y de ahi ya expande
+Tiene sentido microdrive raw map cuando el microdrive es mdr? quiza por la gracia de ver como se mueve el puntero lector o tambien por ver los datos,
+aunque no sea puramente raw porque viene de un mdr, pero puede estar bien
+
 -------------------
 
 
@@ -198,6 +241,33 @@ Por tanto, solo tener en cuenta que con spectra activado, demos como la overscan
 
 -no funciona scroll de sprite chip. Dado que spectra actualiza la pantalla segun su memoria interna, que se replica en cada operacion de poke_byte.
 Pero el scroll del sprite chip no se realiza con poke_byte, sino con escritura directa a puntero de memoria
+
+------------------
+
+--- ULAPlus ---
+
+
+-ULAplus mode 256x192 adicional (modo 11?), linear, igual que modo standard (256x192, flash, brillo, papel, tinta, 6144 longitud) pero lineal ?
+
+-ULAplus agregar modos adicionales parecidos a los del sam coupe
+
+-multicolor demo y otros modos ham (que usan interrupciones para cambiar paleta) no funcionan perfectos, seguramente a que:
+en multicolor demo cambia la paleta al finalizar un scanline. Cuando finaliza cada scanline, yo meto en rainbow buffer ese scanline, junto
+con el color de la paleta... pero esa paleta que yo leo es ya la siguiente paleta, de la siguiente linea, y no de la actual. Por eso
+hay un desfase de lineas de color en el border en la multicolor
+
+-Quizá mis modos lineales deberían usar vram en vez de direcciones lineales en prism?
+No:
+All modes except 9 uses RAM 5 or 7 depending on the bit 3 of port 7FFDh on Spectrum 128k models, or address 4000H on 48k/16k models.
+Mode 9 start always at address 4000H, even on 128k models
+
+Realmente lo que pasa es que estos modos usan más de 8kb y deberían saltar a la siguiente vram (0,1) cuando pasan del offset 8192. Esto para modos 3,5,7
+
+Lo que pasa es que cuando asigno memoria vram hago los 32 k de golpe, por eso cuando se pasa del offset 8192 de vram0 automáticamente se salta a vram1
+
+-ULAplus y timex 512x192. Solo va en modo real 512x192. No va color ulaplus en:
+*escalado a 256x192
+*maquina prism
 
 ------------------
 
@@ -216,9 +286,6 @@ ser siempre en mayusculas. Carpetas siempre se muestran pero no se podran accede
 debido a funcion setjoy. los valores de joystick deben volver incorrectos y hacen que puerto BC (registro B) se corrompa
 (ver docs/zxpand_cmdr.txt)
 
--sound tracker de andy rea se cuelga. porque? stcplay , gasman y sound_demo usan el mismo player
-requiere ramtop en 24999 y CONFIG "M=H"
-carpeta aux_zesarux/zx81/sound_demo  tambien
 
 -Zxpand+ nuevo firmware?
 https://github.com/charlierobson/ZXpand-Vitamins/wiki/ZXpand---Online-Manual
@@ -248,6 +315,9 @@ por ver los diferentes mensajes de error
 
 -Ddh con extended info al final, que contenga marcas de sector y labels ?
 
+-Qué sentido tiene que el icono de hilow deje hacer "Switch tape inserted flag" cuando no está hilow activado?
+->lo gestiona zxdesktop_lowericon_hilow_accion_boton_derecho expresamente cuando está desactivado. por que?
+
 
 -lee_hilow_audio: ultimo sector en cara B dice:
 Total bytes leidos: 0
@@ -259,6 +329,26 @@ Sector -407021264
 -Comentarios en la ROM de hilow de Jane recopilar
 
 -poder convertir ddh a raw
+
+------------------
+
+--- Pistola optica ---
+
+-magnun: acid killer, ver por que no funciona en mitad derecha. el shooting range le pasa lo mismo
+Creo que tiene que ver con que la mitad derecha de la pantalla se dibujan esas lineas (para averiguar la posicion de la pistola)
+en un frame de video diferente de la mitad izquierda
+
+
+-poder hacer que con menu abierto, se envien eventos de teclado, pistola etc a máquina emulada.
+Util si estamos en debug cpu y queremos que un juego lea el boton del ratón (emulando lightgun) y/o luz de pistola
+Quizá con una opción y sólo si está el foco en ventana de debug CPU
+
+-juegos de la lightgun magnum, el sinclair action pack, envian continuamente valores a midi registro 14. por que?
+
+
+------------------
+
+
 
 ------------------
 

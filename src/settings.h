@@ -30,9 +30,13 @@
 
 extern z80_bit menu_debug_registers_if_showscan;
 
+extern z80_bit menu_debug_show_zones_beyond_sync;
+
 extern z80_bit debug_settings_show_screen;
 
 extern z80_bit debug_settings_show_fired_halt;
+
+extern z80_bit debug_show_timing_opcodes;
 
 extern int debug_registers;
 
@@ -57,6 +61,7 @@ extern z80_bit hardware_debug_port;
 extern char zesarux_zxi_hardware_debug_file[];
 extern z80_bit setting_mostrar_visualmem_grafico;
 
+extern z80_bit zxvision_change_gui_style_day_night;
 
 extern z80_bit autosave_snapshot_on_exit;
 extern z80_bit autoload_snapshot_on_start;
@@ -71,6 +76,8 @@ extern z80_bit pd765_silent_write_protection;
 extern z80_bit setting_mostrar_ay_piano_grafico;
 
 extern int kempston_mouse_factor_sensibilidad;
+
+extern z80_bit azerty_keyboard_numbers_no_shift;
 
 extern int adventure_keyboard_key_length;
 
@@ -96,6 +103,10 @@ extern z80_bit msx_loading_stripes;
 
 extern z80_bit msx_loading_noise_reduction;
 
+extern z80_bit setting_emulated_display_win_zoom_fit;
+extern z80_bit setting_emulated_display_win_zoom_fit_keep_proportion;
+extern z80_bit setting_emulated_display_win_autoresize;
+
 #define MACHINE_SELECTION_TYPE_BY_MANUFACTURER 0
 #define MACHINE_SELECTION_TYPE_BY_NAME 1
 #define MACHINE_SELECTION_TYPE_BY_FAMILY 2
@@ -110,6 +121,8 @@ extern int setting_machine_selection_type;
 
 extern z80_bit ql_flp1_follow_mdv1;
 
+extern z80_bit ql_flp2_follow_mdv1;
+
 extern z80_bit ql_win1_alias_mdv1;
 
 extern z80_bit menu_file_viewer_always_hex;
@@ -119,6 +132,8 @@ extern z80_bit debug_view_basic_show_address;
 extern z80_bit debug_view_basic_show_betabasic;
 
 extern z80_bit debug_watches_show_decimal;
+
+extern z80_bit debug_step_over_rst8_plus_two;
 
 extern int gui_language;
 
@@ -143,6 +158,8 @@ extern z80_bit zxdesktop_configurable_icons_enabled;
 
 extern z80_bit zxdesktop_empty_trash_on_exit;
 
+extern z80_bit zxdesktop_automatic_reorder_icons;
+
 extern z80_bit zxdesktop_icon_show_app_open;
 
 extern z80_bit z88_hide_keys_shortcuts;
@@ -166,6 +183,8 @@ extern z80_bit setting_process_switcher_immutable;
 extern z80_bit setting_process_switcher_always_visible;
 
 extern z80_bit setting_process_switcher_force_left_bottom;
+
+extern z80_bit setting_process_switcher_only_one_row;
 
 extern z80_bit accessibility_enable_gui_sounds;
 
@@ -196,10 +215,23 @@ extern z80_bit opcion_fast_welcome_message;
 extern z80_bit opcion_no_welcome_message;
 
 extern z80_bit zxvision_topbar_menu_enabled;
+extern z80_bit zxvision_topbar_appears_move_mouse_top;
 
 extern z80_bit zxvision_setting_use_speccy_keys;
 
 extern z80_bit sms_swap_controls;
+
+extern z80_bit scr_sdl_8bits_color;
+
+extern z80_bit scr_sdl_force_size;
+extern int scr_sdl_force_size_width;
+extern int scr_sdl_force_size_height;
+extern z80_bit scr_sdl_hwsurface;
+
+extern z80_bit storage_accelerate_loading;
+extern z80_bit storage_accelerate_saving;
+
+extern int disable_fullscreen_on_exit_zesarux;
 
 #endif
 

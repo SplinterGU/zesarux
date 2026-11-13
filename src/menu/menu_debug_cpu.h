@@ -50,6 +50,17 @@ extern menu_z80_moto_int menu_debug_disassemble_last_ptr;
 extern menu_z80_moto_int menu_debug_disassemble_subir(menu_z80_moto_int dir_inicial);
 extern menu_z80_moto_int menu_debug_disassemble_bajar(menu_z80_moto_int dir_inicial);
 
+//Para guardar cambios de valores de memoria
+struct s_menu_debug_hexdump_store_differences {
+    z80_byte antes;
+    z80_byte despues;
+};
+
+typedef struct s_menu_debug_hexdump_store_differences menu_debug_hexdump_store_differences;
+
+
+extern void menu_debug_registers_dump_hex(char *texto,menu_z80_moto_int direccion,int longitud,menu_debug_hexdump_store_differences *diferencias);
+extern void menu_debug_registers_dump_ascii(char *texto,menu_z80_moto_int direccion,int longitud,int modoascii,z80_byte valor_xor);
 extern int menu_debug_hexdump_with_ascii_modo_ascii;
 extern z80_byte menu_debug_get_mapped_byte(int direccion);
 extern void menu_debug_write_mapped_byte(int direccion,z80_byte valor);
@@ -100,6 +111,8 @@ extern int map_adventure_offset_y;
 "SEG0, SEG1, ...., SEG7: memory banks mapped on each 8 memory segments on TBBlue\n" \
 "HILOWMAPPED: returns 1 if HiLow ROM & RAM is mapped\n" \
 "PD765PCN: current cylinder of PD765 floppy drive\n" \
+"VAR0, VAR1, ... VAR9: user variables, can be set with action let\n" \
+"MOUSELEFT: if left button mouse is pressed or not (when menu is opened, it always returns 0)\n" \
 "MRV: value returned on read memory operation\n" \
 "MWV: value written on write memory operation\n" \
 "MRA: address used on read memory operation\n" \
@@ -184,7 +197,9 @@ extern int map_adventure_offset_y;
 "menu or break or empty string: Breaks current execution of program\n" \
 "call address: Calls memory address, address is an expression\n" \
 "disassemble address: Dissassemble address, address is an expression\n" \
-"printc expression: Print ascii character to console\n" \
+"let varX=expression: Assign expression to a user variable, where X is in range 0..9\n" \
+"printc expression: Print ascii character to console; note this prints the character as it is, no filtering is done so some characters for example < 32 may produce strange results\n" \
+"printcf expression: Print ascii character to console but filtering characters < 32 or > 126\n" \
 "printe expression: Print expression following the same syntax as breakpoints and evaluate expression\n" \
 "printregs: Print registers\n" \
 "prints string: Prints string to console\n" \

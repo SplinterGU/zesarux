@@ -33,10 +33,12 @@
 #include "cpc.h"
 #include "cpu.h"
 #include "screen.h"
+#include "screen_fx.h"
 #include "debug.h"
 #include "contend.h"
 #include "joystick.h"
 #include "zxvision.h"
+#include "menu_items.h"
 #include "operaciones.h"
 #include "utils.h"
 #include "audio.h"
@@ -937,8 +939,8 @@ I/O address	A9	A8	Description	Read/Write status	Used Direction	Used for
 			                if (zxvision_key_not_sent_emulated_mach() ) return 255;
 
            //Si esta spool file activo, generar siguiente tecla
-                if (input_file_keyboard_is_playing() ) {
-                                input_file_keyboard_get_key();
+                if (send_text_as_keystrokes_is_playing() ) {
+                                send_text_as_keystrokes_get_key();
                 }
 
 
@@ -1697,17 +1699,8 @@ void scr_cpc_return_ancho_alto(int *an,int *al,int *al_car,int *off_x)
 //Hace putpixel en y e y+1, ya que pantalla cpc es de 640x200 pero hacemos 640x400 la ventana
 void cpc_putpixel_zoom(int x,int y,unsigned int color)
 {
-
-	int dibujar=0;
-
-	//if (x>255) dibujar=1;
-	//else if (y>191) dibujar=1;
-	if (scr_ver_si_refrescar_por_menu_activo(x/8,y/8)) dibujar=1;
-
-	if (dibujar) {
-		scr_putpixel_zoom(x,y,color);
-		scr_putpixel_zoom(x,y+1,color);
-	}
+    scr_putpixel_zoom(x,y,color);
+    scr_putpixel_zoom(x,y+1,color);
 }
 
 void cpc_putpixel_border(int x,int y,unsigned int color)
@@ -2035,7 +2028,8 @@ void scr_refresca_pantalla_y_border_cpc_no_rainbow(void)
 void scr_refresca_pantalla_y_border_cpc_rainbow(void)
 {
 
-
+    //Si ventana video output abierta, no renderizamos desde aqui
+    if (ventana_video_output_esta_abierta()) return;
 
 	int ancho,alto;
 
@@ -2050,6 +2044,9 @@ void scr_refresca_pantalla_y_border_cpc_rainbow(void)
 	z80_int *puntero;
 
 	puntero=rainbow_buffer;
+
+    //Reduccion de pantalla y otros efectos
+    puntero=screen_rainbow_effects(puntero,ancho,alto);
 
 
     //printf("ultima linea al hacer render: %d\n",cpc_last_drawn_line);
@@ -2103,8 +2100,17 @@ void scr_refresca_pantalla_y_border_cpc(void)
     }
 }
 
+//El CRTC inicial sitúa la imagen a 64 píxeles; el lienzo con borde reserva 80 para overscan.
+#define CPC_RAINBOW_NO_BORDER_ORIGIN_X 64
+
 void cpc_putpixel_zoom_rainbow(int x,z80_int *puntero_buf_rainbow,int color)
 {
+    if (!border_enabled.v) {
+        //Recortar la imagen CRTC a los 640 píxeles visibles sin borde.
+        x-=CPC_RAINBOW_NO_BORDER_ORIGIN_X;
+        if (x<0 || x>=CPC_DISPLAY_WIDTH) return;
+    }
+
     puntero_buf_rainbow[x]=color;
     //Siempre es x2 de alto
     puntero_buf_rainbow[x+get_total_ancho_rainbow()]=color;
@@ -2209,6 +2215,7 @@ void screen_store_scanline_rainbow_solo_border_cpc(void)
     //printf("%d\n",t_scanline_draw);
 
    int y_destino_rainbow=cpc_convert_scanline_to_final_y()*2;
+   if (!border_enabled.v) y_destino_rainbow-=CPC_TOP_BORDER_NO_ZOOM;
 
     if (y_destino_rainbow>cpc_last_drawn_line) {
         cpc_last_drawn_line=y_destino_rainbow;
@@ -2220,9 +2227,6 @@ void screen_store_scanline_rainbow_solo_border_cpc(void)
 
     //Nota: en cpc rom, vsync esta en 240 (posicion y=480). Pero tenemos una ventana de 544 de alto para soportar overscan
     //Por tanto, a no ser que el juego use modo overscan, la parte de abajo normalmente va a estar sin usar
-
-    //TODO: calculo con border desactivado
-
 
     //Limite inferior y superior. Sobretodo el inferior, pues puede ser negativo (en zona border invisible)
     //En teoria superior no deberia ser mayor, pero por si acaso
@@ -2276,9 +2280,8 @@ void screen_store_scanline_rainbow_solo_border_cpc(void)
     //printf("%d\n",t_scanline_draw);
 
    int y_destino_rainbow=cpc_convert_scanline_to_final_y()*2;
+   if (!border_enabled.v) y_destino_rainbow-=CPC_TOP_BORDER_NO_ZOOM;
    //printf("y destino: %d\n\n",y_destino_rainbow);
-
-    //TODO: calculo con border desactivado
 
     //Limite inferior y superior. Sobretodo el inferior, pues puede ser negativo (en zona border invisible)
     //En teoria superior no deberia ser mayor, pero por si acaso
@@ -2402,9 +2405,7 @@ void screen_store_scanline_rainbow_solo_display_cpc(void)
         //printf("%d\n",t_scanline_draw);
 
         int y_destino_rainbow=cpc_convert_scanline_to_final_y()*2;
-
-
-        //TODO: calculo con border desactivado
+        if (!border_enabled.v) y_destino_rainbow-=CPC_TOP_BORDER_NO_ZOOM;
 
 
 

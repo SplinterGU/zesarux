@@ -250,12 +250,21 @@ int tape_pzx_seek_data_block(void)
             debug_printf(VERBOSE_INFO,"PZX PZXT block. Version %d.%d",buffer_version[0],buffer_version[1]);
 
             //asigna memoria
+            /*
+            The additional information consists of sequence of strings, each terminated
+            either by character 0x00 or end of the block, whichever comes first.
+            This means the last string in the sequence may or may not be terminated.
+            */
+
+            //Metemos 1 byte de mas al final con 0 por si la ultima cadena no acaba con el 0
+
             z80_byte *info_bloque;
-            info_bloque=util_malloc(pzx_last_blockmem_length-2,"Can not allocate for PZXT block");
+            info_bloque=util_malloc(pzx_last_blockmem_length-2+1,"Can not allocate for PZXT block");
 
             //Copiar el contenido
             //printf("pzx_last_blockmem_length-2: %d\n",pzx_last_blockmem_length-2);
             tape_block_pzx_blockmem_fread(info_bloque,pzx_last_blockmem_length-2);
+            info_bloque[pzx_last_blockmem_length-2]=0;
 
             //Mostrar las cadenas de texto cada una separadas por espacio
             int longitud_textos=pzx_last_blockmem_length-2;
@@ -266,6 +275,7 @@ int tape_pzx_seek_data_block(void)
             puntero_strings=info_bloque;
 
             while (longitud_textos>0) {
+                //printf("longitud_textos: %d\n",longitud_textos);
                 debug_printf(VERBOSE_INFO,"PZX PZXT block. Tape info: %s",puntero_strings);
                 int longitud_string=strlen((char *)puntero_strings);
 
@@ -590,9 +600,30 @@ int tape_block_pzx_save(void *dir,int longitud)
 
 void tape_block_pzx_begin_save_ptr(FILE *ptr_archivo,int longitud,z80_byte flag,int in_fatfs, FIL *fil_pzxfile)
 {
+    z80_byte block_buffer[256];
 
+    //Escribir bloque pause siempre antes de cada bloque de datos
+    //00000060  20 20 c3 00 0a 00 c3 00  6e    50 41 55 53 04 00 00  |  ......nPAUS...|
+    //00000070  00   e0 67 35 00     50 55 4c  53 08 00 00 00 97 8c 78  |..g5.PULS......x|
 
+       block_buffer[0]='P';
+       block_buffer[1]='A';
+       block_buffer[2]='U';
+       block_buffer[3]='S';
 
+        //longitud
+       block_buffer[4]=4;
+       block_buffer[5]=0;
+       block_buffer[6]=0;
+       block_buffer[7]=0;
+
+       //Duracion 1 segundo (3500000 ciclos)
+       block_buffer[8]=0xe0;
+       block_buffer[9]=0x67;
+       block_buffer[10]=0x35;
+       block_buffer[11]=0;
+
+       zvfs_fwrite(in_fatfs,block_buffer, 12, ptr_archivo,fil_pzxfile);
 
 	//Escribir id 10
 	//pausa de 1000 ms
@@ -631,7 +662,7 @@ The standard pilot tone of Spectrum data block (leader >= 128) would be:
 0x8000+3223,2168,667,735
         */
 
-       z80_byte block_buffer[256];
+
        block_buffer[0]='P';
        block_buffer[1]='U';
        block_buffer[2]='L';

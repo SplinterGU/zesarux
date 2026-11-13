@@ -49,6 +49,19 @@
 #define VISUALMEM_MICRODRIVE_ASSIGNED_BUFFER_SIZE MICRODRIVE_RAW_COMMON_SIZE
 
 
+enum beeper_mic_mixer_modes {
+    BEEPER_MIC_MIXER_NORMAL=0,
+    BEEPER_MIC_MIXER_MIC_AMPLIFIED,
+    BEEPER_MIC_MIXER_ONLY_BEEPER,
+    BEEPER_MIC_MIXER_ONLY_MIC
+};
+
+extern enum beeper_mic_mixer_modes beeper_mic_mixer_current_mode;
+
+extern char *get_beeper_mic_mixer_mode_string(void);
+extern void beeper_mic_mixer_modes_strings_print(void);
+
+
 extern z80_byte *visualmem_buffer;
 extern z80_byte *visualmem_read_buffer;
 extern z80_byte *visualmem_opcode_buffer;
@@ -237,7 +250,7 @@ extern void poke_byte_vacio(z80_int dir GCC_UNUSED,z80_byte valor GCC_UNUSED);
 extern z80_byte lee_puerto_vacio(z80_byte puerto_h GCC_UNUSED,z80_byte puerto_l GCC_UNUSED);
 extern void out_port_vacio(z80_int puerto GCC_UNUSED,z80_byte value GCC_UNUSED);
 extern z80_byte fetch_opcode_vacio(void);
-
+extern z80_byte lee_puerto_teclado(z80_byte puerto_h);
 
 
 extern void (*poke_byte)(z80_int dir,z80_byte valor);
@@ -248,6 +261,13 @@ extern z80_byte (*peek_byte_no_time)(z80_int dir);
 extern z80_byte (*fetch_opcode)(void);
 
 extern z80_byte fetch_opcode_spectrum(void);
+extern z80_byte fetch_opcode_pentagon(void);
+extern z80_byte peek_byte_pentagon(z80_int dir);
+extern z80_byte peek_byte_no_time_pentagon(z80_int dir);
+extern void pentagon_trdos_reset(void);
+extern z80_byte fetch_opcode_tsconf(void);
+extern z80_byte fetch_opcode_baseconf(void);
+
 extern z80_byte fetch_opcode_zx81(void);
 extern z80_byte fetch_opcode_ace(void);
 extern z80_byte fetch_opcode_cpc(void);
@@ -259,7 +279,11 @@ extern z80_byte fetch_opcode_sms(void);
 extern z80_byte fetch_opcode_svi(void);
 extern z80_byte fetch_opcode_pcw(void);
 
+
+
 extern void poke_byte_spectrum_48k(z80_int dir,z80_byte valor);
+
+extern void poke_byte_spectrum_sync_rainbow(z80_int dir);
 
 extern z80_byte chardetect_automatic_poke_byte(z80_int dir,z80_byte valor);
 
@@ -276,6 +300,7 @@ extern z80_byte lee_puerto_svi_no_time(z80_byte puerto_h,z80_byte puerto_l);
 
 
 extern void poke_byte_spectrum_128k(z80_int dir,z80_byte valor);
+
 extern void poke_byte_spectrum_128kp2a(z80_int dir,z80_byte valor);
 extern void poke_byte_zxuno(z80_int dir,z80_byte valor);
 extern void poke_byte_spectrum_inves(z80_int dir,z80_byte valor);
@@ -296,6 +321,7 @@ extern void poke_byte_svi(z80_int dir,z80_byte valor);
 
 extern void poke_byte_no_time_spectrum_48k(z80_int dir,z80_byte valor);
 extern void poke_byte_no_time_spectrum_128k(z80_int dir,z80_byte valor);
+
 extern void poke_byte_no_time_spectrum_128kp2a(z80_int dir,z80_byte valor);
 extern void poke_byte_no_time_zxuno(z80_int dir,z80_byte valor);
 extern void poke_byte_no_time_spectrum_inves(z80_int dir,z80_byte valor);
@@ -317,6 +343,7 @@ extern void poke_byte_no_time_svi(z80_int dir,z80_byte valor);
 extern void poke_byte_zx81(z80_int dir,z80_byte valor);
 extern z80_byte peek_byte_spectrum_48k(z80_int dir);
 extern z80_byte peek_byte_spectrum_128k(z80_int dir);
+
 extern z80_byte peek_byte_spectrum_128kp2a(z80_int dir);
 extern z80_byte peek_byte_zxuno(z80_int dir);
 extern z80_byte peek_byte_spectrum_16k(z80_int dir);
@@ -339,6 +366,7 @@ extern z80_byte peek_byte_svi(z80_int dir);
 extern z80_byte peek_byte_zx80_no_time(z80_int dir);
 extern z80_byte peek_byte_no_time_spectrum_48k(z80_int dir);
 extern z80_byte peek_byte_no_time_spectrum_128k(z80_int dir);
+
 extern z80_byte peek_byte_no_time_spectrum_128kp2a(z80_int dir);
 extern z80_byte peek_byte_no_time_zxuno(z80_int dir);
 extern z80_byte peek_byte_no_time_spectrum_16k(z80_int dir);
@@ -472,6 +500,7 @@ extern z80_int pop_valor();
 extern z80_byte rlc_valor(z80_byte value);
 extern void rlc_reg(z80_byte *reg);
 extern void rlca(void);
+extern void ex_af_af(void);
 extern z80_byte rl_valor(z80_byte value);
 extern void rl_reg(z80_byte *reg);
 extern void rla(void);

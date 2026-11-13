@@ -1,226 +1,435 @@
 
-
--Opción por defecto no permitir "zoom x" diferente de "zoom y" al redimensionar ventana mediante ratón. Quedarse con valor inferior de zoom
-ok *pendiente sdl1,sdl2,X11. acabar de probar bien
-
--SDL2 no deja cambiar a zoom 2 redimensionando con ratón
-
--sdl en debian 12 32 bits inicializa muy lento
-
-
----------------------
-
---Inicio lectura mando analógico, como un volante
-
-
-Probar en diferentes sistemas:
-*acabar de probarlo de nuevo en todos: SDL windows, SDL linux, linux nativo, mac.
-
-*continental circus, ---steering-wheel-address b50ch, parece de 16 bits, pero no va bien. intentar que funcione
+-Revisar compatibilidad de timestamps posteriores a 2038:
+*stats.c: generate_stats_uuid convierte tv_sec a int. Usar un tipo de 64 bits
+y el formato de printf correspondiente.
+*timer_get_current_seconds devuelve long, que tiene 32 bits en Windows. Devolver
+time_t o z80_64bit.
+*QL RTC: calcular la epoca QL con 64 bits y convertir finalmente al contador
+emulado de 32 bits sin signo. En plataformas con long de 32 bits puede desbordar
+alrededor de 2029.
+*En Linux de 32 bits, comprobar soporte y activar _TIME_BITS=64 ademas de
+_FILE_OFFSET_BITS=64.
+*Corregir get_file_date_from_stat en macOS para pasar
+&buf_stat->st_mtimespec.tv_sec a localtime.
 
 
---Fin lectura mando analógico, como un volante
-
----------------------
-
-
-ok -En watches que permita agregar etiquetas a cada expresión
-Por ejemplo si expresión es IX, etiqueta que diga "Dirección de carga"
-Que se puedan activar etiquetas en cada watch independiente
-* al agregar expresión: que meta etiqueta igual a expresión
-* que sucede al editar expresión? no quiero que toque la etiqueta existente
-Pero se distingue entre agregar y editar? Agregar seria cuando la existente está vacía
-O directamente que el label muestre la que haya (si está vacía, meter igual a expresión)
-* al mostrar, si label vacia: mostrar expresión. Esto es para facilitar updates de watches existentes en versiones anteriores,
-sino el usuario lo veria en blanco
-
--view gosub stack como ventana en segundo plano y que se actualice continuamente
+-quiza al llamar a filesel para seleccionar una carpeta (menu_filesel_all_parameters("Enter dir & press ESC",filtros,nada,0,1))
+que cambie algo mas de filesel, como:
+**que indique que se pide carpeta y no archivo (aparte del titulo de la ventana que ya lo dice)
+**que no se deba salir con ESC
+**etc....
 
 
----------
+-Dibujado de barras arcoiris en titulo menu: o bien aparezcan a partir de ancho minimo fijo (lo que hay ahora) o que espere
+el minimo para que no corte el titulo. Ver funcion menu_dibuja_ventana
 
--- Nuevo visor de Basic --
 
--Visor de basic que permita indicar dirección ram donde empezar: sirve para poder ver el bloque de basic
-cargado desde el Cargador Azul por ejemplo
-Quizá una ventana con una primera linea con dirección de inicio y otra info, y de la segunda linea hacia abajo que sea
-el listado basic
 
-ok *Sprite navigator por ejemplo usa una primera linea fija y la segunda para abajo variables
+-en stdout no deja ir al menu anterior -> culpa de topbar, al estar activado no se comporta bien
 
-ok *Pero necesitaria ventana que trunque y justifique lineas, como una ventana de dialogo normal -> ejemplo en text adventure localidades
-zxvision_generic_message_aux_justificar_lineas... para justificar
-ok *y debug_view_basic_from_memory similar a como lo hace el file browser para mostrar vista basic con direccion inicio modificable
 
-ok *misma ventana para basic normal y el modificable de direccion de inicio. con checkbox con algo como:
-[x] Current basic / Start address
-Si start address, que pregunte direccion inicio y también longitud en bytes
 
-ok *que se pueda quedar en background. Que refresque al entrar y también estando en background si detecta cambios en programa
-(quiza sacar un checksum cada 1 segundo de toda la longitud y ver si cambia)
-ok *permitir betabasic: keywords son letras gráficas. opcion si mostrar keywords betabasic o no
-ok *show address in view basic que aparezca también esa opción en la ventana (y quitarla del menu settings debug)
-ok *funcion debug get basic limita el maximo de caracteres a MAX_TEXTO_GENERIC_MESSAGE
-ok *Ver tokens adicionales de versiones superiores de betabasic
-ok *poder buscar lineas
-ok *permitir pgup, pgdn
-ok *probar en linux meter poke continuo en direccion basic y ver si libera bien memoria de buffers
-ok * Ver basic con interface 1 conectado
-ok * que actualice current line continuamente
-*poder buscar texto
-* icono
+-rutinas speech y kill speech se llaman aunque no haya nada pendiente. desde timer, llama a scrtextspeech_filter_run_pending
 
-*cada linea tiene doble salto de linea
 
--- Fin nuevo visor de Basic --
-
----------
-
--En view expanded desde tape input output etc que solo se pueda hacer View dentro, pero nada de move, delete, etc
 
 -alguna manera que desde external audio source:
 abra hexedit con expresión follow de ix
 abra watches con watch DE, IX etc para la carga
 abra vista basic
 defina también tamaños de esas ventanas?
+Todo esto es para tener esas ventanas auxiliares útiles cuando se está cargando o copiando desde cinta
+->quiza esto se podria hacer con envio de mensajes entre las dos ventanas (*send_message_function...)
 
 
 
----------
 
---Nuevo algoritmo de lectura de audio y conversión a P/P81 de ZX81--
-*si autodetectar amplitud por maximo de longitud de archivo resultante, no tiene sentido analisis de amplitudes
-*analisis de amplitudes es complejo... con STOCKS vemos que el valor mas alto es
-Amplitud 38 cantidad: 11926
+ok tape, realtape, outtape -con --tape por consola, si hay un zesarux_autosave.zsf, no carga la cinta, aunque la inserta (y se queda topspeed y un pendiente load"").
+Esto es porque primero se llama a tape_init() que inserta la cinta y posteriormente a autoload_snapshot();
+quiza tape_init() tendria que ir despues de autoload_snapshot() pero hay que validarlo bien todo antes
+Por que tape_init() se llama tan pronto?
+->validar también --snap, --slotcard, --outtape, no sé si fallan tambien cuando hay un zesarux_autosave.zsf
+Ademas en algunos casos (no recuerdo que combinacion ahora), al hacer reinsert (o insert, si no estaba insertada) de cinta, generaba segfault
 
-Pero en cambio ese valor de 38 no da una lectura correcta del programa
-(amplitud_media=39 Longitud nombre: 14 Longitud p81: 4248 Nombre: CONTROL STOCKS)
-y realmente ocupa 6433 bytes y no 4248
-
-Por tanto creo que lo mejor es que:
--Por defecto autodetectar. Que vayan saliendo valores finales en pantalla con longitudes y al final sea automaticamente el que decida
--Que el usuario pueda abortar la detección e indicar un valor preferido (o segun lo que vea en pantalla)
-A igualdad de valores, ejemplo:
-
-amplitud_media=14 Longitud nombre: 0 Longitud p81: 0 Nombre:
-amplitud_media=15 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=16 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=17 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=18 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=19 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=20 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=21 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=22 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=23 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=24 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=25 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=26 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=27 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=28 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=29 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=30 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=31 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=32 Longitud nombre: 14 Longitud p81: 6433 Nombre: CONTROL STOCKS
-amplitud_media=33 Longitud nombre: 14 Longitud p81: 4249 Nombre: CONTROL STOCKS
-
-Entre 15 y 32 son iguales, pero el 32 da resultado erroneo. Es mejor que el usuario escoja un valor entre medias (23 por ejemplo),
-aunque el algoritmo escogera el 15 (que da resultado correcto), que es el primero del mas alto
-
--Este algoritmo está pensado para lecturas de cintas reales, con su señal imperfecta
-Intentar leer una señal perfecta como la de unkatris (que ademas no tiene valores 0) provoca que no se  lean datos
-En cambio mis archivos generados desde P a RWA, esos si que se leen bien
-
--Dos maneras (realmente 3) de llamar a la función de conversión de RWA a P/P81:
-ok * desde file utils. convert RWA a P/P81. Automático sin preguntar amplitud
-* por linea de comandos. convert RWA a P/P81. Automático sin preguntar amplitud
-ok * desde storage->tape, nuevo submenu. con ventana en background, lanzando tarea como thread, viendo datos de autodetección
-que diga también posibles errores (ejemplo "No sabemos que bit es cuando hay 6 pulsos")
-marcado por defecto autodetección pero se puede especificar amplitud típica
-*falta opcion de activar debug en ventana
-
-*Luego también se podría integrar en visual real tape, la función que obtiene el nombre del programa y su longitud
-*en menu_file_realtape_browser_show, con tecla V de view muestra los bloques de datos de un rwa, si es zx8081 o spectrum. creo que aqui
-se llama tambien al usar visual real tape, esa info de bloques
-*al insertar en standard tape un archivo smp/rwa, llama a snap_load_zx80_zx81_load_smp: ahi se deberia autodetectar,
-y en algun sitio indicar si se usa el algoritmo viejo o el nuevo. OJO! que es comun a zx80 y zx81
-
-*que ventana de conversión permita usar antiguo algoritmo? DESCARTADO esto
+-pulsar dos veces con boton derecho en zx desktop abre dos veces el menu de zx desktop (menu pequeñito) y luego al pulsar ESC hay que pulsar dos
+veces
 
 
-*entrada en changelog
+-En Zeng si usuario envía pulsación tecla pero la liberación de tecla no llega por fallo de red, se quedará la tecla pulsada siempre.
+Hacer un proceso en que, si nadie pulsa una tecla (ni clientes Zeng ni el propio servidor) durante 5 minutos, que libere todas teclas
 
 
-*en View expanded, si se reusa archivo de salida, al ser una carpeta temporal, hay restos de las anteriores
-
-*f1 ayuda indicando como funciona y detallando el debug output
-*comentar en ayuda que esta conversión mejorada de raw a p/p81 requiere que se borren pulsos de ruido de antes de los datos,
-se permite la zona de silencio de zx81 pero algún click que haya antes, mas alto de esas zonas de silencio, se deben borrar a mano
-(ejemplo orquesta_zx81.rwa.gz incluye un click que hace que no cargue bien)
-
-
-*que pasa si llega el pulso final y poco despues se acaba el archivo. lo finaliza bien?
+-probar fullscreen en todos drivers
+*permitir raton en full screen. probar fullscreen con zx desktop
+sdl2 ok. aunque al volver de fullscreen no lee bien raton
+en sdl1, raton lo ubica en la posicion inicial
+*sdl1, sdl2: revisar fullscreen funcione bien con parametro limites pantalla, o no hacer caso de esos limites en full screen?
+->parece que no siempre falla el calculo de posicion del raton. con debian 32 bits x86 funciona bien
 
 
-*usleep preciso para que funcione bien en windows? Segun notas de hilow, algunos Linux tampoco
-Mac parece hacerlo bien... o si?
+-Con estilo tiny, sin desktop, desde top menu, submenus no aparecen al lado, aunque haya espacio para ubicarlos, aparecen posicionados arriba a la izquierda
+serian estas lineas:
+diff --git a/src/zxvision/zxvision.c b/src/zxvision/zxvision.c
+index dd279a05..ba320131 100644
+--- a/src/zxvision/zxvision.c
++++ b/src/zxvision/zxvision.c
+@@ -22680,7 +22680,8 @@ void menu_dibuja_submenu_get_menu_pos(int *xnormal,int *ynormal)
+     //    menu_dibuja_submenu_primer_submenu,force_next_menu_position.v);
 
-*poder convertir audio de zx80?
+     //menu a la derecha del anterior siempre que tengamos zx desktop habilitado y opcion de situar menus en zx desktop
+-    if (menu_show_submenus_tree.v && screen_ext_desktop_enabled && screen_ext_desktop_place_menu) {
++    //if (menu_show_submenus_tree.v && screen_ext_desktop_enabled && screen_ext_desktop_place_menu) {
++    if (menu_show_submenus_tree.v) {
 
 
-*ajustar esto:
-                        //Crestas de subida que sean 3 o 4 veces de mayor longitud que la cresta de bajada implica que hay un silencio antes de dicha onda
-                        if (longitud_cresta_subida>longitud_cresta_bajada*3 && pulsos_leidos) {
-realmente es *3? Bueno realmente es bastante mas que 3, ejemplo Rise length: 21 Fall length: 3
+         //es el primero
+@@ -23022,13 +23023,15 @@ int menu_dibuja_menu(int *opcion_inicial,menu_item *item_seleccionado,menu_item
 
+     int posicionar_submenu=0;
 
-*Poder convertir turbo de cinta de stocks
+-    if (menu_show_submenus_tree.v && m->no_es_realmente_un_menu==0 && screen_ext_desktop_enabled && screen_ext_desktop_place_menu) posicionar_submenu=1;
++    //if (menu_show_submenus_tree.v && m->no_es_realmente_un_menu==0 && screen_ext_desktop_enabled && screen_ext_desktop_place_menu) posicionar_submenu=1;
++
++    if (menu_show_submenus_tree.v && m->no_es_realmente_un_menu==0) posicionar_submenu=1;
+
+Pero entonces posiciona submenus tambien cuando no tenemos topbar y no hay zx desktop....
+Hay que revisar todas las condiciones de cuando hay que mostrar menus centrados, o pegados arriba, o pegados a la derecha
 
 
 
-ok -Quiza que con esos pulsos sospechosos se marquen en waveform. Pero para eso la rutina de conversión deberia
-retornar una tabla con las posiciones de todos los sospechosos.
-Quiza pasar un puntero a esa tabla al llamar a convertir, indicando un maximo admitido: si hay muchos errores (+ de 100?) no tiene sentido revisarlos todos. Y que ademas diga conteo de pulsos que ha calculado la rutina en cada uno de esos fallos
-Como siempre, NULL como parametro si no queremos eso
--Incluso podria haber una tecla para navegar entre esos pulsos sospechosos
--Incluso que cuando encuentre un pulso sospechoso, llamar a un callback y que pregunte al usuario qué hacer
-*poder editar la onda cuando haya un error - que se pare si hay un error (numero de pulsos desconocidos para valor de bit). Requeriria otra ventana diferente de la waveform?
 
--waveform solo se puede visualizar cuando el thread esta activo
-Quiza esto no es un problema pues siempre se puede lanzar y pausar para que se pueda examinar la señal
-Por ejemplo si quiero ver todos los errores de pulsos, si lanzo y acaba el thread, no se vera
-Habria que lanzar el thread y pausarlo antes de que acabe
+-Mover algunos items del archivo "TODO" a los otros TODO* correspondientes
+
+- Sin ZX desktop con topbar, submenus se despliegan en Y=0
 
 
+-soporte joystick nimbus. soporte pad (no es como un eje que hay posicion para + y otra -). nuevo REALJOYSTICK_INPUT_EVENT_PAD
+ok calculos de valorboton*32768 y diferencias deberia ser igual en caso de axis o dpad, solo considerar los limites que retorna el propio botón. corregir esto.
+* Ver que REALJOYSTICK_INPUT_EVENT_DPAD no mete incompatibilidad con Linux (de eventos con mismo valor)
+ok - soporte nimbus en Mac
+-> - nimbus solo va con apple o iphone
+- soporte nimbus en Windows (SDL1, SDL2)
+- soporte nimbus en Linux (SDL1, SDL2)
+- soporte nimbus en Linux (Nativo Linux)
+ok - probar joystick "nes" en Mac, joystick logic3
+ok - probar joystick "nes" en Linux (SDL1, SDL2), joystick logic3
+ok - probar joystick "nes" en Linux (Nativo Linux), joystick logic3
+ok - probar joystick "nes" en Windows, joystick logic3
+- probar volante en Mac, Linux, Windows
 
-ok -Puede leer .RAW sin problema? Mientras sea 8 bit unsigned debería funcionar
-
--un .RAW tambien identifica a una imagen de salida de hilow en formato crudo
--tambien un .raw es archivo de audio 44100hz, 8 bit, unsigned para entrada de sonido al convertir de cinta hilow a ddh
--y ahora tambien al capturar sonido, considero un .raw como archivo en crudo con frecuencia de sampleo 31200hz
-En general, considerando audio, .raw seria formato en crudo, con cualquier samplerate. Y para todos los sitios considero 8 bit unsigned
-Y para hilow de salida en crudo, es otra cosa, es formato hilow en crudo pero que no tiene que ver con el sonido
-
---FIN Nuevo algoritmo de lectura de audio y conversión a P/P81 de ZX81--
 
 
--Revisar funcion util_convert_p_p81_basic_to_scr(nombre,tmpfile_scr); de converir .p/.p81 a listado basic y de ahi a miniatura scr
-ok *quitar todo lo de video memory que no se usa
-ok para .O *soportar zx80
-ok *preview de archivos .81? que formato era? en extras hires hay
-*probar con archivos random .p, .p81 etc y ver que no peta
-*Preview de .baszx80, .baszx81. Estos salen de expandir y no tienen offset a primera línea. ojo porque la rutina de convertir le suma esos offset...
-*Preview de tap quizá mostrar pantalla listado basic (si hay basic) cuando no hay pantalla
--Agregar funcion convertir que haga eso mismo en file utilities
--Poder cargar (real tape) .81
--Poder expandir .81
--Otras funciones de los .81
--En teoria son los mismos que .P , solo que con otra extension
+-tiene sentido desactivar multitask y dejar background windows? veo que zx eyes sigue funcionando en el menu al desactivar multitask
+->funcionan ventanas pero al pulsar una tecla o mover raton por ejemplo. no se refrescan sin no se pulsa teclado/ratón porque no hay multitask
+->en background windows help se menciona al final pero no le acabo de ver el sentido "You can have background windows enabled but multitasking disabled (not recommended, but allowed). "
+->cuantas ventanas que se pueden ir a background no necesitan multitask? Por ejemplo debug cpu, cpu compact statistics, waveform, io ports, hexadecimal editor, view sprites, visual memory
+->lo contrario: multitask sin background windows, pues el menu funciona a la vez que la emulacion, pero solo se tiene una ventana activaa
 
--Captura a disco
-*entrada en changelog
-*opcion para archivo de salida en ventana de captura
-ok *RWA (15600), RAW (44100?) y formato custom Hz (aunque captura son siempre 31200 hz, mas alla de eso se duplican bytes)
-*si hay libreria audiofile, poder generar WAV de salida
-*Permitir Signed al grabar raw?
-*Resample a menos frecuencia tendría que hacer valor medio con los anteriores?
 
+
+
+-driver audio que sea archivo raw. esto complementaria el output a audio del menu
+pero facilitaria poder lanzar ZEsarUX desde consola. funciona --aofile xxx con --ao null?
+
+
+----
+
+Pendientes ahora
+
+***QL*****
+
+
+
+
+
+QL-Qsound AY
+*hacer resto de funciones de rom traps de qsound no solo write all: dado que no hay juegos, que yo sepa, que las usen, no puedo validarlo
+*oldtower_m a veces se cuelga al iniciar
+*opciones de config file: de momento solo qsound enabled, faltan settings traps etc (necesarios?)
+*Qsound opciones para habilitar en archivos .config
+*Incluir alguna demo de QL en extras?
+
+----
+
+-master system:
+outrun: corregido dibujado pista y tablero y nubes
+chasehq: tambien bien
+bank panic ok
+astro flash ok
+
+
+----
+
+-pcw16
+
+https://www.freetimeweb.nl/home/computer/alt/lawsons-amstrad-computer_site/web.ukonline.co.uk/cliff.lawson/files/anneasic.zip
+
+https://www.freetimeweb.nl/home/computer/alt/lawsons-amstrad-computer_site/web.ukonline.co.uk/cliff.lawson/files/rosandoc.zip
+
+
+
+------
+
+***Spectrum Next*****
+
+-tbblue funciona:
+
+NextZXOS: 2.06H
+./zesarux --noconfigfile --mmc-file codex_additional/tbblue-ok.mmc --enable-mmc --machine tbblue --enable-divmmc-ports --mmc-no-persistent-writes
+
+-tbblue no funciona (ya si! :) :
+
+NextZXOS: 2.09
+./zesarux --noconfigfile --mmc-file codex_additional/tbblue-no-ok.mmc --enable-mmc --machine tbblue --enable-divmmc-ports --mmc-no-persistent-writes
+equivalente:
+./zesarux --configfile codex_additional/configfile_tbblue_pruebas
+Y con snapshot de pogie (asi no parece que funcione!):
+./zesarux --configfile codex_additional/configfile_tbblue_pruebas codex_additional/testpogie.zsf
+
+-El changelog oficial aporta la pieza que faltaba: .SNX deja el archivo abierto con handle 0 para que el snapshot cargue datos adicionales
+>revisar que al cargar .snx desde quickload tambien soporte lo del file handle
+
+
+---
+
+-Exploding fist:
+
+ESXDOS handler: ESXDOS_RST8_F_OPEN. Mode: 01H File: [SFX/bigHit.sfx] String at BD21H return to 748EH
+ESXDOS handler: ESXDOS_RST8_F_OPEN. Mode: 01H File: [SFX/bigHit2.sfx] String at BD30H return to 748EH
+ESXDOS handler: ESXDOS_RST8_F_OPEN. Mode: 01H File: [SFX/sweep.sfx] String at BD40H return to 748EH
+ESXDOS handler: ESXDOS_RST8_F_OPEN. Mode: 01H File: [SFX/grunt.sfx] String at BD4EH return to 748EH
+ESXDOS handler: ESXDOS_RST8_F_OPEN. Mode: 01H File: [Sprites/coreimage.spr] String at B9C5H return to 7ADBH
+ESXDOS handler: ESXDOS_RST8_F_OPEN. Mode: 01H File: [Palettes/coreimage.npl] String at BC9DH return to 86A7H
+
+PC=95a1h cargar pantalla error
+necesita core 3.2.0 o inferior!
+
+--------
+
+-zeng: cuando un usuario sale correctamente con leave room, en el servidor se ven mensajes de:
+
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 0 Source IP=127.0.0.1
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 1 Source IP=127.0.0.1
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 2 Source IP=127.0.0.1
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 3 Source IP=127.0.0.1
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 4 Source IP=127.0.0.1
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 5 Source IP=127.0.0.1
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 6 Source IP=127.0.0.1
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 7 Source IP=127.0.0.1
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 8 Source IP=127.0.0.1
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 9 Source IP=127.0.0.1
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 10 Source IP=127.0.0.1
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 11 Source IP=127.0.0.1
+Debug:    ZENG Online: Error returning data from command streaming-get-audio-cont. Retries: 12 Source IP=127.0.0.1
+
+Deberia detectar la salida correcta
+
+
+------
+
+
+***Baseconf*****
+
+
+-modo video que aparezca en debug->baseconf->video info
+->mas info adicional?
+->mas ventanas en debug->baseconf?
+
+-probado con mmc pruebabaseconf.mmc
+-probado con ide con baseconf-fat32.ide
+
+juegos y demos:
+
+http://atmturbo.nedopc.com/load_trdos.htm
+
+https://zxaaa.net/view_demos.php?t=%2F&s=Base&title=Title&vers=35
+
+
+-baseconf: insertar trd habilita el modo max turbo speed si accelerate load
+->corregido?
+
+
+-baseconf tiene timex video? demo 2048hrcdevo parece que usa puerto FF
+-> parece que baseconf no. quiza eso es de atm
+
+
+-indicar como:
+* cargar un trd desde la SD: R Service, Image to ramdisk. ...
+* cargar un trd sin SD, mediante betadisk emulation de ZEsarUX
+* cargar un tap desde la SD. L emu tape load on. T Tape load. Seleccionar tape
+* cargar un tap sin SD, mediante tape emulation de ZEsarUX
+
+* fat boot: lee del disco ide o del mmc archivos hobbeta (extensiones $C etc). si hay mas de uno, aparece un selector de archivos para cargar
+* tr dos boot: inicia el disco virtual mapeado (trd o scl) desde r.service->image to ramdisk o bien leyendo del betadisk emulation de ZEsarUX
+* tape load: si emu tape load on, abre selector de archivos desde ide o mmc para seleccionar un tap. si emu tape load off, lee de cinta
+   puerto feh o emulada por ZEsarUX
+ok en faq * hdd boot: para iniciar sistemas como iS-DOS/TASiS
+* cd boot: que hace??
+
+- captura pantalla de baseconf en la home de proyecto en github
+
+-habilitar covox pentagon?
+
+------
+
+
+tsconf
+
+Parece que para iniciar de la mmc:
+*tiene que ser fat32
+*arranca el archivo boot.$c
+./zesarux --noconfigfile --machine tsconf --mmc-file /Users/cesarhernandez/Documents/ZEsarUX/zesarux/src/pruebatsconffat32.mmc --enable-mmc --mmc-persistent-writes --zoom 1
+imagen ide pruebatsconffat32_ide.ide
+
+Error que sale probando desde WC:
+
+machines/tsconf.c:1251:28: runtime error: index 135 out of bounds for type 'z80_byte *[32]' (aka 'unsigned char *[32]')
+SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior machines/tsconf.c:1251:28
+
+
+-NeoGS emular?
+
+------
+
+
+-implementar máquinas de 60 Hz (timex, master system etc)
+* pendientes 60 hz: next modo 60hz
+
+
+
+-modo 60 hz en atic atac, para next.
+-modo 60hz en pantalla solo se ve bien con real video. sin real video, solo se ve bien modelo tk90x
+creo que por la condicion especial en: scr_get_offset_putpixel_no_rainbow
+->de momento haremos que al conmutar a 60hz, active real video
+
+ok -visual floppy: opción para ver el floppy entero, con la carcasa, etc
+*pestaña de proteccion de escritura no sale en sitio correcto
+
+
+
+------
+
+-Scorpion
+
+
+*snapshots zsf. falta restaurar modo turbo en scorpion turbo
+
+*de DEVELOPMENT, pendiente desde keyboard_48p.bmp en adelante
+
+-scorpion gmx:
+acabar de probarlo **modos de video ampliado
+*gigascreen. visor de imagenes gmxpv. imagen 0139.mcx
+*probar la rom traducida profgmx6xx043.9226se.en.rom y publicarla en extras? comprimida para ocupar menos por ejemplo
+
+*en ansi06.scl habla de un modo turbo2+ 80x25. que es? y 384x304
+*gmx no tiene paleta de colores diferente?
+
+*usamos scorpiongmx-fat32.ide
+*usamos pruebascorpiongmx.mmc
+
+
+soft? https://zxaaa.net/view_demos.php?t=&s=scorpion&title=Title&vers=35
+
+*probar gmx en otros drivers de video (sdl, x11, etc)
+
+
+
+-----
+
+--- ATM Turbo
+
+- entradas en changelog, features y readme de las nuevas maquinas atm
+ok - tamaño pantalla real
+ok - render realvideo
+ok - covox activado?
+- timings correctos?
+ok - icono máquinas.
+- keyboard help
+- soporte snapshot zsf
+
+-software cpm http://atmturbo.nedopc.com/load_cpm.htm
+-software (en general atm):  http://atmturbo.nedopc.com/load_trdos.htm
+
+------
+
+-en features agregar nuevos accesos ide, sd en tsconf, baseconf, gmx
+
+
+-----
+---- ventana video output como sustituto del render normal de maquina:
+
+Idea para que la ventana de vídeo output lea pulsaciones de teclado de la máquina emulada:
+
+ok - Que la función de zxvision_send_keys diga que se envían también cuando el foco está en esa ventana
+
+Luego opción para decir que render solo irá a esa ventana: los render de buffer rainbow a pantalla no se harán. Y para modos no real video, deberían escribir
+(los que no tengan) modo no-rainbow  en buffer rainbow
+
+Luego también hacer que dicha ventana se redimensione cuando haya cambios de máquinas
+
+ok Luego si se cierra ventana, que vuelva al render normal
+
+ok Función que dibuja el fondo de ZX desktop no omita la parte de la pantalla emulada cuando se ha conmutado a ventana.
+ok Lo mismo para el dibujado de iconos y arrastre de iconos
+
+-problema con render de maquinas que tienen gui zoom=2, como baseconf, etc
+
+-que las pulsaciones sobre zx desktop en zona de maquina emulada, con ventana video output, se consideren zx desktop
+
+Que pasa sin ZX desktop? Quizá no se debería hacer este cambio a ventana si
+No hay ZX desktop
+
+ok -renombrado de nombre de ventana "video output" por otro
+
+ok-forzar real video al abrir ventana de video output
+
+ok -si se cierra ventana de emulated display desde zxvision_window_delete_this_window (process switcher o process management)
+no se finaliza normalmente y por tanto no se pone ventana_video_output_abierta a cero
+Lo mismo pasa con cerrar todas las ventanas
+Quiza hace falta una funcion en zxvision_window que se llame al cerrar ventanas
+
+-sin zxdesktop y con ventana emulated display activa, que ponemos en el fondo ? o no permitimos emulated display window si el zx desktop no esta activado?
+
+ok-al iniciar ZEsarUX, que de por validos iconos en zona de pantalla emulada si ventana emulated display esta abierta
+-al iniciar ZEsarUX, autoordenar iconos, que empiece por esquina sup-izq si ventana emulated display se ha restaurado al inicio
+
+-si emulated display window abierta, que al maximizar ventanas considere posicion arriba izquierda como inicial
+
+-diferencia de uso de cpu entre docked y windowed? parece que usa mucha cpu mas.
+ok --implementado una putpixel cache para esa ventana y baja mucho el uso de cpu
+
+-- propuesta para incremento de cpu cuando hay muchas ventanas abiertas: que en memoria_overlay (cada caracter) diga si esta visible o no, cacheado,
+eso deberia aplica tambien a pixeles. se invalide esa cache cuando se activa dirty_user_must_draw_contents
+->creo que eso no reduce mucho el uso de cpu
+
+ok -poder hacer escalado con zoom decimal
+
+-gestion pulsaciones con el raton en la zona donde se ubica Docked display
+
+-maquinas no soportadas:
+
+*mk14: no tiene render real video
+
+
+---
+
+-en teoria en las máquinas que no se puede quitar border, si me voy a fullscreen con opcion de "no border en full screen", se verán mal, ejemplo tbblue
+
+-snapshot zsf que guarde rainbow buffer? quiza es demasiado espacio
+
+-Mensajes directos en ZRCP con una ventana de chat, como mensajería
+
+-Sonido de floppy 3”, simulado, de los bytes leidos
+
+----
+-habilitar covox pentagon en zx evo baseconf
+
+ok? -poder ver paletas de colores atm, zxevo, etc
+
+
+- demos para spectrums extendidos: https://www.pouet.net/prodlist.php?platform%5B%5D=ZX+Enhanced&page=1
+
+-usar nueva funcion parecida a zxvision_putpixel_no_menu_gui_zoom para keyboard help pero que no haga tampoco zoom_x ni zoom_y, no zoom de ninguna clase,
+asi teclados serian todos parecidos independientemente de si la maquina tiene gui zoom 2 o 1
+Pero luego el problema será que si queremos tener el teclado mas grande, no se podra
+Quiza habria que hacer una ventana de render de teclado que el usuario pueda redimensionar como quiera, que se amplie de manera parecida a ventana de emulated display

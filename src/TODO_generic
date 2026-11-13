@@ -25,12 +25,38 @@ Falla con drivers: sdl
 
 --- Genericos - mejoras ---
 
+-soporte libretro:
+compilacion minima con 3 cores:
+
+git clone https://github.com/libretro/libretro-super.git libretro-super
+cd libretro-super
+./libretro-fetch.sh fuse smsplus sameboy
+./libretro-build.sh fuse smsplus sameboy
+
+
+Copiar un core a retroarch, uno de ejemplo
+ https://docs.libretro.com/development/cores/developing-cores/#skeletor-sample-core
+cd /Users/cesarhernandez/Downloads/libretro-super
+./libretro-build.sh skeleton
+
+cd "/Users/cesarhernandez/Library/Application Support/RetroArch/cores"
+cp /Users/cesarhernandez/Downloads/libretro-super/dist/osx-x86_64/skeleton_libretro.dylib .
+
+
+-intérprete de lenguaje forth. Para...? por ejemplo para acciones de breakpoints
+
 -Lock sdl al refrescar hace printf?
+
+-Volante:
+*continental circus, ---steering-wheel-address b50ch, parece de 16 bits, pero no va bien. intentar que funcione
+*en haiku se bloquea al arrancar si conectado un volante
 
 -fallback de video y/o audio no lo hace si se especifica --vo .... o --ao ...... cosa que normalmente ya estara en el .zesaruxrc y por tanto no se hara fallback
 
 -Parámetro change slow en rpi que no venga por defecto
 Y lo haga la gente manualmente y/ o se detecte si es rpi1
+-Opción compilación para máquinas 'lentas':
+Activo para rpi1 pero no para 2
 
 -zona de memoria nueva que apunte a buffers internos, como real video, audio buffer o cosas asi. tiene sentido?
 
@@ -41,6 +67,21 @@ Como variable de ejecucion
 Luego flags para ver ascii o ver hexa o quitar espacios en hexa, etc
 
 -remote command: poder hacer dump de codigo fuente de lineas concretas
+
+-nuevo sistema de hotswap
+*conservar ram y rom antes
+*apuntarse tamaño de rom y ram antes
+
+en cuanto a la rom:
+si máquina destino tiene mismo tamaño de rom, dejar la de destino
+si máquina destino tiene rom mas grande, copiar la de origen repitiendo
+si máquina destino tiene rom mas pequeña, dejar la de destino (ver hotswap_128k_to_48k, hotswap_p2a_to_128)
+
+en cuanto a la ram:
+si máquina origen 48k ram y destino tiene 128k, copiar la de origen toda seguida a páginas destino 5,2,0 (ver hotswap_any_machine_to_spec128)
+si máquina origen 128k ram y destino tiene 48k ram, copiar ram de origen páginas 5,2,0 a destino toda seguida (ver hotswap_any_machine_to_spec48)
+en caso contrario, copiar tal cual la ram de origen en destino, repitiendo si es necesario para llenarla
+*considerar caso de Inves que tiene 64kb de ram, y los primeros 16kb "no sirven"
 
 -funciones ram refresh se deberian implementar con nested core:
 void set_peek_byte_function_ram_refresh(void)
@@ -67,8 +108,7 @@ void reset_peek_byte_function_ram_refresh(void)
 -en configure, al activar joystick, activa tambien pthread. porque???
 LDFLAGS="$LDFLAGS -lpthread"
 
--Opción compilación para máquinas 'lentas':
-Activo para rpi1 pero no para 2
+
 
 -Comprobar si con rpi1, con el aumento de borde, sigue llenando la pantalla
 rpi2 no? quizá es porque no he usado parámetro fullscreen y por tanto no ha redimensionado ventana
@@ -77,7 +117,6 @@ rpi2 no? quizá es porque no he usado parámetro fullscreen y por tanto no ha re
 Incluir bmp a sprite y bmp a prism en utils
 
 
--Mas archivos auto config pues versión Windows no tiene ssl
 
 -en fbdev, con --no-use-ttyrawfbdev, enviar F6 y F7 en Z88 tal y como se hace en curses, por ejemplo (diamond, square).
 he intentado meterlo en :
@@ -157,13 +196,9 @@ Esto se parsea antes y por tanto no se puede quitar el error
 Por tanto, es difícil de corregir esto. En estos casos, lo mejor es que el usuario edite el .zesaruxrc o bien lo borre para que se recree desde cero,
 pues indicando por linea de comandos no servirá de nada
 
--poder detectar si una instancia se ejecuta desde docker (y NO si se ha compilado desde docker):
-esto a nivel de estadística, permito saber en estadisticas web (enviando un parametro) que se han ejecutado instancias de testeo de docker
-
--Mostrar juego cargado en titulo ventana. Desaparece al hacer reset. Que limite tiene el texto en los diferentes sistemas operativos?
 
 
--Quiza registro DE al volver de rutina de trap load, deberia ser DE -=bytes_leidos
+
 
 
 -Funciones de utils no deberían involucrar nada del menú

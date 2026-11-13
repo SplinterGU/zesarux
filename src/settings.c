@@ -119,6 +119,8 @@
 
 z80_bit menu_debug_registers_if_showscan={0};
 
+z80_bit menu_debug_show_zones_beyond_sync={0};
+
 //Si muestra en que scanline se ha disparado un halt
 z80_bit debug_settings_show_fired_halt={0};
 
@@ -134,6 +136,13 @@ z80_bit debug_shows_invalid_opcode={0};
 //0: salta el breakpoint siempre que se cumpla condicion
 //1: salta el breakpoint cuando la condicion pasa de false a true
 z80_bit debug_breakpoints_cond_behaviour={1};
+
+//Si un step over de un rst 8 esperará que se vuelva 2 direcciones por encima de rst 8
+//espacialmente util al usar con esxdos (ya sea con el esxdos handler o con divmmc)
+//para que tenga en cuenta el byte que viene despues de rst 8
+z80_bit debug_step_over_rst8_plus_two={0};
+
+z80_bit debug_show_timing_opcodes={0};
 
 //Opciones al hacer debug, en este caso, al ejecutar comandos paso a paso
 //Ver ayuda de comando set-debug-settings para entender significado
@@ -263,6 +272,18 @@ z80_bit ql_flp1_follow_mdv1={0};
 //Si dispositivo ql win1_ es igual a mdv1_
 z80_bit ql_win1_alias_mdv1={1};
 
+//Soporte para Azerty keyboard, no tener que pulsar shift con las teclas numericas
+//En Mac por ejemplo esto no hace falta, al pulsar la tecla "1" leerá un "1" como es de esperar, pues en Mac se lee el teclado en modo raw
+z80_bit azerty_keyboard_numbers_no_shift={0};
+
+
+//
+// Storage Settings
+//
+
+z80_bit storage_accelerate_loading={0};
+z80_bit storage_accelerate_saving={0};
+
 //
 // Display Settings
 //
@@ -359,6 +380,19 @@ z80_bit setting_process_switcher_always_visible={0};
 //Si process switcher siempre se ubica abajo a la izquierda por acciones del menu Windows (minimize all, cascade, etc)
 z80_bit setting_process_switcher_force_left_bottom={1};
 
+//Si process switcher solo muestra una unica fila de procesos
+z80_bit setting_process_switcher_only_one_row={1};
+
+//Si se permite render que encaje la pantalla dentro de la ventana, por tanto escalado zoom total
+z80_bit setting_emulated_display_win_zoom_fit={0};
+
+//Y si se mantienen las proporciones ancho/alto
+z80_bit setting_emulated_display_win_zoom_fit_keep_proportion={1};
+
+//autoredimensionar esa ventana al cambiar de maquina
+z80_bit setting_emulated_display_win_autoresize={0};
+
+
 //Logo de decimo aniversario.
 //En version X (10.10) estaba habilitado por defecto
 z80_bit xanniversary_logo={0};
@@ -389,6 +423,7 @@ z80_bit zxdesktop_configurable_icons_enabled={1};
 
 z80_bit zxdesktop_empty_trash_on_exit={0};
 
+z80_bit zxdesktop_automatic_reorder_icons={0};
 
 z80_bit zxdesktop_icon_show_app_open={1};
 
@@ -397,8 +432,18 @@ z80_bit zxdesktop_icon_show_app_open={1};
 // ZX Vision Settings
 //
 
-//Con top bar menu, desactivamos botones superiores
+//Si está activo topbar menu
 z80_bit zxvision_topbar_menu_enabled={0};
+//Si aparece topbar al mover raton a la parte superior
+z80_bit zxvision_topbar_appears_move_mouse_top={1};
+//Cambiar estilo segun dia/noche
+z80_bit zxvision_change_gui_style_day_night={0};
+
+
+//
+// Main Window Settings
+//
+int disable_fullscreen_on_exit_zesarux=1;
 
 //
 // General Settings
@@ -467,3 +512,16 @@ z80_bit zeng_online_show_footer_lag_indicator={1};
 
 //Decir que pulsaciones locales de teclas en slave se envian a la maquina al momento, y no se eliminan para esperar que vengan como eventos
 z80_bit zeng_online_allow_instant_keys={0};
+
+
+//
+// Settings de Drivers
+///
+
+z80_bit scr_sdl_8bits_color={0};
+
+//Tamaño SDL forzado. Pensado para FiwixOS
+z80_bit scr_sdl_force_size={0};
+int scr_sdl_force_size_width=800;
+int scr_sdl_force_size_height=600;
+z80_bit scr_sdl_hwsurface={0};

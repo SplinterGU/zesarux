@@ -41,6 +41,7 @@ struct s_snapshots_in_ram {
 
 extern struct s_snapshots_in_ram snapshots_in_ram[];
 extern int snapshots_in_ram_total_elements;
+extern z80_64bit snapshots_in_ram_total_size;
 extern int snapshot_in_ram_load(int posicion);
 //extern int snapshot_in_ram_pending_message_footer;
 extern void snapshot_add_in_ram(void);
@@ -53,7 +54,29 @@ extern void snapshots_in_ram_reset(void);
 extern int snapshot_in_ram_enabled_timer_timeout;
 
 extern z80_bit snapshot_in_ram_enabled;
+extern z80_bit snapshot_in_ram_timer_enabled;
 
 extern int snapshot_in_ram_get_element(int indice);
+extern void snapshot_add_in_ram_save(void);
+
+
+struct s_snaps_ram_cache {
+    //en uso o no
+	int usado;
+    //id del snapshot
+	int snapshot;
+    //memoria del preview
+	int *memoria;
+    //ultimo acceso
+	unsigned int ultimo_acceso;
+    //para distinguir preview alto de spectrum o ql
+    int alto;
+};
+
+
+#define SNAPS_RAM_CACHE_TOTAL 10
+extern struct s_snaps_ram_cache snaps_ram_cache[];
+extern int snaps_ram_cache_search(int snapshot);
+extern void snaps_ram_cache_add(int snapshot,int *buffer_intermedio,int alto);
 
 #endif

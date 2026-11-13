@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 
+#allows to use DESTDIR for adding a prefix to the install path
 
-INSTALLPREFIX=`cat compileoptions.h |grep INSTALL_PREFIX|cut -d '"' -f2`
+INSTALLPREFIX=`grep INSTALL_PREFIX compileoptions.h | cut -d '"' -f2`
+if [ -n "$DESTDIR" ]; then
+	INSTALLPREFIX="$DESTDIR/$INSTALLPREFIX"
+fi
+
 EDITION_NAME_GAME=`cat cpu.h|grep EDITION_NAME_GAME|cut -d '"' -f2`
 
 

@@ -1,7 +1,16 @@
 /*
-    mdvtool.c: Tool from MIST emulator to extract contents of a .mdv qlay file format. File should be 174930 bytes in size
+    mdvtool.c: Tool from MIST emulator to extract contents of .mdv images.
+
+    Mejorado soporte en ZEsarUX:
+
+    1. QLay clasico de 174.930 bytes (el único que soportaba mdvtool inicialmente)
+    2. Q-emulator Mdump 1, con sectores de 528 bytes.
+    3. Q-emulator Mdump 2, con sectores de 530 bytes.
+    4. Imagenes Mdump con cantidad variable de sectores buenos.
+
     (c) 2015 by Till Harbaum
     https://github.com/mist-devel
+    https://github.com/mist-devel/mist-binaries/tree/master/cores/ql/tools/mdvtool
 
     Copyright (c) 2015 Till Harbaum <till@harbaum.org>
 
@@ -26,8 +35,17 @@
 
 */
 
-/* mdvtool */
-/* another quick'n dirty tool to deal with microdrive images */
+// mdvtool
+// another quick'n dirty tool to deal with microdrive images
+// Original author Till Harbaum
+//
+// Create MDV function added
+// Fixed ZIP import
+// Squished a few bugs
+// (c)2019 Jason Lucas
+//
+// Additional fixes squidrpi
+//
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -93,6 +111,17 @@ unsigned short sum(unsigned char *p, int len) {
   return v;
 }
 
+static unsigned short mdvtool_read_be16(const unsigned char *p) {
+  return ((unsigned short)p[0] << 8) | p[1];
+}
+
+static unsigned int mdvtool_read_be32(const unsigned char *p) {
+  return ((unsigned int)p[0] << 24) |
+         ((unsigned int)p[1] << 16) |
+         ((unsigned int)p[2] << 8) |
+         p[3];
+}
+
 unsigned short mdvtool_get_index(int s) {
   int i;
   for(i=0;i<MDVTOOL_MAX_SECTORS;i++)
@@ -119,7 +148,7 @@ int mdvtool_get_mapping_entry(int i) {
 }
 
 // compare mapping table with sector number of sector header
-void mdv_check_mapping(void) {
+int mdv_check_mapping(void) {
   int i;
   for(i=0;i<255;i++) {
     // mapping entry from sector 0
@@ -131,7 +160,10 @@ void mdv_check_mapping(void) {
       unsigned short phys = mdvtool_get_index(i);
 
       // check for valid physical entry
-      // TODO:
+      if(phys>255){
+        printf("WARNING: Invalid physical entry:%d\n",phys);
+        return -1;
+      }
 
       int me_bh = 256*buffer[phys].sec.file + buffer[phys].sec.block;
 
@@ -147,6 +179,7 @@ void mdv_check_mapping(void) {
       }
     }
   }
+  return 0;
 }
 
 void mdvtool_file_dump_chain(int f) {
@@ -160,38 +193,113 @@ void mdvtool_file_dump_chain(int f) {
   printf("\n");
 }
 
+//Generar archivo LABEL con el label dentro de dicho archivo
 void mdvtool_create_label(char *medium_name,char *dest_dir)
 {
     //printf("medium name: %s dest_dir: %s\n",medium_name,dest_dir);
 
-    char buffer_nombre[PATH_MAX];
-    /*
-    Evitar caracteres tipo / o \
-    */
-
    int i;
 
-   for (i=0;medium_name[i];i++) {
-       char c=medium_name[i];
-
-       if (c=='/' || c=='\\') c='.';
-
-       buffer_nombre[i]=c;
+   //No crear el archivo LABEL si el nombre contiene solo espacios o bytes nulos
+   for (i=0;i<10;i++) {
+       if (medium_name[i]!=' ' && medium_name[i]!=0) break;
    }
 
-   buffer_nombre[i]=0;
+   if (i==10) return;
 
    char nombre_final[PATH_MAX];
 
-   sprintf(nombre_final,"%s/LABEL-%s",dest_dir,buffer_nombre);
+   sprintf(nombre_final,"%s/LABEL",dest_dir);
 
    debug_printf(VERBOSE_INFO,"Creating label file %s",nombre_final);
 
-   char *buffer_contenido="Dummy file just to generate a file label";
+   util_save_file((z80_byte *)medium_name,10,nombre_final);
 
-   util_save_file((z80_byte *)buffer_contenido,strlen(buffer_contenido),nombre_final);
+}
 
+//Cargar imagen Q-emulator Mdump 1/2 y convertir sus sectores al formato interno QLAY
+static int mdvtool_load_mdump(FILE *file,int file_size)
+{
+  unsigned char header[46];
+  unsigned char mdump_sector[530];
+  unsigned int data_offset;
+  unsigned short sector_size;
+  unsigned char sector_count;
+  unsigned short sector_data_offset;
+  unsigned short sector_header_offset;
+  unsigned short block_header_offset;
+  int i;
 
+  if (fseek(file,0,SEEK_SET)!=0 || fread(header,1,sizeof(header),file)!=sizeof(header)) {
+    fprintf(stderr,"Unable to read Mdump header\n");
+    return -1;
+  }
+
+  if (memcmp(header,"Mdv*Dump",8)!=0) {
+    fprintf(stderr,"Unknown MDV image format\n");
+    return -1;
+  }
+
+  data_offset=mdvtool_read_be32(header+0x0c);
+  sector_size=mdvtool_read_be16(header+0x10);
+  sector_count=header[0x12];
+  sector_data_offset=mdvtool_read_be16(header+0x28);
+  sector_header_offset=mdvtool_read_be16(header+0x2a);
+  block_header_offset=mdvtool_read_be16(header+0x2c);
+
+  if ((sector_size!=528 && sector_size!=530) ||
+      sector_count==0 ||
+      sector_data_offset!=16 ||
+      sector_header_offset!=0 ||
+      block_header_offset!=14 ||
+      data_offset<sizeof(header) ||
+      data_offset+(unsigned int)sector_count*sector_size>(unsigned int)file_size) {
+    fprintf(stderr,"Invalid or unsupported Mdump image header\n");
+    return -1;
+  }
+
+  if (fseek(file,(long)data_offset,SEEK_SET)!=0) {
+    fprintf(stderr,"Unable to seek to Mdump sector data\n");
+    return -1;
+  }
+
+  memset(buffer,0,sizeof(buffer));
+
+  for (i=0;i<sector_count;i++) {
+    mdv_entry_t *entry=&buffer[i];
+
+    if (fread(mdump_sector,1,sector_size,file)!=sector_size) {
+      fprintf(stderr,"Unable to read Mdump sector %d\n",i);
+      return -1;
+    }
+
+    memset(entry->hdr.preamble,0,10);
+    entry->hdr.preamble[10]=0xff;
+    entry->hdr.preamble[11]=0xff;
+    entry->hdr.ff=mdump_sector[0];
+    entry->hdr.snum=mdump_sector[1];
+    memcpy(entry->hdr.name,mdump_sector+2,10);
+    memcpy(&entry->hdr.rnd,mdump_sector+12,2);
+    entry->hdr.csum=sum(&entry->hdr.ff,14);
+
+    memset(entry->sec.bh_preamble,0,10);
+    entry->sec.bh_preamble[10]=0xff;
+    entry->sec.bh_preamble[11]=0xff;
+    entry->sec.file=mdump_sector[14];
+    entry->sec.block=mdump_sector[15];
+    entry->sec.bh_csum=sum(&entry->sec.file,2);
+
+    memset(entry->sec.data_preamble,0,6);
+    entry->sec.data_preamble[6]=0xff;
+    entry->sec.data_preamble[7]=0xff;
+    memcpy(entry->sec.data,mdump_sector+16,512);
+    entry->sec.data_csum=sum(entry->sec.data,512);
+  }
+
+  printf("Q-emulator Mdump format: %d sectors, %u bytes/sector\n",
+         sector_count,sector_size);
+
+  return 0;
 }
 
 int mdv_load(char *name,char *dest_dir) {
@@ -220,12 +328,8 @@ int mdv_load(char *name,char *dest_dir) {
       return -1;
     }
   } else {
-    fprintf(stderr, "Uexpected file size\n");
-
-    // check if it's a qemulator image and load and convert it
-
-
-    return -1;
+    // load qemulator Mdump 1/2 image and convert it
+    if(mdvtool_load_mdump(mdv,size)<0) return -1;
   }
 
   // check all chunks
@@ -410,7 +514,7 @@ void mdvtool_file_export_dest(char *name,char *destination_name) {
     return;
   }
 
-  int size = mdvtool_file_size(f);
+  int size = mdvtool_file_size(f)-64; //Subtract 64 bytes for qdos header
   printf("Exporting %d bytes to '%s' ... ", size, name);
 
   FILE *out = fopen(destination_name, "wb");
@@ -534,9 +638,11 @@ void mdv_dir() {
   }
 }
 
+//Función derivada de mdv_dir creada por mi (César) para extraer todos los archivos
 void mdvtool_mdvtool_file_export_all(char *dest_dir)
 {
-int entries = mdvtool_file_size(0)/sizeof(file_t);
+
+  int entries = mdvtool_file_size(0)/sizeof(file_t);
   if(entries >= 1) {
     printf("Extracting list from directory file:\n");
 
@@ -545,29 +651,59 @@ int entries = mdvtool_file_size(0)/sizeof(file_t);
     for(j=1;j<entries;j++) {
       file_t *f = mdvtool_file_get_entry(j);
       if(f) {
-	//show_file_entry(f);
-	printf("%s\n",f->name);
+        //show_file_entry(f);
+        printf("%s\n",f->name);
 
-	char finalpath[PATH_MAX];
+        char finalpath[PATH_MAX];
 
-  //Cambiar las _ por . del nombre
-  char finalname[PATH_MAX];
-  strcpy(finalname,f->name);
-  util_string_replace_char(finalname,'_','.');
+        //Cambiar las _ por . del nombre
+        char finalname[PATH_MAX];
+        strcpy(finalname,f->name);
+        util_string_replace_char(finalname,'_','.');
 
-	sprintf(finalpath,"%s/%s",dest_dir,finalname);
-  printf("Extracting %s to %s\n",finalname,finalpath);
-	mdvtool_file_export_dest(f->name,finalpath);
+        sprintf(finalpath,"%s/%s",dest_dir,finalname);
+        printf("Extracting %s to %s\n",finalname,finalpath);
+        mdvtool_file_export_dest(f->name,finalpath);
 
-	}
+	  }
     }
   } else
-    printf("ERROR: directory file does not exist\n");
+
+  printf("ERROR: directory file does not exist\n");
 
 
 }
 
+sector_t *mdvtool_get_free_block(int file_index,int block,int last_block){
+  // get a free block
+  int i, s;
+  for(i=0;i<MDVTOOL_MAX_SECTORS;i++) {
+    s = last_block - 13 - i;
+    if(s < 0) s += MDVTOOL_MAX_SECTORS;
+    if((mdvtool_get_mapping_entry(s) &0xff00) == 0xfd00) break;
+  }
+
+  if(i == MDVTOOL_MAX_SECTORS) {
+    printf("Image full\n");
+    return 0;
+  }
+
+  // set new mapping entry
+  buffer[0].sec.data[2*s] = file_index;
+  buffer[0].sec.data[2*s+1] = block;
+  mdvtool_files[file_index][block] = s;
+
+  return mdvtool_file_get_sector(file_index, block);
+}
+
 void mdvtool_file_write(file_t *file, char *data) {
+  //Convert dots in file name to underscores
+  int longitud=strlen(file->name);
+  for(int c=0;c<longitud;c++){
+    if(file->name[c]=='.') file->name[c]='_';
+  }
+
+
   printf("Writing file '%s' with %d bytes to mdv image ...\n",
 	 file->name, SWAP32(file->length));
 
@@ -585,6 +721,9 @@ void mdvtool_file_write(file_t *file, char *data) {
   if(replace)
     printf("!!!!INFO: Replaced %d occurances of flp1_ by mdv1_\n", replace);
 
+  //Add 64 bytes to file length for qdos header
+  file->length=SWAP32(SWAP32(file->length) +64);
+
   // check if file exists
   if(mdvtool_file_open(file->name) >= 0) {
     printf("file already exists!\n");
@@ -597,8 +736,12 @@ void mdvtool_file_write(file_t *file, char *data) {
 
   // check if we need to extend the directory file
   if((entries & 7) == 7) {
-    printf("ERROR: Directory file extension not supported yet\n");
-    return;
+    //Extend directory
+    sector_t *sec = mdvtool_get_free_block(0,(entries/8)+1,(entries/8));
+    sec->file = 0;
+    sec->block = (entries/8)+1;
+    sec->bh_csum = sum(&sec->file, 2);
+    entries = mdvtool_file_size(0)/sizeof(file_t);
   }
 
   // write directory entry
@@ -625,30 +768,9 @@ void mdvtool_file_write(file_t *file, char *data) {
     int blk_size = block?512:(512-sizeof(file_t));
     if(blk_size > size) blk_size = size;
 
-    //    printf("Writing block %d with %d bytes\n", block, blk_size);
+    //printf("Writing block %d with %d bytes\n", block, blk_size);
 
-    // get a free block
-    int i, s;
-    for(i=0;i<MDVTOOL_MAX_SECTORS;i++) {
-      s = last_block - 13 - i;
-      if(s < 0) s += MDVTOOL_MAX_SECTORS;
-
-      if((mdvtool_get_mapping_entry(s) &0xff00) == 0xfd00)
-	break;
-    }
-
-    if(i == MDVTOOL_MAX_SECTORS) {
-      printf("Image full\n");
-      return;
-    }
-
-    // set new mapping entry
-    buffer[0].sec.data[2*s] = file_index;
-    buffer[0].sec.data[2*s+1] = block;
-    mdvtool_files[file_index][block] = s;
-
-    sector_t *sec = mdvtool_file_get_sector(file_index, block);
-
+    sector_t *sec = mdvtool_get_free_block(file_index,block,last_block);
     // update mapping entry and fill sector
     if(!block) {
       memcpy(sec->data, file, sizeof(file_t));
@@ -657,19 +779,18 @@ void mdvtool_file_write(file_t *file, char *data) {
       memcpy(sec->data, data, blk_size);
 
     // adjust headers
-    //unsigned short phys = mdvtool_get_index(s);
-
-    mdvtool_get_index(s);
+    //   unsigned short phys = get_index(s);
 
     sec->file = file_index;
     sec->block = block;
     sec->bh_csum = sum(&sec->file, 2);
-
+    last_block=mdvtool_files[file_index][block];
     block++;
     size -= blk_size;
     data += blk_size;
 
-    last_block = s;
+    //last_block = s;
+
   }
 }
 
@@ -677,14 +798,14 @@ void mdvtool_file_write(file_t *file, char *data) {
 void mdvtool_file_import(char *name) {
   FILE *in = fopen(name, "rb");
   if(!in) {
-    fprintf(stderr, "Unable to open mdv input file %s\n", name);
+    fprintf(stderr, "Unable to open input file %s\n", name);
     return;
   }
 
   // check file size
-  fseek(mdv, 0, SEEK_END);
+  fseek(in, 0, SEEK_END);
   int size = ftell(in);
-  fseek(mdv, 0, SEEK_SET);
+  fseek(in, 0, SEEK_SET);
 
   char *buffer = malloc(size);
   if(fread(buffer, 1, size, in) != (size_t) size) {
@@ -708,14 +829,9 @@ void mdvtool_file_import(char *name) {
 }
 
 void mdv_write(char *name) {
-  printf("Writing mdv %s\n", name);
-
-  // adjust checksums
   int i;
-  for(i=0;i<MDVTOOL_MAX_SECTORS;i++) {
-    if(buffer[i].hdr.ff == 0xff)
-      buffer[i].sec.data_csum = sum(buffer[i].sec.data, 512);
-  }
+
+  printf("Writing mdv %s\n", name);
 
   FILE *out = fopen(name, "wb");
   if(!out) {
@@ -723,10 +839,25 @@ void mdv_write(char *name) {
     return;
   }
 
-  if(fwrite(buffer, sizeof(mdv_entry_t), MDVTOOL_MAX_SECTORS, out) != MDVTOOL_MAX_SECTORS) {
-    perror("fwrite()");
-    fclose(out);
-    return;
+  // Write all sectors to output file,
+  // First write sector 0 then others in reverse order
+  for(i=MDVTOOL_MAX_SECTORS;i>0;i--) {
+    unsigned char cursec;
+
+    cursec=i;
+    if(cursec == MDVTOOL_MAX_SECTORS) cursec = 0;
+
+    // adjust checksums
+    if(buffer[cursec].hdr.ff == 0xff)
+      buffer[cursec].sec.data_csum = sum(buffer[cursec].sec.data, 512);
+
+    // write a sector at a time
+    if(!fwrite(&buffer[cursec], sizeof(mdv_entry_t), 1, out)) {
+      fprintf(stderr, "Error writing qlay image\n");
+      perror("fwrite()");
+      return;
+    }
+
   }
 
   fclose(out);
@@ -738,9 +869,7 @@ void mdv_erase(void) {
   // mark all sectors as free
   int i;
   for(i=0;i<MDVTOOL_MAX_SECTORS;i++) {
-    //unsigned short phys = mdvtool_get_index(i);
-
-    mdvtool_get_index(i);
+//    unsigned short phys = get_index(i);
 
     // set new mapping entry
 
@@ -750,7 +879,7 @@ void mdv_erase(void) {
 
     if(sec) {
       if(file) {
-	//	printf("erasing file %d, block %d\n", file, block);
+		printf("erasing file %d, block %d\n", file, block);
 
 	mdvtool_files[file][block] = 0xff;
 	buffer[0].sec.data[2*i] = 0xfd;

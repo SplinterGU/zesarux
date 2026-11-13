@@ -326,8 +326,6 @@ void set_snaptape_fileoptions_init_footers(void)
 
 //Que cosas se resetean al cargar cinta/snapshot?
 //En set_machine_params (se llama cuando hay cambio de maquina o tambien desde smartload) se hace:
-//video_zx8081_lnctr_adjust.v=0;
-//video_zx8081_estabilizador_imagen.v=1;
 //disable_wrx();
 //zx8081_vsync_sound.v=0;
 //minimo_duracion_vsync=DEFAULT_MINIMO_DURACION_VSYNC;
@@ -691,7 +689,7 @@ void set_snaptape_fileoptions(char *filename)
                 enable_rainbow();
                 ram_in_8192.v=1;
                 enable_wrx();
-		video_zx8081_estabilizador_imagen.v=0;
+
 		//offset_zx8081_t_estados=3;
         }
 
@@ -751,7 +749,7 @@ void set_snaptape_fileoptions(char *filename)
                 enable_rainbow();
                 ram_in_8192.v=1;
                 enable_wrx();
-		video_zx8081_lnctr_adjust.v=1;
+
 
         }
 
@@ -834,19 +832,19 @@ void set_snaptape_fileoptions(char *filename)
 	else if (!strcmp(md5file,"318ccb1ef3e937807b84644c7f696d3b")) {
                 split_game_name_info ("Noice-SomewhatLessLimitedCapabilities. Enabling Real Video, enabling lnctr video adjust");
                 enable_rainbow();
-                video_zx8081_lnctr_adjust.v=1;
+
         }
 
 	else if (!strcmp(md5file,"34a9c4af6022c59a9f961580b065ef64")) {
                 split_game_name_info ("REVENGE. Enabling Real Video, enabling lnctr video adjust");
                 enable_rainbow();
-                video_zx8081_lnctr_adjust.v=1;
+
         }
 
 	else if (!strcmp(md5file,"5de8a521ebfde9a8ca35e3a047da73f7")) {
                 split_game_name_info ("CRUSH. Enabling Real Video, enabling lnctr video adjust");
                 enable_rainbow();
-                video_zx8081_lnctr_adjust.v=1;
+
         }
 
 	else if (!strcmp(md5file,"cb03d99b26b0d04336ded001595ce3c4")) {
@@ -860,7 +858,7 @@ void set_snaptape_fileoptions(char *filename)
 	else if (!strcmp(md5file,"02d1ab0cf7d0251c12dafa9838d84af5")) {
                 split_game_name_info ("No Limits demo. Enabling Real Video, enabling lnctr video adjust");
                 enable_rainbow();
-                video_zx8081_lnctr_adjust.v=1;
+
         }
 
 
@@ -923,13 +921,13 @@ void set_snaptape_fileoptions(char *filename)
 	else if (!strcmp(md5file,"493817d98b6d96356df1e1c3f93866e9")) {
                 split_game_name_info ("HighRes. Enabling Real Video");
                 enable_rainbow();
-		video_zx8081_lnctr_adjust.v=1;
+
         }
 
 	else if (!strcmp(md5file,"2e4901caa2e103cf08f074c296fb30a1")) {
                 split_game_name_info ("HighResolution A1. Enabling Real Video, enabling lnctr video adjust");
 		enable_rainbow();
-		video_zx8081_lnctr_adjust.v=1;
+
 	}
 
 
@@ -983,12 +981,12 @@ void set_snaptape_fileoptions(char *filename)
 
 	else if (!strcmp(md5file,"20f8175d7b08e23d94167d6003b3a16f")) {
                 split_game_name_info ("Target Plus. Enabling Gunstick - Kempston");
-		gunstick_emulation=GUNSTICK_KEMPSTON;
+		lightgun_emulation_type=GUNSTICK_KEMPSTON;
 	}
 
 	else if (!strcmp(md5file,"1edee139362708bbbeeffa123f046fe8")) {
                 split_game_name_info ("Bestial Warrior. Enabling Gunstick - Kempston");
-                gunstick_emulation=GUNSTICK_KEMPSTON;
+                lightgun_emulation_type=GUNSTICK_KEMPSTON;
         }
 
 	//programas que usan magnum light phaser
@@ -1011,7 +1009,7 @@ void set_snaptape_fileoptions(char *filename)
 
 	) {
                 split_game_name_info ("Game that uses Magnum Light Phaser - AYCHIP");
-                gunstick_emulation=GUNSTICK_AYCHIP;
+                lightgun_emulation_type=MAGNUM_AUX;
 		//mejor con realvideo
 		enable_rainbow();
 	}
@@ -1019,18 +1017,18 @@ void set_snaptape_fileoptions(char *filename)
 
 	else if (!strcmp(md5file,"15791c249f842589fa279dfd1f382e72")) {
                 split_game_name_info ("Jungle Warfare. Uses Magnum Light Phaser - AYCHIP only with bright");
-		gunstick_emulation=GUNSTICK_AYCHIP;
-		gunstick_solo_brillo=1;
+		lightgun_emulation_type=MAGNUM_AUX;
+		lightgun_solo_brillo=1;
 		//mejor con realvideo
 		enable_rainbow();
 	}
 
 	else if (!strcmp(md5file,"6c9561f56463ca1f67d1c0aa9e0f6131")) {
                 split_game_name_info ("QS Armoury. Uses Magnum Light Phaser - AYCHIP, offset Y");
-		gunstick_emulation=GUNSTICK_AYCHIP;
-		gunstick_range_x=32;
-		gunstick_range_y=8;
-		//gunstick_y_offset=24;
+		lightgun_emulation_type=MAGNUM_AUX;
+		lightgun_range_x=32;
+		lightgun_range_y=8;
+		//lightgun_y_offset=24;
 		//mejor con realvideo
 		enable_rainbow();
 	}
@@ -1039,12 +1037,12 @@ void set_snaptape_fileoptions(char *filename)
 
 	else if (!strcmp(md5file,"fc3891eaefa94544c01aa2b975df1811")) {
                 split_game_name_info ("Solo. Enabling Gunstick - Sinclair 1");
-                gunstick_emulation=GUNSTICK_SINCLAIR_1;
+                lightgun_emulation_type=GUNSTICK_SINCLAIR_1;
 	}
 
 	else if (!strcmp(md5file,"a294d38a0c44c11afb135ebc1d79e8e6")) {
                 split_game_name_info ("Trigger. Enabling Gunstick - Sinclair 1");
-                gunstick_emulation=GUNSTICK_SINCLAIR_1;
+                lightgun_emulation_type=GUNSTICK_SINCLAIR_1;
         }
 
 
@@ -1339,11 +1337,12 @@ void autoselect_options_put_footer(void)
 
 void tape_options_corta_a_32(char *s)
 {
-	                int longitud_mensaje=strlen(s);
-                        //Ver si longitud excede 32
-                        if (longitud_mensaje>32) {
-                                s[32]=0;
-                        }
+    int longitud_mensaje=util_strlen_utf(s);
+    //Ver si longitud excede 32
+    if (longitud_mensaje>32) {
+        int pos=util_get_pos_character_in_string(s,32);
+        s[pos]=0;
+    }
 
 }
 
@@ -1352,13 +1351,22 @@ void desplaza_texto(int *indice, char *cadena_entera, char *cadena_mostrada)
 {
 
 	int i=*indice;
+
+    //Soporte utf
+    char caracter=cadena_entera[i];
+    if (menu_es_prefijo_utf(caracter)) {
+        i++;
+    }
+
 	i++;
 
 	*indice=i;
 	//printf ("indice: %d\n",i);
 	//Y copiamos 32 caracteres
 	sprintf (cadena_mostrada,"%s",&cadena_entera[i]);
-	cadena_mostrada[32]=0;
+
+    int pos=util_get_pos_character_in_string(cadena_mostrada,32);
+	cadena_mostrada[pos]=0;
 }
 
 

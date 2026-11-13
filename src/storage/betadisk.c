@@ -41,6 +41,8 @@
 #include "menu_items.h"
 #include "menu_items_storage.h"
 #include "settings.h"
+#include "timer.h"
+#include "menu_filesel.h"
 
 
 z80_bit betadisk_enabled={0};
@@ -69,6 +71,7 @@ z80_bit trd_enabled={0};
 
 void betadisk_trdoshandler_read_write_sectors(void);
 
+
 int trd_must_flush_to_disk=0;
 
 z80_bit trd_write_protection={0};
@@ -80,6 +83,24 @@ z80_bit trd_persistent_writes={1};
 //http://problemkaputt.de/zxdocs.htm#spectrumdiscbetabetaplusbeta128diskinterfacetrdos
 
 void betadisk_format_disk(void);
+
+void betadisk_handle_trdos_traps(void)
+{
+	if (!trd_enabled.v) return;
+
+	/* Punto común de transferencia de sectores de TR-DOS. El trap sirve
+	   tanto para la ROM del Beta Disk externo como para EVO-DOS en BaseConf. */
+	if (reg_pc==0x1e67 && (reg_a==0 || reg_a==255)) {
+		betadisk_show_activity();
+		betadisk_trdoshandler_read_write_sectors();
+	}
+
+	if (reg_pc==0x1ee8) {
+		debug_printf(VERBOSE_DEBUG,"Formating trd disk");
+		betadisk_show_activity();
+		betadisk_format_disk();
+	}
+}
 
 int betadisk_check_if_rom_area(z80_int dir)
 {
@@ -321,25 +342,7 @@ l1e67h:
 
 			}
 */
-			if (reg_pc==0x1e67) {
-                //printf("PC on addr 0x1e67\n");
-				if (reg_a==0 || reg_a==255) {
-					//char buffer_registros[8192];
-					//print_registers(buffer_registros);
-					//printf ("\n\nHandler for transfer_sectors\n");
-					//printf ("%s\n",buffer_registros);
-					betadisk_show_activity();
-					betadisk_trdoshandler_read_write_sectors();
-				}
-			}
-
-
-			if (reg_pc==0x1ee8) {
-				//format
-				debug_printf(VERBOSE_DEBUG,"Formating trd disk");
-				betadisk_show_activity();
-				betadisk_format_disk();
-			}
+			betadisk_handle_trdos_traps();
 
 		}
 	}
@@ -428,15 +431,44 @@ z80_byte *trd_memory_pointer;
 int betadisk_bytes_por_sector=256;
 int betadisk_sectores_por_pista=16;
 
+static int opening_trd_from_scl=0;
 
 void trd_insert(void)
 {
 
+    opening_trd_from_scl=0;
+
+    char *disk_file=trd_file_name;
+
     //Si existe
-    if (!si_existe_archivo(trd_file_name)) {
-            debug_printf (VERBOSE_ERR,"File %s does not exist",trd_file_name);
+    if (!si_existe_archivo(disk_file)) {
+            debug_printf (VERBOSE_ERR,"File %s does not exist",disk_file);
             trd_disable();
             return;
+    }
+
+    //Para conversion de scl a trd
+    char tmpdir[PATH_MAX];
+    char nombre_sin_dir[PATH_MAX];
+    char nombre_trd[PATH_MAX];
+
+
+    //Si es scl, extraer el trd que se obtiene del scl e insertar el trd
+    if (!util_compare_file_extension(disk_file,"scl")) {
+
+        opening_trd_from_scl=1;
+
+        util_get_file_no_directory(disk_file,nombre_sin_dir);
+
+
+        sprintf(tmpdir,"%s/%s",get_tmpdir_base(),nombre_sin_dir);
+        menu_filesel_mkdir(tmpdir);
+
+        util_extract_scl(disk_file,tmpdir,nombre_trd);
+
+        //Y se usara el trd extraido
+        disk_file=nombre_trd;
+
     }
 
 
@@ -448,8 +480,8 @@ void trd_insert(void)
     }
 
     FILE *ptr_trdfile;
-	debug_printf (VERBOSE_INFO,"Opening TRD File %s",trd_file_name);
-	ptr_trdfile=fopen(trd_file_name,"rb");
+	debug_printf (VERBOSE_INFO,"Opening TRD File %s",disk_file);
+	ptr_trdfile=fopen(disk_file,"rb");
 
     if (!ptr_trdfile) {
             debug_printf (VERBOSE_ERR,"Unable to open trd file");
@@ -580,7 +612,7 @@ A=0 read, A=255 write
 
 
 
-	int leidos=0;
+	//int leidos=0;
 
 	for (;numero_sectores>0;numero_sectores--) {
 		for (byte_en_sector=0;byte_en_sector<betadisk_bytes_por_sector;byte_en_sector++) {
@@ -600,16 +632,40 @@ A=0 read, A=255 write
 			if (reg_a==0) {
                 z80_byte byte_leido=betadisk_get_byte_disk(pista,sector,byte_en_sector);
                 poke_byte_no_time(destino,byte_leido);
+
+                //Si estaba en turbo (debido a acelerado por grabación),
+                //pero la opcion de cargar acelerado no está, quitar
+
+                //primero quitamos
+                if (top_speed_timer.v) {
+                    top_speed_timer.v=0;
+                    //printf("Quitar turbo al cargar\n");
+                }
+
+                //Acelerar la carga si conviene
+                timer_storage_common_accelerate_loading();
 			}
 
 			if (reg_a==255) {
                 z80_byte byte_leido=peek_byte_no_time(destino);
                 betadisk_put_byte_disk(pista,sector,byte_en_sector,byte_leido);
+
+                //Si estaba en turbo (debido a acelerado por carga, de leer el sector de directorio),
+                //pero la opcion de grabar acelerado no está, quitar
+
+                //primero quitamos
+                if (top_speed_timer.v) {
+                    top_speed_timer.v=0;
+                    //printf("Quitar turbo al grabar\n");
+                }
+
+                //luego ponemos turbo si conviene
+                timer_storage_common_accelerate_saving();
 			}
 
 			destino++;
 
-			leidos++;
+			//leidos++;
 		}
 		sector++;
         if (sector>=betadisk_sectores_por_pista) {
@@ -663,6 +719,10 @@ void betadisk_enable(void)
         debug_printf(VERBOSE_INFO,"Can not enable betadisk on non Spectrum machine");
         return;
     }
+
+        //En baseconf no queremos activar betadisk porque el propio sistema de baseconf ya intercepta las llamadas a betadisk
+
+    if (MACHINE_IS_BASECONF || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION || MACHINE_IS_PENTAGON || MACHINE_IS_ATM_TURBO) return;
 
     if (betadisk_enabled.v) return;
 
@@ -748,6 +808,11 @@ void trd_flush_contents_to_disk(void)
 
         debug_printf (VERBOSE_INFO,"Flushing TRD to disk");
 
+        if (opening_trd_from_scl) {
+            debug_printf (VERBOSE_DEBUG,"Saving to SCL file is NOT allowed");
+            return;
+        }
+
 
         FILE *ptr_trdfile;
 
@@ -794,7 +859,8 @@ void trd_insert_disk(char *nombre)
     return;
   }
 
-	if (noautoload.v==0) {
+    //Al insertar trd en baseconf no quiero que haga reset
+	if (noautoload.v==0 && !MACHINE_IS_BASECONF) {
 		reset_cpu();
 	}
 

@@ -23,6 +23,7 @@
 #define CHARSET_H
 
 extern unsigned char char_set_zx81_no_ascii[];
+extern unsigned char char_set_zx80_no_ascii[];
 
 extern unsigned char *char_set;
 extern unsigned char char_set_spectrum[];
@@ -30,6 +31,7 @@ extern unsigned char char_set_cpc[];
 extern unsigned char char_set_z88[];
 extern unsigned char char_set_sam[];
 extern unsigned char char_set_mansoftware[];
+extern unsigned char char_set_mansoftware_west[];
 extern unsigned char char_set_ql[];
 extern unsigned char char_set_retromac[];
 extern unsigned char char_set_amigaos[];
@@ -38,11 +40,17 @@ extern unsigned char char_set_msx[];
 extern unsigned char char_set_beos[];
 extern unsigned char char_set_dos[];
 extern unsigned char char_set_templeos[];
+extern unsigned char char_set_zesarux_tiny[];
+extern unsigned char char_set_tom_thumb[];
 extern unsigned char char_set_customfile[];
 
 extern char char_set_customfile_path[];
 
 #define MAX_CHARSET_NAME 32
+
+//Todas las fuentes (excepto las de iconos) tienen este tamaño
+#define CHAR_SET_ORIGINAL_WIDTH 8
+#define CHAR_SET_ORIGINAL_HEIGHT 8
 
 struct s_charset_list {
     char nombre[MAX_CHARSET_NAME];
@@ -58,7 +66,20 @@ extern int get_charset_id_by_name(char *nombre);
 
 extern void set_user_charset(void);
 
-#define MAX_CHARSET_GRAPHIC 172
+extern void charset_generate_zesarux_tiny(void);
+
+#define MAX_CHARSET_GRAPHIC 173
+
+
+#define CHAR_Z_LOGO_SMALL_TOPBAR 173
+
+#define CHAR_ARROW_DOWN 163
+#define CHAR_ARROW_UP 164
+#define CHAR_ARROW_RIGHT 165
+#define CHAR_ARROW_LEFT 166
+
+
+#define APPLE_LOGO_IN_CHARSET_RETROMAC 141
 
 //Tamanyo de cada array para charset en menu, asi podemos saber si por error he metido mas elementos
 //(aunque el compilador no me avisa cuando hay menos elementos, que seria deseable)
@@ -67,9 +88,9 @@ extern void set_user_charset(void);
 
 extern char *charset_icons_text[];
 
-//El ancho efectivo del caracter. Se escribe con 1 espacio de mas
-#define CHARSET_ICONS_ANCHO 3
-#define CHARSET_ICONS_ALTO 5
+//El tipo de letra usado para iconos
+#define CHARSET_ICONS_ANCHO 4
+#define CHARSET_ICONS_ALTO 6
 
 
 #endif

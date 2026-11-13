@@ -25,9 +25,11 @@
 
 #include "cpu.h"
 
+#define PCW_ALL_COLOURS_MODES (2+4*4+16)
 
-//2 normales, 4 paletas de 4 colores CGA, modo de 16 colores
-#define PCW_TOTAL_PALETTE_COLOURS (2+4*4+16)
+extern int pcw_rgb24_full_table[];
+
+#define PCW_TOTAL_PALETTE_COLOURS 16
 
 //Hacer que estos valores de border sean multiples de 8
 //TODO: no tengo claro del ancho del border pero le pongo suficiente para que quepa el logo de ZEsarUX a la izquierda
@@ -91,7 +93,10 @@ extern z80_bit pcw_pending_interrupt;
 
 extern void pcw_interrupt_from_pd765(void);
 
+extern void pcw_init_colour_palette_mode(int mode);
+
 extern void scr_refresca_pantalla_y_border_pcw(void);
+extern void screen_store_scanline_rainbow_pcw_border_and_display(void);
 
 extern z80_byte pcw_bank_registers[];
 extern z80_byte pcw_port_f4_value;

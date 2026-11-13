@@ -252,11 +252,7 @@ void instruccion_ed_36 ()
 
 void instruccion_ed_37 ()
 {
-        if (MACHINE_IS_TBBLUE) {
-                //ld  hl,sp         ED 25          4+4 transfer SP to HL
-                HL=reg_sp;
-        }
-        else invalid_opcode_ed("237 37");
+        invalid_opcode_ed("237 37");
 }
 
 void instruccion_ed_38 ()
@@ -290,10 +286,12 @@ void instruccion_ed_40 ()
     //BSLA DE,B   ED 28: DE = DE<<(B&31), no flags
     // barrel-shift left of DE, B (5 bits) times
     int shift_amount = reg_b & 31;
-    if (0 == shift_amount) return;
-    if (16 <= shift_amount) {           // 16+ shifts set DE to zero
+    if (shift_amount == 0) return;
+
+    if (shift_amount >= 16) {           // 16+ shifts set DE to zero
         DE = 0;
-    } else {
+    }
+    else {
         DE = DE << shift_amount;
     }
 }
@@ -309,10 +307,12 @@ void instruccion_ed_41 ()
     // aritmetic barrel-shift right of DE, B (5 bits) times
     int shift_amount = reg_b & 31;
     int de_is_negative = (1<<15) & DE;  // extract top bit
-    if (0 == shift_amount) return;
-    if (15 <= shift_amount) {           // 15+ shifts set DE either to 0 or ~0
+    if (shift_amount == 0) return;
+
+    if (shift_amount >= 15) {           // 15+ shifts set DE either to 0 or ~0
         DE = de_is_negative ? ~0 : 0;
-    } else {                            // for shift amount 1..14 do the shifting
+    }
+    else {                            // for shift amount 1..14 do the shifting
         z80_int de_bottom_part = DE >> shift_amount;
         z80_int de_upper_part = 0;      // 0 for positive/zero values
         if (de_is_negative) {           // negative values have to fill vacant top bits with ones
@@ -332,10 +332,12 @@ void instruccion_ed_42 ()
     //BSRL DE,B   ED 2A: DE = unsigned(DE)>>(B&31), no flags
     // logical barrel-shift right of DE, B (5 bits) times
     int shift_amount = reg_b & 31;
-    if (0 == shift_amount) return;
-    if (16 <= shift_amount) {           // 16+ shifts set DE to 0
+    if (shift_amount == 0) return;
+
+    if (shift_amount >= 16) {           // 16+ shifts set DE to 0
         DE = 0;
-    } else {                            // for shift amount 1..15 do the shifting
+    }
+    else {                            // for shift amount 1..15 do the shifting
         DE = DE >> shift_amount;        // DE is unsigned short, C shift is OK
     }
 }
@@ -350,10 +352,12 @@ void instruccion_ed_43 ()
     //BSRF DE,B   ED 2B: DE = ~(unsigned(~DE)>>(B&31)), no flags
     // barrel-shift right of DE, B (5 bits) times, setting top bits with one
     int shift_amount = reg_b & 31;
-    if (0 == shift_amount) return;
-    if (16 <= shift_amount) {           // 16+ shifts set DE to ~0
+    if (shift_amount == 0) return;
+
+    if (shift_amount >= 16) {           // 16+ shifts set DE to ~0
         DE = ~0;
-    } else {                            // for shift amount 1..15 do the shifting and setting
+    }
+    else {                            // for shift amount 1..15 do the shifting and setting
         z80_int de_bottom_part = DE >> shift_amount;
         z80_int de_upper_part = 0xFFFF << (16-shift_amount);
         DE = de_upper_part | de_bottom_part;
@@ -370,7 +374,7 @@ void instruccion_ed_44 ()
     //BRLC DE,B   ED 2C: DE = DE<<(B&15) | DE>>(16-B&15), no flags
     // barrel-roll left without carry of DE, B (4 bits) times
     int rolls_amount = reg_b & 15;
-    if (0 < rolls_amount) {
+    if (rolls_amount > 0) {
         z80_int de_upper_part = DE<<rolls_amount;
         z80_int de_bottom_part = DE>>(16-rolls_amount);
         DE = de_upper_part | de_bottom_part;
@@ -394,15 +398,15 @@ void instruccion_ed_47 ()
 
 void instruccion_ed_48 ()
 {
-        if (MACHINE_IS_TBBLUE) {
-		//mul  d,e          ED 30          4+4  D*E = DE
+    if (MACHINE_IS_TBBLUE) {
+        //mul  d,e          ED 30          4+4  D*E = DE
                 z80_int resultado=reg_d*reg_e;
 
-		reg_d=value_16_to_8h(resultado);
-		reg_e=value_16_to_8l(resultado);
-        }
+        reg_d=value_16_to_8h(resultado);
+        reg_e=value_16_to_8l(resultado);
+    }
 
-        else invalid_opcode_ed("237 48");
+    else invalid_opcode_ed("237 48");
 }
 
 void instruccion_ed_49 ()
@@ -438,7 +442,7 @@ void instruccion_ed_51 ()
 void instruccion_ed_52 ()
 {
         if (MACHINE_IS_TBBLUE) {
-                //add  hl,$0000     ED 34 LO HI     Add XXXX to HL
+                //add  hl,NNNN     ED 34 LO HI     Add NNNN to HL
 
 
                 z80_int operador;
@@ -454,7 +458,7 @@ void instruccion_ed_52 ()
 
 void instruccion_ed_53 ()
 {        if (MACHINE_IS_TBBLUE) {
-                //add  de,$0000     ED 35 LO HI     Add XXXX to DE
+                //add  de,NNNN     ED 35 LO HI     Add NNNN to DE
 
 
                 z80_int operador;
@@ -470,7 +474,7 @@ void instruccion_ed_53 ()
 
 void instruccion_ed_54 ()
 {        if (MACHINE_IS_TBBLUE) {
-                //add  bc,$0000     ED 36 LO HI     Add XXXX to BC
+                //add  bc,NNNN     ED 36 LO HI     Add NNNN to BC
 
 
                 z80_int operador;
@@ -486,98 +490,37 @@ void instruccion_ed_54 ()
 
 void instruccion_ed_55 ()
 {
-        if (MACHINE_IS_TBBLUE) {
-                //inc dehl          ED 37          4+4 increment 32bit DEHL
-                z80_long_int dehl= (DE << 16) | HL;
-                dehl++;
-                HL=dehl & 0xFFFF;
-                DE=(dehl>>16) & 0xFFFF;
-        }
-
-        else invalid_opcode_ed("237 55");
+    invalid_opcode_ed("237 55");
 }
 
 void instruccion_ed_56 ()
 {
-        if (MACHINE_IS_TBBLUE) {
-                //dec dehl          ED 37          4+4 decrement 32bit DEHL
-                z80_long_int dehl= (DE << 16) | HL;
-                dehl--;
-                HL=dehl & 0xFFFF;
-                DE=(dehl>>16) & 0xFFFF;
-        }
-
-        else invalid_opcode_ed("237 56");
+    invalid_opcode_ed("237 56");
 }
 
 void instruccion_ed_57 ()
 {
-        if (MACHINE_IS_TBBLUE) {
-                //add dehl,a        ED 39          4+4 Add A to 32bit DEHL
-                z80_long_int dehl= (DE << 16) | HL;
-                dehl +=reg_a;
-                HL=dehl & 0xFFFF;
-                DE=(dehl>>16) & 0xFFFF;
-        }
-
-        else invalid_opcode_ed("237 57");
+        invalid_opcode_ed("237 57");
 }
 
 void instruccion_ed_58 ()
 {
-        if (MACHINE_IS_TBBLUE) {
-                //add dehl,bc       ED 3A           Add BC to 32bit DEHL
-                z80_long_int dehl= (DE << 16) | HL;
-                dehl +=BC;
-                HL=dehl & 0xFFFF;
-                DE=(dehl>>16) & 0xFFFF;
-        }
-
-        else invalid_opcode_ed("237 58");
+        invalid_opcode_ed("237 58");
 }
 
 void instruccion_ed_59 ()
 {
-        if (MACHINE_IS_TBBLUE) {
-                //add dehl,$0000    ED 3B LO HI    4+4 Add $0000 to 32bit DEHL
-                z80_long_int dehl= (DE << 16) | HL;
-
-                z80_int operador=0;
-                operador |= lee_byte_pc();
-                operador |= (lee_byte_pc()<<8);
-
-                dehl +=operador;
-                HL=dehl & 0xFFFF;
-                DE=(dehl>>16) & 0xFFFF;
-        }
-
-        else invalid_opcode_ed("237 59");
+        invalid_opcode_ed("237 59");
 }
 
 void instruccion_ed_60 ()
 {
-        if (MACHINE_IS_TBBLUE) {
-                //sub dehl,a        ED 3C          4+4 Subtract A from 32bit DEHL
-                z80_long_int dehl= (DE << 16) | HL;
-                dehl -=reg_a;
-                HL=dehl & 0xFFFF;
-                DE=(dehl>>16) & 0xFFFF;
-        }
-
-        else invalid_opcode_ed("237 60");
+        invalid_opcode_ed("237 60");
 }
 
 void instruccion_ed_61 ()
 {
-        if (MACHINE_IS_TBBLUE) {
-                //sub dehl,bc       ED 3D          4+4 Subtract BC from 32bit DEHL
-                z80_long_int dehl= (DE << 16) | HL;
-                dehl -=BC;
-                HL=dehl & 0xFFFF;
-                DE=(dehl>>16) & 0xFFFF;
-        }
-
-        else invalid_opcode_ed("237 61");
+        invalid_opcode_ed("237 61");
 }
 
 void instruccion_ed_62 ()
@@ -674,6 +617,7 @@ void instruccion_ed_69 ()
 	else {
         reg_pc=pop_valor();
     }
+	set_memptr(reg_pc);
 
 	//Si se vuelve de una nmi especial
 	if (MACHINE_IS_ZXUNO && reg_pc==0x72) {
@@ -809,6 +753,7 @@ void instruccion_ed_77 ()
 //RETI
 	//iff1.v=iff2.v; Reti no hace esto
 	reg_pc=pop_valor();
+	set_memptr(reg_pc);
 }
 
 void instruccion_ed_78 ()
@@ -922,6 +867,7 @@ void instruccion_ed_85 ()
 //RETN*
 	iff1.v=iff2.v;
 	reg_pc=pop_valor();
+	set_memptr(reg_pc);
 
 }
 
@@ -1035,6 +981,7 @@ void instruccion_ed_93 ()
 //RETN*
 	iff1.v=iff2.v;
 	reg_pc=pop_valor();
+	set_memptr(reg_pc);
 
 }
 
@@ -1145,6 +1092,7 @@ void instruccion_ed_101 ()
 //RETN*
 	iff1.v=iff2.v;
 	reg_pc=pop_valor();
+	set_memptr(reg_pc);
 
 }
 
@@ -1280,6 +1228,7 @@ void instruccion_ed_109 ()
 //RETN*
 	iff1.v=iff2.v;
 	reg_pc=pop_valor();
+	set_memptr(reg_pc);
 
 }
 
@@ -1432,6 +1381,7 @@ void instruccion_ed_117 ()
 //RETN
 	iff1.v=iff2.v;
 	reg_pc=pop_valor();
+	set_memptr(reg_pc);
 
 }
 
@@ -1533,6 +1483,7 @@ void instruccion_ed_125 ()
 //RETN*
 	iff1.v=iff2.v;
 	reg_pc=pop_valor();
+	set_memptr(reg_pc);
 
 }
 
@@ -1644,7 +1595,7 @@ void instruccion_ed_143 ()
 void instruccion_ed_144 ()
 {
         if (MACHINE_IS_TBBLUE) {
-                //ED 90  OUTINB As OUTI but B is not incremented
+                //ED 90  OUTINB:  As OUTI but B is not incremented
 	z80_byte value,aux;
 
         contend_read_no_mreq( IR, 1 );
@@ -1772,8 +1723,8 @@ void instruccion_ed_148 ()
 void instruccion_ed_149 ()
 {
         if (MACHINE_IS_TBBLUE) {
-                //ED 95   DE holding the Y,X. Bits 0-2 of X (E) map to BIT 7 to 0 and store in A
                 //SETAE : A = 2^(7 - E&0x7)  The bottom 3 bits of E is a bit number and 7-that_bit is the bit set in A.
+                //ED 95   DE holding the Y,X. Bits 0-2 of X (E) map to BIT 7 to 0 and store in A
                 z80_byte numero_bit=reg_e & 7;
                 z80_byte resultado=128;
                 if (numero_bit>0) resultado=resultado>>numero_bit;
@@ -1805,7 +1756,7 @@ void instruccion_ed_152 ()
     // IN (C) part
     z80_int in_valor = (z80_int)lee_puerto(reg_b,reg_c);    // read + extend to 16b
 
-        //Si se ha activado wait
+    //Si se ha activado wait
     if (z80_wait_signal.v) {
         //Retroceder pc
         reg_pc--;
@@ -1814,12 +1765,12 @@ void instruccion_ed_152 ()
 
     else {
 
-    // combine it into new PC, keeping two top bits from current PC (pointing at next instruction)
-    in_valor <<= 6;
-    reg_pc = (reg_pc&0xC000) | in_valor;
-#ifdef EMULATE_MEMPTR
-    set_memptr(reg_pc);     // not sure how this actually works, needs Cesar review
-#endif
+        // combine it into new PC, keeping two top bits from current PC (pointing at next instruction)
+        in_valor <<= 6;
+        reg_pc = (reg_pc&0xC000) | in_valor;
+    #ifdef EMULATE_MEMPTR
+        set_memptr(reg_pc);     // not sure how this actually works, needs Cesar review
+    #endif
     }
 }
 
@@ -2039,7 +1990,7 @@ void instruccion_ed_165 ()
 
 		inc_8bit(reg_d);
 	}
-	//Total T-estados = 8+3+3=14
+	//Total T-estados = 4+4+3+3=14
 
         else invalid_opcode_ed("237 165");
 
@@ -2485,15 +2436,7 @@ void instruccion_ed_181 ()
 
 void instruccion_ed_182 ()
 {
-        if (MACHINE_IS_TBBLUE) {
-                //LDIRSCALE ED B6 as LDIR but 24 bit source pointer HLA' takes high 16 bits as address
-                //??? no entiendo que hace
-
-                invalid_opcode_ed("Unimplemented tbblue LDIRSCALE");
-
-        }
-
-        else invalid_opcode_ed("237 182");
+    invalid_opcode_ed("237 182");
 }
 
 void instruccion_ed_183 ()

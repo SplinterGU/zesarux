@@ -30,6 +30,7 @@
 #include "utils.h"
 #include "sam.h"
 #include "chardevice.h"
+#include "compileoptions.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -88,10 +89,15 @@ int fifo_buffer_speech_read=0;
 int fifo_buffer_speech_write=0;
 int fifo_buffer_speech_size=0;
 
+#ifdef NO_FORK_AVAILABLE
+int proceso_hijo_speech=0;
+int proceso_stop_filtro=0;
 
+#else
 pid_t proceso_hijo_speech=0;
-
 pid_t proceso_stop_filtro=0;
+
+#endif
 
 //Tiempo en segundos para enviar texto aunque no se reciba salto de linea. 0=nunca
 int textspeech_timeout_no_enter=3;
@@ -204,6 +210,7 @@ void textspeech_ver_si_stop_finalizado(void)
 #endif
 }
 
+int textspeech_empty_speech_fifo_avisado_no_fork=0;
 
 void textspeech_empty_speech_fifo(void)
 {
@@ -220,9 +227,21 @@ void textspeech_empty_speech_fifo(void)
 
 #ifndef MINGW
 
+
+    #ifdef NO_FORK_AVAILABLE
+        if (!textspeech_empty_speech_fifo_avisado_no_fork) {
+            debug_printf (VERBOSE_ERR,"Textspeech functions are not available on this system");
+            textspeech_empty_speech_fifo_avisado_no_fork=1;
+        }
+        return;
+    #else
+
+
 	textspeech_ver_si_stop_finalizado();
 
     proceso_stop_filtro = fork();
+
+    #endif
 
 
     switch (proceso_stop_filtro) {
@@ -480,7 +499,7 @@ int textspeech_get_stdout_childs(void)
     return 0;
 }
 
-
+int scrtextspeech_filter_run_pending_avisado_no_fork=0;
 
 void scrtextspeech_filter_run_pending(void)
 {
@@ -505,6 +524,15 @@ void scrtextspeech_filter_run_pending(void)
 
 #ifndef MINGW
 
+
+    #ifdef NO_FORK_AVAILABLE
+        if (!scrtextspeech_filter_run_pending_avisado_no_fork) {
+            debug_printf (VERBOSE_ERR,"Textspeech functions are not available on this system");
+            scrtextspeech_filter_run_pending_avisado_no_fork=1;
+        }
+        return;
+    #endif
+
     int fds[2];
 
     if (pipe(fds)<0) {
@@ -528,9 +556,11 @@ void scrtextspeech_filter_run_pending(void)
         }
     }
 
-
+    #ifndef NO_FORK_AVAILABLE
     //printf("Launching child process\n");
     proceso_hijo_speech = fork();
+    #endif
+
 
 
     switch (proceso_hijo_speech) {
@@ -1009,7 +1039,7 @@ void textspeech_refresca_pantalla_cpc_fun_caracter(int x GCC_UNUSED,int y GCC_UN
 
 void textspeech_enviar_speech_pantalla_cpc(void)
 {
-	scr_refresca_pantalla_cpc_text(textspeech_refresca_pantalla_cpc_fun_color,textspeech_refresca_pantalla_cpc_fun_caracter,textspeech_refresca_pantalla_cpc_fun_saltolinea);
+	scr_refresca_pantalla_cpc_text(textspeech_refresca_pantalla_cpc_fun_color,textspeech_refresca_pantalla_cpc_fun_caracter,textspeech_refresca_pantalla_cpc_fun_saltolinea,1);
 }
 
 
@@ -1174,7 +1204,7 @@ void ocr_pantalla_cpc_fun_caracter(int x GCC_UNUSED,int y GCC_UNUSED,int brillo 
 
 void ocr_enviar_speech_pantalla_cpc(void)
 {
-	scr_refresca_pantalla_cpc_text(ocr_pantalla_cpc_fun_color,ocr_pantalla_cpc_fun_caracter,ocr_pantalla_cpc_fun_saltolinea);
+	scr_refresca_pantalla_cpc_text(ocr_pantalla_cpc_fun_color,ocr_pantalla_cpc_fun_caracter,ocr_pantalla_cpc_fun_saltolinea,1);
 }
 
 
@@ -1193,7 +1223,7 @@ void ocr_get_text(char *s,int solo_texto)
 
         screen_repinta_pantalla_z88(&z88_caracter);
 
-		}
+    }
     else if (MACHINE_IS_SAM) {
         ocr_enviar_speech_pantalla_sam();
     }

@@ -63,7 +63,7 @@
 #include "utils.h"
 
 #include "timer.h"
-#include "menu.h"
+#include "menu_items_settings.h"
 
 #include "joystick.h"
 #include "cpc.h"
@@ -77,6 +77,9 @@
 #include "svi.h"
 #include "realjoystick.h"
 #include "pcw.h"
+#include "baseconf.h"
+#include "scorpion.h"
+#include "atmturbo.h"
 
 
 int gArgc;
@@ -114,12 +117,12 @@ IOHIDManagerRef hidManager;
 int cocoa_enviar_caps_contador=0;
 
 
-void kbd_mouse_event (int a,int b,int c,int d)
+void kbd_mouse_event (int a GCC_UNUSED,int b GCC_UNUSED,int c GCC_UNUSED,int d GCC_UNUSED)
 {
 }
 
 
-void kbd_put_keycode(int a)
+void kbd_put_keycode(int a GCC_UNUSED)
 {
 }
 
@@ -130,14 +133,14 @@ return 1;
 }
 
 
-void kbd_put_keysym(int a)
+void kbd_put_keysym(int a GCC_UNUSED)
 {
 }
 
 
 int kbd_mouse_is_absolute(void)
 {
-	return 0;
+    return 0;
 }
 
 #define cgrect(nsrect) (*(CGRect *)&(nsrect))
@@ -465,6 +468,7 @@ int pendiente_z88_draw_lower=0;
 - (void) ungrabMouse;
 - (void) startTimer:(id)sender;
 - (void) stopTimer:(id)sender;
+- (void) cocoa_update_window_title:(id)sender;
 - (void) toggleFullScreen:(id)sender;
 - (void) migestionEvento:(NSEvent *)event;
 - (void) gestionTecla: (NSEvent *)event : (int)pressrelease;
@@ -480,7 +484,9 @@ int pendiente_z88_draw_lower=0;
 
 @implementation ZesaruxCocoaWindow
 
-void joystickWasAdded(void* inContext, IOReturn inResult, void* inSender, IOHIDDeviceRef device) {
+
+void joystickWasAdded(void* inContext GCC_UNUSED, IOReturn inResult GCC_UNUSED, void* inSender GCC_UNUSED, IOHIDDeviceRef device)
+{
     debug_printf(VERBOSE_INFO,"Joystick has been plugged");
 
     uint vendor=0,product=0;
@@ -502,37 +508,132 @@ void joystickWasAdded(void* inContext, IOReturn inResult, void* inSender, IOHIDD
 
     char buffer_temp[256];
 
-    sprintf(buffer_temp,"Prod: 0x%x Vend: 0x%x", product,vendor);
+    //sprintf(buffer_temp,"Prod: 0x%x Vend: 0x%x", product,vendor);
+
+
+    //Obtener el nombre
+    char buffer[256];
+
+    CFStringRef name = (CFStringRef)IOHIDDeviceGetProperty(
+        device,
+        CFSTR(kIOHIDProductKey)
+    );
+
+    if (name) {
+        CFStringGetCString(name, buffer, sizeof(buffer), kCFStringEncodingUTF8);
+        sprintf(buffer_temp,"%s", buffer);
+    }
+    else {
+        strcpy(buffer_temp,"Unknown");
+    }
+
+
 
     //Por si acaso truncar al maximo para no exceder realjoystick_joy_name
     menu_tape_settings_trunc_name(buffer_temp,realjoystick_joy_name,REALJOYSTICK_MAX_NAME);
 
+
+    realjoystick_total_axes=0;
+    realjoystick_total_buttons=0;
+    realjoystick_total_dpad=0;
+
+    //Contar total de botones
+
+    CFArrayRef elements = IOHIDDeviceCopyMatchingElements(device, NULL, kIOHIDOptionsTypeNone);
+
+    CFIndex count = CFArrayGetCount(elements);
+
+    for (CFIndex i = 0; i < count; i++)
+    {
+        IOHIDElementRef element = (IOHIDElementRef)CFArrayGetValueAtIndex(elements, i);
+
+        uint32_t usagePage = IOHIDElementGetUsagePage(element);
+
+        if (usagePage == kHIDPage_Button || usagePage == kHIDPage_Consumer)
+        {
+            realjoystick_total_buttons++;
+        }
+    }
+
+    CFRelease(elements);
+
+    //Contar total de axis
+
+    elements = IOHIDDeviceCopyMatchingElements(device, NULL, kIOHIDOptionsTypeNone);
+
+    count = CFArrayGetCount(elements);
+
+    for (CFIndex i = 0; i < count; i++)
+    {
+        IOHIDElementRef element = (IOHIDElementRef)CFArrayGetValueAtIndex(elements, i);
+
+        if (IOHIDElementGetType(element) != kIOHIDElementTypeInput_Axis &&
+            IOHIDElementGetType(element) != kIOHIDElementTypeInput_Misc)
+            continue;
+
+        uint32_t page = IOHIDElementGetUsagePage(element);
+        uint32_t usage = IOHIDElementGetUsage(element);
+
+        if (page == kHIDPage_GenericDesktop)
+        {
+            switch (usage)
+            {
+                case kHIDUsage_GD_X:
+                case kHIDUsage_GD_Y:
+                case kHIDUsage_GD_Z:
+                case kHIDUsage_GD_Rx:
+                case kHIDUsage_GD_Ry:
+                case kHIDUsage_GD_Rz:
+                case kHIDUsage_GD_Slider:
+                case kHIDUsage_GD_Dial:
+                case kHIDUsage_GD_Wheel:
+                    realjoystick_total_axes++;
+                break;
+            }
+        }
+    }
+
+    CFRelease(elements);
+
+
+    //Contar total de dpad
+
+    elements = IOHIDDeviceCopyMatchingElements(device, NULL, kIOHIDOptionsTypeNone);
+
+    count = CFArrayGetCount(elements);
+
+    for (CFIndex i = 0; i < count; i++)
+    {
+        IOHIDElementRef element = (IOHIDElementRef)CFArrayGetValueAtIndex(elements, i);
+
+
+        uint32_t page = IOHIDElementGetUsagePage(element);
+        uint32_t usage = IOHIDElementGetUsage(element);
+
+        if (page == kHIDPage_GenericDesktop)
+        {
+            switch (usage)
+            {
+                case kHIDUsage_GD_DPadUp:
+                case kHIDUsage_GD_DPadDown:
+                case kHIDUsage_GD_DPadLeft:
+                case kHIDUsage_GD_DPadRight:
+                    realjoystick_total_dpad++;
+                break;
+            }
+        }
+    }
+
+    CFRelease(elements);
+
     realjoystick_present.v=1;
 
-
-/* esto no va, falla y no se ejecuta el NSLog ni nada que venga despues
-// Retrieve the device name & serial number
-NSString *devName = [NSString stringWithUTF8String:
-                                              CFStringGetCStringPtr(
-                                                   IOHIDDeviceGetProperty(device,
-                                                        CFSTR("Product")),
-                                                        kCFStringEncodingMacRoman)];
-
-NSString *devSerialNumber = [NSString stringWithUTF8String:
-                                            CFStringGetCStringPtr(
-                                               IOHIDDeviceGetProperty(device,
-                                                     CFSTR("SerialNumber")),
-                                                       kCFStringEncodingMacRoman)];
-
-NSLog(@"\nONTRAK device Model: %@\nSerial Number:%@\n",
-     devName,
-     devSerialNumber);
-     */
 
 
 }
 
-void joystickWasRemoved(void* inContext, IOReturn inResult, void* inSender, IOHIDDeviceRef device) {
+void joystickWasRemoved(void* inContext GCC_UNUSED, IOReturn inResult GCC_UNUSED, void* inSender GCC_UNUSED, IOHIDDeviceRef device GCC_UNUSED)
+{
     debug_printf(VERBOSE_INFO,"Joystick has been unplugged");
 
     if (realjoystick_present.v) {
@@ -545,8 +646,9 @@ void joystickWasRemoved(void* inContext, IOReturn inResult, void* inSender, IOHI
     }
 }
 
-void joystickAction(void* inContext, IOReturn inResult, void* inSender, IOHIDValueRef value) {
-    //printf("Gamepad talked!\n");
+void joystickAction(void* inContext GCC_UNUSED, IOReturn inResult GCC_UNUSED, void* inSender GCC_UNUSED, IOHIDValueRef value)
+{
+    //printf("joystickAction\n");
     IOHIDElementRef element = IOHIDValueGetElement(value);
     //NSLog(@"Element: %@", element);
 
@@ -557,14 +659,15 @@ void joystickAction(void* inContext, IOReturn inResult, void* inSender, IOHIDVal
     //printf("Usage: %d X %d Y %d HAT %d\n",usage,kHIDUsage_GD_X,kHIDUsage_GD_Y,kHIDUsage_GD_Hatswitch);
 
     int usagePage = IOHIDElementGetUsagePage(element);
-    //printf("Usagepage: %d kHIDPage_GenericDesktop %d kHIDPage_Button %d\n",usagePage,kHIDPage_GenericDesktop,kHIDPage_Button);
+    //printf("Usagepage: %d kHIDPage_GenericDesktop %d kHIDPage_Button %d usage %d\n",usagePage,kHIDPage_GenericDesktop,kHIDPage_Button,usage);
 
-  debug_printf(VERBOSE_DEBUG,"Joystick action: usagePage: %d usage: %d elementValue: %ld",usagePage,usage,elementValue);
+    debug_printf(VERBOSE_DEBUG,"Joystick action: usagePage: %d usage: %d elementValue: %ld",usagePage,usage,elementValue);
 
     int boton;
 
-    //Boton
-    if(usagePage==kHIDPage_Button) {
+    //Boton normal o especiales (kHIDPage_Consumer). Con kHIDPage_Consumer el numero de boton es un indice a una función,
+    //por ejemplo con el mando Nimbus el boton Menú tiene usage 547 y es kHIDUsage_Csmr_AC_Home
+    if(usagePage==kHIDPage_Button || usagePage==kHIDPage_Consumer) {
         //printf("BOTON\n");
 
         boton=usage;
@@ -580,23 +683,36 @@ void joystickAction(void* inContext, IOReturn inResult, void* inSender, IOHIDVal
 
     //Axis
     if(usagePage==kHIDPage_GenericDesktop) {
+        //printf("usage: %d\n",usage);
+
+
+        long int valorboton;
+
+        long max;
+        long min;
+        long diff;
 
         switch(usage) {
             case kHIDUsage_GD_X:
             case kHIDUsage_GD_Y:
+            case kHIDUsage_GD_Z:
+            case kHIDUsage_GD_Rx:
+            case kHIDUsage_GD_Ry:
+            case kHIDUsage_GD_Rz:
+            //Nimbus usa kHIDUsage_GD_Z y kHIDUsage_GD_Rz y los Pad
             //printf("AXIS\n");
 
                 boton=usage;
-                long int valorboton=elementValue;      //necesitamos que esto sea long para poder multiplicar por 65534 y no salir del rangpo maximo
+                valorboton=elementValue;      //necesitamos que esto sea long para poder multiplicar por 65534 y no salir del rangpo maximo
 
-                long max=IOHIDElementGetPhysicalMax(element);
-                long min=IOHIDElementGetPhysicalMin(element);
-                long diff=max-min;
+                max=IOHIDElementGetPhysicalMax(element);
+                min=IOHIDElementGetPhysicalMin(element);
+                diff=max-min;
                 debug_printf(VERBOSE_DEBUG,"Cocoa driver: received joystick event button value: %ld. Min allowed: %ld Max allowed: %ld Diff: %ld ",valorboton,min,max,diff);
+                //printf("Cocoa driver: received joystick event button %d value: %ld. Min allowed: %ld Max allowed: %ld Diff: %ld\n",boton,valorboton,min,max,diff);
 
                 //Al menos 2 valores de diferencia
                 if (diff>1) {
-
 
                     //Desplazamos. Valor menor a 0
                     valorboton -=min;
@@ -613,7 +729,9 @@ void joystickAction(void* inContext, IOReturn inResult, void* inSender, IOHIDVal
 
                     //printf("3: %ld\n",valorboton);
 
-
+                    //Ejemplo -127 a 127: eje izquierdo-derecho: (Min allowed: -127 Max allowed: 127 diff: 254)
+                    // izquierda del todo: -127. valor final: -32767
+                    // derecha del todo: +127. valor final: +32768
 
                     int valorfinalaxis=valorboton;
 
@@ -626,12 +744,65 @@ void joystickAction(void* inContext, IOReturn inResult, void* inSender, IOHIDVal
                     //printf("Set axis %d value %d\n\n",boton,valorfinalaxis);
 
                     debug_printf(VERBOSE_DEBUG,"Set axis %d value %d",boton,valorfinalaxis);
+                    //printf("Set axis %d value %d\n",boton,valorfinalaxis);
 
                     realjoystick_common_set_event(boton,REALJOYSTICK_INPUT_EVENT_AXIS,valorfinalaxis,valorboton);
                     realjoystick_hit=1;
 
                 }
 
+            break;
+
+            case kHIDUsage_GD_DPadUp:      // 0x90 (144)
+            case kHIDUsage_GD_DPadDown:    // 0x91 (145)
+            case kHIDUsage_GD_DPadRight:   // 0x92 (146)
+            case kHIDUsage_GD_DPadLeft:    // 0x93 (147)
+                //printf("DPad. TODO\n");
+
+                boton=usage;
+                valorboton=elementValue;      //necesitamos que esto sea long para poder multiplicar por 65534 y no salir del rangpo maximo
+
+                max=IOHIDElementGetPhysicalMax(element);
+                min=IOHIDElementGetPhysicalMin(element);
+                diff=max-min;
+                debug_printf(VERBOSE_DEBUG,"Cocoa driver: received joystick event button value: %ld. Min allowed: %ld Max allowed: %ld Diff: %ld ",valorboton,min,max,diff);
+                //printf("Cocoa driver: received joystick event button value: %ld. Min allowed: %ld Max allowed: %ld Diff: %ld\n",valorboton,min,max,diff);
+
+            //Al menos 2 valores de diferencia
+                if (diff>1) {
+
+
+                    //Desplazamos. Valor menor a 0
+                    valorboton -=min;
+
+                    //printf("1: %ld\n",valorboton);
+
+                    //Y escalamos a 32768
+                    valorboton=(valorboton*32768)/diff;
+
+                    //printf("2: %ld\n",valorboton);
+
+                    //Y desplazamos a -32767 a 32767
+                    //valorboton -=32767;
+
+                    //printf("3: %ld\n",valorboton);
+
+
+
+                    int valorfinalaxis=valorboton;
+
+                    //El valor de info lo guardo como el valor en crudo sin ajustar con autocalibrate
+                    menu_info_joystick_last_raw_value=valorfinalaxis;
+
+                    //printf("Set axis %d value %d\n\n",boton,valorfinalaxis);
+
+                    debug_printf(VERBOSE_DEBUG,"Set dpad %d value %d",boton,valorfinalaxis);
+                    //printf("Set dpad %d value %d\n",boton,valorfinalaxis);
+
+                    realjoystick_common_set_event(boton,REALJOYSTICK_INPUT_EVENT_DPAD,valorfinalaxis,valorboton);
+                    realjoystick_hit=1;
+
+                }
             break;
 
             case kHIDUsage_GD_Hatswitch:
@@ -669,34 +840,16 @@ int scrcocoa_ultimo_estado_realjoystick_present=0;
 
     realjoystick_present.v=scrcocoa_ultimo_estado_realjoystick_present;
 
-
     hidManager = IOHIDManagerCreate( kCFAllocatorDefault, kIOHIDOptionsTypeNone);
 
-/*
-CFMutableDictionaryRef matchDict = CFDictionaryCreateMutable(
-                                                  kCFAllocatorDefault,
-                                                  2,
-                                                   &kCFTypeDictionaryKeyCallBacks,
-                                                   &kCFTypeDictionaryValueCallBacks);
-*/
+
 
 /*
-  NSMutableDictionary* criterion = [[NSMutableDictionary alloc] init];
-  [criterion setObject: [NSNumber numberWithInt: kHIDPage_GenericDesktop] forKey: (NSString*)CFSTR(kIOHIDDeviceUsagePageKey)];
-  [criterion setObject: [NSNumber numberWithInt: kHIDUsage_GD_GamePad] forKey: (NSString*)CFSTR(kIOHIDDeviceUsageKey)];
-  IOHIDManagerSetDeviceMatching(hidManager, criterion);*/
-
-
-    //printf("kHIDPage_GenericDesktop %d kHIDUsage_GD_Joystick %d\n",kHIDPage_GenericDesktop,kHIDUsage_GD_Joystick);
-
-    //NSLog(@"kIOHIDVendorIDKey %@",kHIDUsage_GD_Joystick);
-
-
 
 
     //Method 1
     //aparentemente esto solo vale para un tipo (joystick o gamepad)
-    /*
+
     int usagePage = 0x01; // general usage page ...
     int usage = 0x04; // joystick
 
@@ -707,11 +860,11 @@ CFMutableDictionaryRef matchDict = CFDictionaryCreateMutable(
 
     // Add key for device usage page - 0x01 for "Generic Desktop"
     //CFDictionarySetValue( matchDict, CFSTR( kIOHIDPrimaryUsagePageKey ), CFNumberCreate(kCFAllocatorDefault,
-      //      kCFNumberSInt32Type, &usagePage) );
+    //      kCFNumberSInt32Type, &usagePage) );
 
-//    // Add key for device usage - 0x04 for "Joystick"
+    //    // Add key for device usage - 0x04 for "Joystick"
     //CFDictionarySetValue( matchDict, CFSTR( kIOHIDPrimaryUsageKey ), CFNumberCreate(kCFAllocatorDefault,
-      //      kCFNumberSInt32Type, &usage) );
+    //      kCFNumberSInt32Type, &usage) );
 
     usagePage = kHIDPage_GenericDesktop; // general usage page
     usage = kHIDUsage_GD_Joystick; // joystick
@@ -719,21 +872,21 @@ CFMutableDictionaryRef matchDict = CFDictionaryCreateMutable(
     // Add key for device usage page - 0x01 for "Generic Desktop"
     //Para el joystick barato tambien necesita esto
     CFDictionarySetValue( matchDict, CFSTR( kIOHIDPrimaryUsagePageKey ), CFNumberCreate(kCFAllocatorDefault,
-            kCFNumberSInt32Type, &usagePage) );
+    kCFNumberSInt32Type, &usagePage) );
 
-//    // Add key for device usage - 0x04 for "Joystick"
+    //    // Add key for device usage - 0x04 for "Joystick"
     //Para el joystick barato
     CFDictionarySetValue( matchDict, CFSTR( kIOHIDPrimaryUsageKey ), CFNumberCreate(kCFAllocatorDefault,
-            kCFNumberSInt32Type, &usage) );
+    kCFNumberSInt32Type, &usage) );
 
     //Para el gamepad logic3
     CFDictionarySetValue( matchDict, CFSTR( kIOHIDPrimaryUsageKey ), CFNumberCreate(kCFAllocatorDefault,
-            kCFNumberSInt32Type, &usagegamepad) );
+    kCFNumberSInt32Type, &usagegamepad) );
 
 
-IOHIDManagerSetDeviceMatching(hidManager, matchDict);
+    IOHIDManagerSetDeviceMatching(hidManager, matchDict);
 
-  //END Method 1
+    //END Method 1
 
 */
 
@@ -756,15 +909,14 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
 
     IOHIDManagerSetDeviceMatchingMultiple(hidManager, (__bridge CFArrayRef)(@[gamepadCriterion,joystickCriterion]));
 
-  //END Method2
-
-
+    //END Method2
 
 
     IOHIDManagerRegisterDeviceMatchingCallback(hidManager, joystickWasAdded, (void*)self);
     IOHIDManagerRegisterDeviceRemovalCallback(hidManager, joystickWasRemoved, (void*)self);
     IOHIDManagerScheduleWithRunLoop(hidManager, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
-    IOReturn tIOReturn = IOHIDManagerOpen(hidManager, kIOHIDOptionsTypeNone);
+
+    IOHIDManagerOpen(hidManager, kIOHIDOptionsTypeNone);
     IOHIDManagerRegisterInputValueCallback(hidManager, joystickAction, (void*)self);
 
     strcpy(realjoystick_driver_name,"Mac OS");
@@ -773,10 +925,8 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
 - (void)activaSelectores
 {
 
-	//printf ("ZesaruxCocoaWindow activaSelectores\n");
-
-	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowDidEndLiveResize:) name:NSWindowDidEndLiveResizeNotification object:nil];
-	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowWillStartLiveResize:) name:NSWindowWillStartLiveResizeNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowDidEndLiveResize:) name:NSWindowDidEndLiveResizeNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowWillStartLiveResize:) name:NSWindowWillStartLiveResizeNotification object:nil];
     [[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:self selector:@selector(appDeactivated:) name:NSWorkspaceDidDeactivateApplicationNotification object:nil];
 
 }
@@ -785,9 +935,9 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
 
 - (void)redimensionaVentana:(int)width height:(int)height
 {
-	debug_printf (VERBOSE_INFO,"resize Window %d X %d",width,height);
+    debug_printf (VERBOSE_INFO,"resize Window %d X %d",width,height);
 
-	NSWindow *laventana=normalWindow;
+    NSWindow *laventana=normalWindow;
 
 
     int zoom_x_calculado,zoom_y_calculado;
@@ -808,12 +958,12 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
     scr_adjust_zoom_equals(&zoom_x_calculado,&zoom_y_calculado);
 
     if (zoom_x_calculado!=zoom_x || zoom_y_calculado!=zoom_y) {
-            //resize
-            debug_printf (VERBOSE_INFO,"Resizing window");
+        //resize
+        debug_printf (VERBOSE_INFO,"Resizing window");
 
-            zoom_x=zoom_x_calculado;
-            zoom_y=zoom_y_calculado;
-            set_putpixel_zoom();
+        zoom_x=zoom_x_calculado;
+        zoom_y=zoom_y_calculado;
+        set_putpixel_zoom();
     }
 
     pixel_screen_width = screen_get_window_size_width_zoom_border_en();
@@ -828,6 +978,8 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
 
     NSInteger dataLength = pixel_screen_width * pixel_screen_height * 4;
     pixel_screen_data = (UInt8*)malloc(dataLength * sizeof(UInt8));
+    //printf("malloc redimensionaventana %d MiB\n",dataLength * sizeof(UInt8)/1024/1024);
+    //TODO: esta memoria no se libera, cada vez que redimensiona ventana, hay un memory leak, pues se reasigna sin liberar el anterior
 
     ZesaruxCocoaView *elview;
     elview=[ laventana contentView ];
@@ -850,7 +1002,7 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
     [elview setFrame:NSMakeRect(0, 0, pixel_screen_width, pixel_screen_height)];
     [ [ laventana contentView ] resizeContentToWidth:(int)(pixel_screen_width) height:(int)(pixel_screen_height) ];
 
-   //printf ("resize: %d X %d\n",width,height);
+
 
 }
 
@@ -883,40 +1035,38 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
 - (void)windowWillStartLiveResize:(NSNotification *)notification
 {
 
-	//Bloqueamos operaciones de putpixel o refresco de pantalla
-	pendingresize=1;
-	pendingresize_w=0;
-	pendingresize_h=0;
+    //Bloqueamos operaciones de putpixel o refresco de pantalla
+    pendingresize=1;
+    pendingresize_w=0;
+    pendingresize_h=0;
 
-	debug_printf(VERBOSE_INFO,"The window is going to be resized");
-
+    debug_printf(VERBOSE_INFO,"The window is going to be resized");
 
 }
 
 - (void)windowDidEndLiveResize:(NSNotification *)notification
 {
 
+    /*if (pendingresize) {
+        debug_printf (VERBOSE_INFO,"Another resize window operation is pending");
+        return;
+    }*/
 
-	/*if (pendingresize) {
-		debug_printf (VERBOSE_INFO,"Another resize window operation is pending");
-		return;
-	}*/
+    debug_printf(VERBOSE_INFO,"The window has been resized");
 
-	debug_printf(VERBOSE_INFO,"The window has been resized");
+    NSWindow *laventana=[notification object];
 
-	NSWindow *laventana=[notification object];
-
-	int width=[ [ laventana contentView ] frame ].size.width;
-	int height=[ [ laventana contentView ] frame ].size.height;
-
-
-	pendingresize=1;
-	pendingresize_w=width;
-	pendingresize_h=height;
+    int width=[ [ laventana contentView ] frame ].size.width;
+    int height=[ [ laventana contentView ] frame ].size.height;
 
 
-	[normalWindow redimensionaVentana:pendingresize_w height:pendingresize_h];
-	pendingresize=0;
+    pendingresize=1;
+    pendingresize_w=width;
+    pendingresize_h=height;
+
+
+    [normalWindow redimensionaVentana:pendingresize_w height:pendingresize_h];
+    pendingresize=0;
 
 
 }
@@ -931,7 +1081,6 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
 
 -(void)prepareOpenGL
 {
-	//printf ("prepareOpenGL\n");
 
   [super prepareOpenGL];
 
@@ -943,19 +1092,18 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
 -(void)createTexture
 {
 
-	//printf ("createTexture %ld %ld\n",pixel_screen_width, pixel_screen_height);
 
     NSInteger ancho;
     NSInteger alto;
 
-	ancho=pixel_screen_width;
-	alto=pixel_screen_height;
+    ancho=pixel_screen_width;
+    alto=pixel_screen_height;
 
-	if (ancho==0 || alto==0) {
-		//Primera vez inicializacion
-		ancho=400;
-		alto=300;
-	}
+    if (ancho==0 || alto==0) {
+        //Primera vez inicializacion
+        ancho=400;
+        alto=300;
+    }
 
 
 
@@ -977,45 +1125,28 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, ancho, alto, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
 }
 
+int cocoa_renderizando=0;
+
+
+
 - (void)render {
 
+    //Impedir que se llame cuando se esta dentro. Esto puede pasar si se genera un cpu_panic aqui dentro y el propio cpu_panic vuelve a llamar aqui
+    if (cocoa_renderizando) {
+        //printf("###############################No permitir render anidado\n");
+        return;
+    }
+
+    cocoa_renderizando=1;
 
     // CGLLockContext([[self openGLContext] CGLContextObj]);
 
     [[self openGLContext] makeCurrentContext];
 
     // We set the final size considering if Retina Display present
-    //TODO: peta con segfault si cambiamos de maquina en pantalla completa y la maquina nueva es ventana mas grande
-    if (ventana_fullscreen) {
 
-        //Escalamos manteniendo la proporción
-        int fullscreen_height=[[NSScreen mainScreen] frame].size.height;
-        int fullscreen_width=[[NSScreen mainScreen] frame].size.width;
+    glViewport(0, 0, vprect.size.width, vprect.size.height);
 
-        //Asumimos que llena en vertical
-        float finalheight=fullscreen_height;
-
-        //proporción ancho/alto de la imagen a renderizar
-        float aspectratio=((float)vprect.size.width)/((float)vprect.size.height);
-
-        float finalwidth=finalheight*aspectratio;
-
-        //Si necesita mas en horizontal, cambiamos: llena en horizontal y recalculamos en vertical
-        if (finalwidth>fullscreen_width) {
-            finalwidth=fullscreen_width;
-            finalheight=fullscreen_width/aspectratio;
-        }
-        int offset_x=(fullscreen_width-finalwidth)/2;
-        int offset_y=(fullscreen_height-finalheight)/2;
-
-        //Escalado dado que es mediante openGL, se puede hacer un escalado "decimal" no entero si es necesario
-        glViewport(offset_x, offset_y, finalwidth, finalheight);
-
-    }
-
-    else {
-        glViewport(0, 0, vprect.size.width, vprect.size.height);
-    }
 
     //NO BORRAMOS el fondo porque ya lo dibujamos más abajo
 
@@ -1042,18 +1173,23 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
     [[self openGLContext] flushBuffer];
 
     glFlush();
+
     /*
     The documentation for -[NSOpenGLContext flushBuffer] says:
 
     Discussion
 
     If the receiver is not a double-buffered context, this call does nothing.
-    You can cause your context to be double-buffered by including NSOpenGLPFADoubleBuffer in your pixel format attributes. Alternatively, you can call glFlush() instead of -[NSOpenGLContext flushBuffer] and leave your context single-buffered.
+    You can cause your context to be double-buffered by including NSOpenGLPFADoubleBuffer in your pixel format attributes.
+    Alternatively, you can call glFlush() instead of -[NSOpenGLContext flushBuffer] and leave your context single-buffered.
     */
 
 
     // CGLUnlockContext([[self openGLContext] CGLContextObj]);
+    cocoa_renderizando=0;
 }
+
+
 
 
 
@@ -1071,7 +1207,7 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
 
     }
 
-//Para drag-drop, ver http://juliuspaintings.co.uk/cgi-bin/paint_css/animatedPaint/072-NSView-drag-and-drop.pl
+
 
     [self registerForDraggedTypes:
     [NSArray arrayWithObjects:NSPasteboardTypeTIFF,NSPasteboardTypeFileURL,nil]];
@@ -1080,16 +1216,17 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
     return self;
 }
 
+//Para drag-drop, ver http://juliuspaintings.co.uk/cgi-bin/paint_css/animatedPaint/072-NSView-drag-and-drop.pl
 
 - (NSDragOperation)draggingEntered:(id <NSDraggingInfo>)sender
 {
-//printf ("Entrando drag drop\n");
+
     if ((NSDragOperationGeneric & [sender draggingSourceOperationMask])
         == NSDragOperationGeneric) {
 
         return NSDragOperationGeneric;
 
-    } // end if
+    }
 
     // not a drag we can use
     return NSDragOperationNone;
@@ -1099,31 +1236,31 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
 /*
 - (void)viewWillStartLiveResize
 {
-    printf ("viewWillStartLiveResize\n");
 
-		[ super viewWillStartLiveResize ];
+    [ super viewWillStartLiveResize ];
 }
 
 - (void)viewDidEndLiveResize
 {
-    printf ("viewDidEndLiveResize\n");
 
-		[ super viewDidEndLiveResize ];
+    [ super viewDidEndLiveResize ];
 }
 */
 
 - (void)draggingExited:(id <NSDraggingInfo>)sender
 {
-//printf ("Salido drag drop\n");
+
 }
 
-- (BOOL)prepareForDragOperation:(id )sender {
+- (BOOL)prepareForDragOperation:(id )sender
+{
    return YES;
-} // end prepareForDragOperation
+}
 
 
 
-- (BOOL)performDragOperation:(id )sender {
+- (BOOL)performDragOperation:(id )sender
+{
 
     NSPasteboard *objeto_pboard = [sender draggingPasteboard];
 
@@ -1149,61 +1286,46 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
     }
 
 
-    debug_printf(VERBOSE_DEBUG,"Can't find a file type in dragged item");
+    debug_printf(VERBOSE_DEBUG,"Can't find a file type for dragged item");
 
     return NO;
 
 
 
-} // end performDragOperation
+}
 
 
 - (void)keyDown:(NSEvent *)event
 {
-[cocoaView gestionTecla:event:1] ;
+    [cocoaView gestionTecla:event:1];
 
 }
 
 - (void)keyUp:(NSEvent *)event
 {
-[cocoaView gestionTecla:event:0] ;
+    [cocoaView gestionTecla:event:0];
 }
 
 - (void)mouseUp:(NSEvent *)event
 {
-	//mouse_left=0;
-	util_set_reset_mouse(UTIL_MOUSE_LEFT_BUTTON,0);
+    util_set_reset_mouse(UTIL_MOUSE_LEFT_BUTTON,0);
 }
 
 - (void)rightMouseUp:(NSEvent *)event
 {
-  //mouse_right=0;
-	util_set_reset_mouse(UTIL_MOUSE_RIGHT_BUTTON,0);
+    util_set_reset_mouse(UTIL_MOUSE_RIGHT_BUTTON,0);
 }
 
 - (void)scrollWheel:(NSEvent *)event
 {
-	debug_printf (VERBOSE_PARANOID,"Scroll wheel scrolled %f horizontally and %f vertically", [event deltaX], [event deltaY]);
+    debug_printf (VERBOSE_PARANOID,"Scroll wheel scrolled %f horizontally and %f vertically", [event deltaX], [event deltaY]);
     mouse_wheel_horizontal=[event deltaX];
     mouse_wheel_vertical=[event deltaY];
 }
 
 - (void)leftrightmouseDown:(int)x y:(int)y
 {
-    gunstick_x=x;
-    gunstick_y=y;
 
-    //0,0 en cocoa esta abajo a la izquierda
-    //por tanto, para coordenada y, restamos del tope la coordenada y
-	int tamanyo_y;
-	tamanyo_y=screen_get_window_size_height_no_zoom_border_en()+screen_get_ext_desktop_height_no_zoom();
-
-
-    gunstick_x=gunstick_x/zoom_x;
-    //gunstick_y=screen_get_window_size_height_no_zoom_border_en()-gunstick_y/zoom_y;
-    gunstick_y=tamanyo_y-gunstick_y/zoom_y;
-
-    debug_printf (VERBOSE_PARANOID,"Mouse Button press. x=%d y=%d. gunstick: x: %d y: %d", x, y,gunstick_x,gunstick_y);
 
 }
 
@@ -1213,14 +1335,13 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
     NSPoint locationInView = [self convertPoint:[event locationInWindow]
                                     fromView:nil];
 
-    //mouse_left=1;
     util_set_reset_mouse(UTIL_MOUSE_LEFT_BUTTON,1);
 
     //0,0 en cocoa esta abajo a la izquierda
     int posx=locationInView.x;
     int posy=locationInView.y;
 
-	[self leftrightmouseDown:posx y:posy];
+    [self leftrightmouseDown:posx y:posy];
 
 }
 
@@ -1231,7 +1352,6 @@ IOHIDManagerSetDeviceMatching(hidManager, matchDict);
     NSPoint locationInView = [self convertPoint:[event locationInWindow]
             fromView:nil];
 
-    //mouse_right=1;
     util_set_reset_mouse(UTIL_MOUSE_RIGHT_BUTTON,1);
 
     //0,0 en cocoa esta abajo a la izquierda
@@ -1256,7 +1376,6 @@ int cocoa_raton_oculto=0;
 
     //printf("mouse moved. scr_driver_can_ext_desktop=%p\n",scr_driver_can_ext_desktop);
 
-    //check_if_pendiente_activar_este_timer();
 
     NSPoint locationInView = [self convertPoint:[event locationInWindow]
                                     fromView:nil];
@@ -1270,26 +1389,44 @@ int cocoa_raton_oculto=0;
     kempston_mouse_x=mouse_x/zoom_x;
     kempston_mouse_y=255-mouse_y/zoom_y;
 
+
+
+    lightgun_x=locationInView.x;
+    lightgun_y=locationInView.y;
+
+    //0,0 en cocoa esta abajo a la izquierda
+    //por tanto, para coordenada y, restamos del tope la coordenada y
+    int tamanyo_y;
+    tamanyo_y=screen_get_window_size_height_no_zoom_border_en()+screen_get_ext_desktop_height_no_zoom();
+
+
+    lightgun_x=lightgun_x/zoom_x;
+
+    lightgun_y=tamanyo_y-lightgun_y/zoom_y;
+
+
+
+
     //si esta dentro de la ventana y hay que ocultar puntero
 
     if (mouse_pointer_shown.v==0) {
-            if (mouse_x>=0 && mouse_y>=0 &&
-                mouse_x<=(screen_get_window_size_width_zoom_border_en()+screen_get_ext_desktop_width_zoom()) &&
-                mouse_y<=screen_get_window_size_height_zoom_border_en()+screen_get_ext_desktop_height_zoom() ) {
-                    if (!cocoa_raton_oculto) {
-                            debug_printf (VERBOSE_PARANOID,"Mouse inside window and not hidden. Hide it");
-                            cocoa_raton_oculto=1;
-                            [NSCursor hide];
-                    }
-            }
+        if (mouse_x>=0 && mouse_y>=0 &&
+            mouse_x<=(screen_get_window_size_width_zoom_border_en()+screen_get_ext_desktop_width_zoom()) &&
+            mouse_y<=screen_get_window_size_height_zoom_border_en()+screen_get_ext_desktop_height_zoom() ) {
+                if (!cocoa_raton_oculto) {
+                    debug_printf (VERBOSE_PARANOID,"Mouse inside window and not hidden. Hide it");
+                    cocoa_raton_oculto=1;
+                    [NSCursor hide];
+                }
+        }
 
-            else {
-                    if (cocoa_raton_oculto) {
-                            debug_printf (VERBOSE_PARANOID,"Mouse outside window and hidden. Unhide it");
-                            cocoa_raton_oculto=0;
-                            [NSCursor unhide];
-                    }
+        else {
+            if (cocoa_raton_oculto) {
+                debug_printf (VERBOSE_PARANOID,"Mouse outside window and hidden. Unhide it");
+                cocoa_raton_oculto=0;
+                [NSCursor unhide];
             }
+        }
 
     }
 
@@ -1297,8 +1434,8 @@ int cocoa_raton_oculto=0;
         //Si se tiene que mostrar, pero se habia ocultado y ahora se ha vuelto a habilitar el setting
         if (cocoa_raton_oculto) {
             debug_printf (VERBOSE_PARANOID,"Mouse was hidden and the setting is now enabled. Unhide it");
-    cocoa_raton_oculto=0;
-    [NSCursor unhide];
+            cocoa_raton_oculto=0;
+            [NSCursor unhide];
         }
     }
 
@@ -1306,7 +1443,8 @@ int cocoa_raton_oculto=0;
     //debug_printf (VERBOSE_PARANOID,"Mouse motion. X: %d Y:%d kempston x: %d y: %d",mouse_x,mouse_y,kempston_mouse_x,kempston_mouse_y);
 }
 
-- (BOOL)acceptsFirstResponder {
+- (BOOL)acceptsFirstResponder
+{
     return YES;
 }
 
@@ -1330,8 +1468,9 @@ int cocoa_raton_oculto=0;
 
 
 
-- (void) flagsChanged:(NSEvent *)event {
-	[cocoaView migestionEvento:event];
+- (void) flagsChanged:(NSEvent *)event
+{
+    [cocoaView migestionEvento:event];
 }
 
 
@@ -1354,53 +1493,26 @@ int cocoa_raton_oculto=0;
 - (void) setContentDimensions
 {
 
-    if (ventana_fullscreen) {
+    cx = 0;
+    cy = 0;
+    cw = screen.width;
+    ch = screen.height;
+    cdx = 1.0;
+    cdy = 1.0;
 
-        //printf ("[[NSScreen mainScreen] frame].size %f X %f\n",[[NSScreen mainScreen] frame].size.width,[[NSScreen mainScreen] frame].size.height);
-
-        int anchopantalla=[[NSScreen mainScreen] frame].size.width;
-        int altopantalla=[[NSScreen mainScreen] frame].size.height;
-
-        //Establecemos alto ventana. Ancho va en proporcion
-        int proporcion_y=altopantalla/screen.height;
-        int altoventana=screen.height*proporcion_y;
-        int anchoventana=screen.width*proporcion_y;
-
-        cdy=proporcion_y;
-        cdx=proporcion_y;
-
-
-        cw = anchoventana;
-        ch = altoventana;
-
-        //printf ("ventana: %d X %d proporciones x: %f y: %f\n",anchoventana,altoventana,cdx,cdy);
-
-        cx = (anchopantalla - cw) / 2.0;
-        cy = (altopantalla - ch) / 2.0;
-
-    }
-
-    else {
-            cx = 0;
-            cy = 0;
-            cw = screen.width;
-            ch = screen.height;
-            cdx = 1.0;
-            cdy = 1.0;
-    }
 
 }
 
 
 - (void) setSizeScreen:(int)w height:(int)h
 {
-	screen.width=w;
-	screen.height=h;
+    screen.width=w;
+    screen.height=h;
 }
 
 - (void) resizeContentToWidth:(int)w height:(int)h
 {
-	debug_printf (VERBOSE_DEBUG,"scrcocoa: resizeContentToWidth %d X %d",w,h);
+    debug_printf (VERBOSE_DEBUG,"scrcocoa: resizeContentToWidth %d X %d",w,h);
 
     int timeout=100;
 
@@ -1409,17 +1521,17 @@ int cocoa_raton_oculto=0;
     }
 
     while (sem_screen_refresh_reallocate_layers && timeout) {
-            //printf ("Se va a hacer resizeContentToWidth en medio de refresco. Esperar\n");
+        //printf ("Se va a hacer resizeContentToWidth en medio de refresco. Esperar\n");
 
-            //esto parece que solo sucede al inicio del programa? y solo en Cocoa?
-            //este tipo de cosas parece que solo sucede en cocoa pues el driver de video va con un thread aparte a su bola
-            //cuando genera error aqui entra por un resize de un evento "automatico" de cocoa
-            //esto es independiente de ZX Desktop, ya este habilitado o no, puede suceder esto
-            //si no controlase esto, acaba generando segmentation fault (pero parece que el segmentation fault solo cuando esta habilitado ZX Desktop)
+        //esto parece que solo sucede al inicio del programa? y solo en Cocoa?
+        //este tipo de cosas parece que solo sucede en cocoa pues el driver de video va con un thread aparte a su bola
+        //cuando genera error aqui entra por un resize de un evento "automatico" de cocoa
+        //esto es independiente de ZX Desktop, ya este habilitado o no, puede suceder esto
+        //si no controlase esto, acaba generando segmentation fault (pero parece que el segmentation fault solo cuando esta habilitado ZX Desktop)
 
-            usleep(10000); //0.01 segundo
+        usleep(10000); //0.01 segundo
 
-            timeout--;
+        timeout--;
     }
 
     //Si ha saltado el timeout despues de 100 intentos (100*0.01=1 segundo) y sigue reallocating, que pase lo que pase, pero que salga de ahi
@@ -1431,21 +1543,16 @@ int cocoa_raton_oculto=0;
 
 
     //sync host window color space with guests
-	screen.bitsPerPixel = 32;
-	screen.bitsPerComponent = 4 * 2;
+    screen.bitsPerPixel = 32;
+    screen.bitsPerComponent = 4 * 2;
 
     dataProviderRef = CGDataProviderCreateWithData(NULL, pixel_screen_data, w * 4 * h, NULL);
 
 
     // update windows
-    if (ventana_fullscreen) {
-            [[fullScreenWindow contentView] setFrame:[[NSScreen mainScreen] frame]];
 
-            [normalWindow setFrame:NSMakeRect([normalWindow frame].origin.x, [normalWindow frame].origin.y - h + screen.height, w, h + [normalWindow frame].size.height - screen.height) display:NO animate:NO];
-    } else {
+    [normalWindow setFrame:NSMakeRect([normalWindow frame].origin.x, [normalWindow frame].origin.y - h + screen.height, w, h + [normalWindow frame].size.height - screen.height) display:YES animate:NO];
 
-            [normalWindow setFrame:NSMakeRect([normalWindow frame].origin.x, [normalWindow frame].origin.y - h + screen.height, w, h + [normalWindow frame].size.height - screen.height) display:YES animate:NO];
-    }
 
 
     screen.width = w;
@@ -1455,101 +1562,88 @@ int cocoa_raton_oculto=0;
 
     [self setFrame:NSMakeRect(cx, cy, cw, ch)];
 
-	//printf ("crear ventana de %f X %f \n",cw,ch);
-	clear_putpixel_cache();
-	modificado_border.v=1;
-	//Parece que hay que hacer el screen_z88_draw_lower_screen retardado (en refresca pantalla) no aqui
-	//TODO. en el futuro habria que hacer una variable comun (tipo modificado_border) que se lea desde todos los drivers e
-	//indique cuando hay que llamar a screen_z88_draw_lower_screen
-	pendiente_z88_draw_lower=1;
+    //printf ("crear ventana de %f X %f \n",cw,ch);
+    clear_putpixel_cache();
+    modificado_border.v=1;
+    //Parece que hay que hacer el screen_z88_draw_lower_screen retardado (en refresca pantalla) no aqui
+    //TODO. en el futuro habria que hacer una variable comun (tipo modificado_border) que se lea desde todos los drivers e
+    //indique cuando hay que llamar a screen_z88_draw_lower_screen
+    pendiente_z88_draw_lower=1;
 
     scr_set_pending_redraw_desktop_windows();
 
-	[self createTexture];
+    [self createTexture];
 
 
 }
 
-
-- (void) toggleFullScreen:(id)sender
+//Se llama aqui desde menu de mac de fullscreen de ZEsarUX, hay que considerar parametros de antes/despues desactivado zx desktop , border, etc
+- (void)toggleFullScreenPrevio:(id)sender
 {
-    //COCOA_DEBUG("ZesaruxCocoaView: toggleFullScreen\n");
+    //printf("Inicio toggleFullScreenPrevio\n");
 
-    if (ventana_fullscreen) { // switch from fullscreen to desktop
-        ventana_fullscreen = 0;
-        [self ungrabMouse];
-        [self setContentDimensions];
+    //printf("toggleFullScreenPrevio\n");
 
-// test if host supports "exitFullScreenModeWithOptions" at compile time
-#if (MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_5)
-        if ([NSView respondsToSelector:@selector(exitFullScreenModeWithOptions:)]) { // test if "exitFullScreenModeWithOptions" is supported on host at runtime
-            [self exitFullScreenModeWithOptions:nil];
-        } else {
-#endif
-            [fullScreenWindow close];
-            [normalWindow setContentView: self];
-            [normalWindow makeKeyAndOrderFront: self];
-            [NSMenu setMenuBarVisible:YES];
+    NSWindow *window = [self window];
 
-#if (MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_5)
-        }
-#endif
-
-    } else { // switch from desktop to fullscreen
-        ventana_fullscreen = 1;
-        [self grabMouse];
-        [self setContentDimensions];
-
-// test if host supports "enterFullScreenMode:withOptions" at compile time
-#if (MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_5)
-        if ([NSView respondsToSelector:@selector(enterFullScreenMode:withOptions:)]) { // test if "enterFullScreenMode:withOptions" is supported on host at runtime
-
-            [self enterFullScreenMode:[NSScreen mainScreen] withOptions:[NSDictionary dictionaryWithObjectsAndKeys:
-                [NSNumber numberWithBool:NO], NSFullScreenModeAllScreens,
-                [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithBool:NO], kCGDisplayModeIsStretched, nil], NSFullScreenModeSetting, nil]];
-
-		//printf ("full screen desde enterFullScreenMode:[NSScreen mainScreen] withOptions:nil\n");
-
-                //temp [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithBool:NO], nil, nil], NSFullScreenModeSetting, nil]];
-        } else {
-#endif
-
-		//Ocultar menu, dock
-        [NSMenu setMenuBarVisible:NO];
-
-
-		//TODO fullscreen. Esto llena la pantalla completamente, distorsionando
-
-        fullScreenWindow = [[NSWindow alloc] initWithContentRect:[[NSScreen mainScreen] frame]
-            styleMask:NSWindowStyleMaskBorderless
-            backing:NSBackingStoreBuffered
-            defer:NO];
-
-		//TODO fullscreen. Esto	pone el tamanyo que queremos, pero no oculta el resto de detras, por tanto no aparenta ser pantalla completa
-
-		/*
-            fullScreenWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect (0.0, 0.0, 1274.0, 1080.0)
-                styleMask:NSBorderlessWindowMask
-                backing:NSBackingStoreBuffered
-                defer:NO];
-		*/
-
-        [fullScreenWindow setHasShadow:NO];
-        [fullScreenWindow setContentView:self];
-        [fullScreenWindow makeKeyAndOrderFront:self];
-
-
-	//esto parece que no hace nada [fullScreenWindow setResizeIncrements:NSMakeSize(1.0,1.0)];
-
-		//printf ("full screen desde fullScreenWindow\n");
-
-		//printf ("[[NSScreen mainScreen] frame].size %f X %f\n",[[NSScreen mainScreen] frame].size.width,[[NSScreen mainScreen] frame].size.height);
-
-#if (MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_5)
-        }
-#endif
+    if (!window) {
+        return;
     }
+
+    pendingresize=1;
+
+    if ((window.styleMask & NSWindowStyleMaskFullScreen) != 0) {
+        //Está en pantalla completa. Conmutara a no pantalla completa
+        //printf("Quitamos full screen\n");
+        change_variable_ventana_fullscreen(0);
+        menu_interface_fullscreen_disable();
+    }
+    else {
+        //printf("Pasamos a full screen\n");
+        menu_interface_fullscreen_enable();
+        change_variable_ventana_fullscreen(1);
+    }
+
+
+    [self setContentDimensions];
+
+    [window toggleFullScreen:sender];
+
+    //printf("Fin toggleFullScreenPrevio\n");
+
+    pendingresize=0;
+
 }
+
+- (void)toggleFullScreen:(id)sender
+{
+    //printf("toggleFullScreen linea 1453\n");
+
+    NSWindow *window = [self window];
+
+    if (!window) {
+        return;
+    }
+
+    pendingresize=1;
+
+    if ((window.styleMask & NSWindowStyleMaskFullScreen) != 0) {
+        //Está en pantalla completa. Conmutara a no pantalla completa
+        change_variable_ventana_fullscreen(0);
+    }
+    else {
+        change_variable_ventana_fullscreen(1);
+    }
+
+    [self setContentDimensions];
+
+    [window toggleFullScreen:sender];
+
+    pendingresize=0;
+}
+
+
+
 
 
 
@@ -1575,45 +1669,30 @@ int scrcocoa_keymap_z88_cpc_leftz; //Tecla a la izquierda de la Z. usada en Chlo
 
 
 
-//- (void) gestionTecla:(NSEvent *)event pressrelease:(int)pressrelease
 - (void) gestionTecla: (NSEvent *)event : (int)pressrelease
 {
     //COCOA_DEBUG("ZesaruxCocoaView: gestionTecla\n");
 
-	//La tecla cmd tiene la "particular" caracteristica de que al pulsarla, no envia release del resto de teclas
-	//por tanto, cuando se esta pulsada, liberar teclas y volver
-	/*
-	if (scrcocoa_antespulsadocmd_l==1) {
-		//printf ("cmd key pressed. resetting all keys\n");
-		reset_keyboard_ports();
-		return;
-	}
-	*/
 
+    UInt16 cocoakeycode;
 
-
-	//printf ("cmd key: %d\n",scrcocoa_antespulsadocmd_l);
-
-    int buttons = 0;
-    int cocoakeycode;
-    NSPoint p = [event locationInWindow];
     cocoakeycode=[event keyCode];
     //printf ("cocoakeycode tecla %d pressrelease: %d\n",cocoakeycode,pressrelease);
 
-	int teclareal=0;
-    //printf ("gestionTecla.tecla: %d contador: %d\n",cocoakeycode,temp_cocoa_contador++);
+    int teclareal=0;
 
-	//printf ("sizeof array: %d\n",sizeof(keymap));
-	if (cocoakeycode<sizeof(keymap)/sizeof(int) ) {
-		teclareal=keymap[cocoakeycode];
-	}
 
-	if (pressrelease) notificar_tecla_interrupcion_si_z88();
+
+    if (cocoakeycode<(sizeof(keymap)/sizeof(int)) ) {
+        teclareal=keymap[cocoakeycode];
+    }
+
+    if (pressrelease) notificar_tecla_interrupcion_si_z88();
 
     //printf ("teclareal %d pressrelease: %d\n",teclareal,pressrelease);
 
-	//Teclas que necesitan conversion de teclado para Chloe
-	int tecla_gestionada_chloe=0;
+    //Teclas que necesitan conversion de teclado para Chloe
+    int tecla_gestionada_chloe=0;
         if (MACHINE_IS_SPECTRUM && chloe_keyboard.v) {
                 tecla_gestionada_chloe=1;
 
@@ -1645,13 +1724,13 @@ int scrcocoa_keymap_z88_cpc_leftz; //Tecla a la izquierda de la Z. usada en Chlo
         }
 
 
-	if (tecla_gestionada_chloe) return;
+    if (tecla_gestionada_chloe) return;
 
 
 
-	int tecla_gestionada_sam_ql=0;
-	if (MACHINE_IS_SAM || MACHINE_IS_QL || MACHINE_IS_MSX || MACHINE_IS_SVI || MACHINE_IS_PCW) {
-		tecla_gestionada_sam_ql=1;
+    int tecla_gestionada_sam_ql=0;
+    if (MACHINE_IS_SAM || MACHINE_IS_QL || MACHINE_IS_MSX || MACHINE_IS_SVI || MACHINE_IS_PCW) {
+        tecla_gestionada_sam_ql=1;
 
                 if (teclareal==scrcocoa_keymap_z88_cpc_minus) util_set_reset_key_common_keymap(UTIL_KEY_COMMON_KEYMAP_MINUS,pressrelease);
 
@@ -1678,10 +1757,10 @@ int scrcocoa_keymap_z88_cpc_leftz; //Tecla a la izquierda de la Z. usada en Chlo
                 else if (teclareal==scrcocoa_keymap_z88_cpc_leftz) util_set_reset_key_common_keymap(UTIL_KEY_COMMON_KEYMAP_LEFTZ,pressrelease);
 
 
-		else tecla_gestionada_sam_ql=0;
-	}
+        else tecla_gestionada_sam_ql=0;
+    }
 
-	if (tecla_gestionada_sam_ql) return;
+    if (tecla_gestionada_sam_ql) return;
 
 
 
@@ -1993,8 +2072,8 @@ int scrcocoa_keymap_z88_cpc_leftz; //Tecla a la izquierda de la Z. usada en Chlo
 
 //Fuera del switch
 
-	//Teclas que necesitan conversion de teclado para CPC
-	if (MACHINE_IS_CPC) {
+    //Teclas que necesitan conversion de teclado para CPC
+    if (MACHINE_IS_CPC) {
 
                 if (teclareal==scrcocoa_keymap_z88_cpc_minus) util_set_reset_key_cpc_keymap(UTIL_KEY_CPC_MINUS,pressrelease);
 
@@ -2021,7 +2100,7 @@ int scrcocoa_keymap_z88_cpc_leftz; //Tecla a la izquierda de la Z. usada en Chlo
                 else if (teclareal==scrcocoa_keymap_z88_cpc_backslash) util_set_reset_key_cpc_keymap(UTIL_KEY_CPC_BACKSLASH,pressrelease);
 
 
-	}
+    }
 
 
 
@@ -2058,26 +2137,22 @@ int scrcocoa_keymap_z88_cpc_leftz; //Tecla a la izquierda de la Z. usada en Chlo
 
 - (void) migestionEvento:(NSEvent *)event
 {
-    //printf ("\nmigestionEvento\n");
-
 
     //asumimos teclas de control no pulsadas
     int pulsadoctrl_l,pulsadoctrl_r,pulsadoalt_l,pulsadoalt_r,pulsadoshift_l,pulsadoshift_r,pulsadocmd_l,pulsadocmd_r; //,pulsadocapslock;
 
     pulsadoctrl_l=pulsadoctrl_r=pulsadoalt_l=pulsadoalt_r=pulsadoshift_l=pulsadoshift_r=pulsadocmd_l=pulsadocmd_r=0;
 
-    int event_keycode,event_type,event_modifier_flags;
-    NSPoint p = [event locationInWindow];
+    int event_keycode,event_modifier_flags;
 
-	event_type=[event type];
-	event_keycode=[event keyCode];
-	event_modifier_flags=[event modifierFlags];
+    event_keycode=[event keyCode];
+    event_modifier_flags=[event modifierFlags];
 
-	//printf ("event_modifier_flags: 0x%X\n",event_modifier_flags);
+    //printf ("event_modifier_flags: 0x%X\n",event_modifier_flags);
 
-	//printf ("event type: %d event keycode: %d event_modifier_flags: %d\n",event_type,event_keycode,event_modifier_flags);
+    //printf ("event type: %d event keycode: %d event_modifier_flags: %d\n",event_type,event_keycode,event_modifier_flags);
 
-	//https://developer.apple.com/library/mac/documentation/Cocoa/Reference/ApplicationKit/Classes/NSEvent_Class/#//apple_ref/doc/constant_group/Function_Key_Unicodes
+    //https://developer.apple.com/library/mac/documentation/Cocoa/Reference/ApplicationKit/Classes/NSEvent_Class/#//apple_ref/doc/constant_group/Function_Key_Unicodes
 
     if (event_keycode==0x39) {
             //printf ("enviar caps lock durante 10/50 s\n");
@@ -2086,45 +2161,47 @@ int scrcocoa_keymap_z88_cpc_leftz; //Tecla a la izquierda de la Z. usada en Chlo
     }
 
 
-	/*if (event_modifier_flags & NSAlphaShiftKeyMask) {
-		printf ("Caps lock key pressed\n");
-		pulsadocapslock=1;
-	}
-	*/
+    /*if (event_modifier_flags & NSAlphaShiftKeyMask) {
+        printf ("Caps lock key pressed\n");
+        pulsadocapslock=1;
+    }
+    */
 
-	if (event_modifier_flags & NSEventModifierFlagShift) {
-		//printf ("Shift key is pressed\n");
-		//printf ("NSShiftKeyMask: 0x%X\n",NSShiftKeyMask);
+    if (event_modifier_flags & NSEventModifierFlagShift) {
+        //printf ("Shift key is pressed\n");
+        //printf ("NSShiftKeyMask: 0x%X\n",NSShiftKeyMask);
 
-		/* Estos valores los he encontrado probando:
-		NSShiftKeyMask: 0x20000
+        /* Estos valores los he encontrado probando:
+        NSShiftKeyMask: 0x20000
 
-		left shift: 0x20002
+        left shift: 0x20002
 
-		right shift: 0x20004
+        right shift: 0x20004
 
-*/
+        */
 
-		if ( (event_modifier_flags & 0x20004)==0x20004) {
-			//printf ("Right Shift key is pressed\n");
-			pulsadoshift_r=1;
-		}
-		if ( (event_modifier_flags & 0x20002)==0x20002) {
-			//printf ("Left Shift key is pressed\n");
-			pulsadoshift_l=1;
-		}
+        if ( (event_modifier_flags & 0x20004)==0x20004) {
+            //printf ("Right Shift key is pressed\n");
+            pulsadoshift_r=1;
+        }
+        if ( (event_modifier_flags & 0x20002)==0x20002) {
+            //printf ("Left Shift key is pressed\n");
+            pulsadoshift_l=1;
+        }
 
-		//dado que estos valores los he obtenido probando, por si acaso, se ha entrado aqui pero no se cumple ni left ni right, metemos left
-		if (pulsadoshift_l==0 && pulsadoshift_r==0) {
-			debug_printf (VERBOSE_DEBUG,"Strange behaviour. Shift pressed but do not know if left or right. Asuming left");
-			//printf ("Strange behaviour. Shift pressed but do not know if left or right. Asuminng left\n");
-			pulsadoshift_l=1;
-		}
-	}
-	if (event_modifier_flags & NSEventModifierFlagControl) {
-		//printf ("Control key is pressed\n");
+        //dado que estos valores los he obtenido probando, por si acaso, se ha entrado aqui pero no se cumple ni left ni right, metemos left
+        if (pulsadoshift_l==0 && pulsadoshift_r==0) {
+            debug_printf (VERBOSE_DEBUG,"Strange behaviour. Shift pressed but do not know if left or right. Asuming left");
+            //printf ("Strange behaviour. Shift pressed but do not know if left or right. Asuminng left\n");
+            pulsadoshift_l=1;
+        }
+
+    }
+
+    if (event_modifier_flags & NSEventModifierFlagControl) {
+        //printf ("Control key is pressed\n");
         //printf("event_modifier_flags %XH NSEventModifierFlagControl %XH\n",event_modifier_flags,NSEventModifierFlagControl);
-		//pulsadoctrl=1;
+        //pulsadoctrl=1;
 
         //Ctrl left: event_modifier_flags       40101H
         //Ctrl right: event_modifier_flags      42100H
@@ -2132,26 +2209,27 @@ int scrcocoa_keymap_z88_cpc_leftz; //Tecla a la izquierda de la Z. usada en Chlo
 
                                             //L  ---1H
                                             //R  2---H
-		if ( (event_modifier_flags & 0x0001)==0x0001) {
-			//printf ("Left Ctrl key is pressed\n");
-			pulsadoctrl_l=1;
-		}
+        if ( (event_modifier_flags & 0x0001)==0x0001) {
+            //printf ("Left Ctrl key is pressed\n");
+            pulsadoctrl_l=1;
+        }
 
-		if ( (event_modifier_flags & 0x2000)==0x2000) {
-			//printf ("Right Ctrl key is pressed\n");
-			pulsadoctrl_r=1;
-		}
+        if ( (event_modifier_flags & 0x2000)==0x2000) {
+            //printf ("Right Ctrl key is pressed\n");
+            pulsadoctrl_r=1;
+        }
 
 
-		//dado que estos valores los he obtenido probando, por si acaso, se ha entrado aqui pero no se cumple ni left ni right, metemos left
-		if (pulsadoctrl_l==0 && pulsadoctrl_r==0) {
-			debug_printf (VERBOSE_DEBUG,"Strange behaviour. ctrl pressed but do not know if left or right. Asuming left");
+        //dado que estos valores los he obtenido probando, por si acaso, se ha entrado aqui pero no se cumple ni left ni right, metemos left
+        if (pulsadoctrl_l==0 && pulsadoctrl_r==0) {
+            debug_printf (VERBOSE_DEBUG,"Strange behaviour. ctrl pressed but do not know if left or right. Asuming left");
             //printf ("Strange behaviour. ctrl pressed but do not know if left or right. Asuming left\n");
-			pulsadoctrl_l=1;
-		}
-	}
-	if (event_modifier_flags & NSEventModifierFlagOption) {
-		//printf ("Alt key is pressed\n");
+            pulsadoctrl_l=1;
+        }
+    }
+
+    if (event_modifier_flags & NSEventModifierFlagOption) {
+        //printf ("Alt key is pressed\n");
         //printf("event_modifier_flags %XH\n",event_modifier_flags);
 
         //Alt left:         event_modifier_flags 80120H
@@ -2159,24 +2237,24 @@ int scrcocoa_keymap_z88_cpc_leftz; //Tecla a la izquierda de la Z. usada en Chlo
         //Alt left+right:   event_modifier_flags 80160H
         //                                       ---X-
 
-		if ( (event_modifier_flags & 0x20)==0x20) {
-			//printf ("Left Alt key is pressed\n");
-			pulsadoalt_l=1;
-		}
+        if ( (event_modifier_flags & 0x20)==0x20) {
+            //printf ("Left Alt key is pressed\n");
+            pulsadoalt_l=1;
+        }
 
-		if ( (event_modifier_flags & 0x40)==0x40) {
-			//printf ("Right Alt key is pressed\n");
-			pulsadoalt_r=1;
-		}
+        if ( (event_modifier_flags & 0x40)==0x40) {
+            //printf ("Right Alt key is pressed\n");
+            pulsadoalt_r=1;
+        }
 
-		//dado que estos valores los he obtenido probando, por si acaso, se ha entrado aqui pero no se cumple ni left ni right, metemos left
-		if (pulsadoalt_l==0 && pulsadoalt_r==0) {
-			debug_printf (VERBOSE_DEBUG,"Strange behaviour. alt pressed but do not know if left or right. Asuming left");
+        //dado que estos valores los he obtenido probando, por si acaso, se ha entrado aqui pero no se cumple ni left ni right, metemos left
+        if (pulsadoalt_l==0 && pulsadoalt_r==0) {
+            debug_printf (VERBOSE_DEBUG,"Strange behaviour. alt pressed but do not know if left or right. Asuming left");
             //printf ("Strange behaviour. alt pressed but do not know if left or right. Asuming left\n");
-			pulsadoalt_l=1;
-		}
+            pulsadoalt_l=1;
+        }
 
-	}
+    }
 
     //TODO: valores basados en mi propia experimentacion para comprobar right cmd
     //Si se cumple condicion, sera right. Si no, sera left
@@ -2199,14 +2277,11 @@ int scrcocoa_keymap_z88_cpc_leftz; //Tecla a la izquierda de la Z. usada en Chlo
         }
     }
 
-	//if (pulsadoctrl) printf ("Control key is pressed\n");
-	//else printf ("Control key is NOT pressed\n");
-
-	//notificar cambios
-	if (pulsadoshift_l!=scrcocoa_antespulsadoshift_l) {
-		//printf ("notificar cambio shift left\n");
-		joystick_possible_leftshift_key(pulsadoshift_l);
-	}
+    //notificar cambios
+    if (pulsadoshift_l!=scrcocoa_antespulsadoshift_l) {
+        //printf ("notificar cambio shift left\n");
+        joystick_possible_leftshift_key(pulsadoshift_l);
+    }
 
     //notificar cambios
     if (pulsadoshift_r!=scrcocoa_antespulsadoshift_r) {
@@ -2217,69 +2292,62 @@ int scrcocoa_keymap_z88_cpc_leftz; //Tecla a la izquierda de la Z. usada en Chlo
 
 
 
-	if (pulsadoctrl_l!=scrcocoa_antespulsadoctrl_l) {
-		//printf ("notificar cambio ctrl. ahora: %d\n",pulsadoctrl);
-		joystick_possible_leftctrl_key(pulsadoctrl_l);
-	}
+    if (pulsadoctrl_l!=scrcocoa_antespulsadoctrl_l) {
+        //printf ("notificar cambio ctrl. ahora: %d\n",pulsadoctrl);
+        joystick_possible_leftctrl_key(pulsadoctrl_l);
+    }
 
-	if (pulsadoctrl_r!=scrcocoa_antespulsadoctrl_r) {
-		//printf ("notificar cambio ctrl. ahora: %d\n",pulsadoctrl);
-		joystick_possible_rightctrl_key(pulsadoctrl_r);
-	}
-
-
-	if (pulsadoalt_l!=scrcocoa_antespulsadoalt_l) {
-		//printf ("notificar cambio alt l. pulsadoalt_l=%d\n",pulsadoalt_l);
-		joystick_possible_leftalt_key(pulsadoalt_l);
-	}
-
-	if (pulsadoalt_r!=scrcocoa_antespulsadoalt_r) {
-		//printf ("notificar cambio alt r\n");
-		joystick_possible_rightalt_key(pulsadoalt_r);
-	}
+    if (pulsadoctrl_r!=scrcocoa_antespulsadoctrl_r) {
+        //printf ("notificar cambio ctrl. ahora: %d\n",pulsadoctrl);
+        joystick_possible_rightctrl_key(pulsadoctrl_r);
+    }
 
 
+    if (pulsadoalt_l!=scrcocoa_antespulsadoalt_l) {
+        //printf ("notificar cambio alt l. pulsadoalt_l=%d\n",pulsadoalt_l);
+        joystick_possible_leftalt_key(pulsadoalt_l);
+    }
 
-	if (pulsadocmd_l!=scrcocoa_antespulsadocmd_l) {
-		//printf ("notificar cambio cmd_l. ahora: %d\n",pulsadocmd_l);
-		reset_keyboard_ports();
-	        //La tecla cmd tiene la "particular" caracteristica de que al pulsarla, no envia release del resto de teclas
-        	//por tanto, cuando se esta pulsada, liberar teclas
-		util_set_reset_key(UTIL_KEY_WINKEY_L,pulsadocmd_l);
-	}
+    if (pulsadoalt_r!=scrcocoa_antespulsadoalt_r) {
+        //printf ("notificar cambio alt r\n");
+        joystick_possible_rightalt_key(pulsadoalt_r);
+    }
 
-	if (pulsadocmd_r!=scrcocoa_antespulsadocmd_r) {
-		//printf ("notificar cambio cmd_r. ahora: %d\n",pulsadocmd_r);
-		reset_keyboard_ports();
-	        //La tecla cmd tiene la "particular" caracteristica de que al pulsarla, no envia release del resto de teclas
-        	//por tanto, cuando se esta pulsada, liberar teclas
-		util_set_reset_key(UTIL_KEY_WINKEY_R,pulsadocmd_r);
-	}
 
-	scrcocoa_antespulsadoctrl_l=pulsadoctrl_l;
+
+    if (pulsadocmd_l!=scrcocoa_antespulsadocmd_l) {
+        //printf ("notificar cambio cmd_l. ahora: %d\n",pulsadocmd_l);
+        reset_keyboard_ports();
+            //La tecla cmd tiene la "particular" caracteristica de que al pulsarla, no envia release del resto de teclas
+            //por tanto, cuando se esta pulsada, liberar teclas
+        util_set_reset_key(UTIL_KEY_WINKEY_L,pulsadocmd_l);
+    }
+
+    if (pulsadocmd_r!=scrcocoa_antespulsadocmd_r) {
+        //printf ("notificar cambio cmd_r. ahora: %d\n",pulsadocmd_r);
+        reset_keyboard_ports();
+            //La tecla cmd tiene la "particular" caracteristica de que al pulsarla, no envia release del resto de teclas
+            //por tanto, cuando se esta pulsada, liberar teclas
+        util_set_reset_key(UTIL_KEY_WINKEY_R,pulsadocmd_r);
+    }
+
+    scrcocoa_antespulsadoctrl_l=pulsadoctrl_l;
     scrcocoa_antespulsadoctrl_r=pulsadoctrl_r;
 
-	scrcocoa_antespulsadoalt_l=pulsadoalt_l;
+    scrcocoa_antespulsadoalt_l=pulsadoalt_l;
     scrcocoa_antespulsadoalt_r=pulsadoalt_r;
 
-	scrcocoa_antespulsadoshift_l=pulsadoshift_l;
-	scrcocoa_antespulsadoshift_r=pulsadoshift_r;
+    scrcocoa_antespulsadoshift_l=pulsadoshift_l;
+    scrcocoa_antespulsadoshift_r=pulsadoshift_r;
 
-	scrcocoa_antespulsadocmd_l=pulsadocmd_l;
+    scrcocoa_antespulsadocmd_l=pulsadocmd_l;
     scrcocoa_antespulsadocmd_r=pulsadocmd_r;
 
-	//printf ("\nfin migestionEvento\n\n");
 
 }
 
 - (void) grabMouse
 {
-    //COCOA_DEBUG("ZesaruxCocoaView: grabMouse\n");
-	//printf ("grabMouse\n");
-
-    if (!ventana_fullscreen) {
-            [normalWindow setTitle:@"ZEsarUX - fullscreen"];
-    }
     [NSCursor hide];
     CGAssociateMouseAndMouseCursorPosition(FALSE);
     isMouseGrabed = TRUE; // while isMouseGrabed = TRUE, ZesaruxCocoaApp sends all events to [cocoaView gestionEvento:]
@@ -2287,11 +2355,6 @@ int scrcocoa_keymap_z88_cpc_leftz; //Tecla a la izquierda de la Z. usada en Chlo
 
 - (void) ungrabMouse
 {
-    //COCOA_DEBUG("ZesaruxCocoaView: ungrabMouse\n");
-
-    if (!ventana_fullscreen) {
-            [normalWindow setTitle:@"ZEsarUX "EMULATOR_VERSION ];
-    }
     [NSCursor unhide];
     CGAssociateMouseAndMouseCursorPosition(TRUE);
     isMouseGrabed = FALSE;
@@ -2306,17 +2369,12 @@ int previous_timer_sleep_machine=0;
 
 
 //- (int)startTimer
-- (void)  startTimer:(id)sender;
+- (void)  startTimer:(id)sender
 {
-    //printf("--scrcocoa startTimer. cocoatimeractivo=%d\n",cocoatimeractivo);
-
-    //debug_printf(VERBOSE_DEBUG,"Initializing Mac timer for %d microsec",timer_sleep_machine);
 
     //Si lo lanzamos de nuevo pero esta vez con intervalo diferente, no soporta cambio de intervalo,
     //por tanto devolvemos error para que no use este tipo de timer
     //Esto pasa por ejemplo si estamos en maquina Spectrum y saltamos a Z88
-
-
 
     //hay intervalo previo. ver si son iguales
     if (previous_timer_sleep_machine>0) {
@@ -2332,10 +2390,6 @@ int previous_timer_sleep_machine=0;
 
     if (timer == nil)
     {
-        //printf("timer_sleep_machine %d\n",timer_sleep_machine);
-        //NSTimeInterval ti=timer_sleep_machine/1000000.0;
-        //printf("ti= %f\n",ti);
-
 
         //timer_sleep_machine en microsegundos. pasamos a segundos
 
@@ -2355,14 +2409,12 @@ int previous_timer_sleep_machine=0;
 
     cocoatimeractivo=1;
 
-    //printf("Started Mac timer. timer=%p cocoatimeractivo=%d\n",timer,cocoatimeractivo);
-
     retorno_start_timer=1;
 
 }
 
-//- (void)stopTimer
-- (void)  stopTimer:(id)sender;
+
+- (void)  stopTimer:(id)sender
 {
 
     //printf("--scrcocoa stopTimer\n");
@@ -2379,12 +2431,16 @@ int previous_timer_sleep_machine=0;
     debug_printf(VERBOSE_DEBUG,"Stopped Mac timer");
 }
 
+
+- (void) cocoa_update_window_title:(id)sender
+{
+    NSString *nsTitle = [NSString stringWithUTF8String:get_window_title()];
+    [normalWindow setTitle:nsTitle];
+}
+
 - (void)timerTickHandler
 {
-    //printf("timerTickHandler\n");
     if (!cocoatimeractivo) return;
-
-    //printf("timerTickHandler. %d\n",contador_segundo);
 
     timer_trigger_interrupt();
 }
@@ -2423,50 +2479,43 @@ int previous_timer_sleep_machine=0;
 @implementation ZesaruxCocoaAppController
 - (id) init
 {
-    //COCOA_DEBUG("ZesaruxCocoaAppController: init\n");
 
     self = [super init];
+
     if (self) {
 
         // create a view and add it to the window
-	//tamanyo inicial da un poco igual porque luego se redimensiona al tamanyo real necesario del ordenador emulado
+        //tamanyo inicial da un poco igual porque luego se redimensiona al tamanyo real necesario del ordenador emulado
         cocoaView = [[ZesaruxCocoaView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 704.0, 656.0)];
-        if(!cocoaView) {
+
+        if (!cocoaView) {
             fprintf(stderr, "(cocoa) can't create a view\n");
             exit(1);
         }
 
         // create a window
         normalWindow = [[ZesaruxCocoaWindow alloc] initWithContentRect:[cocoaView frame]
-            //styleMask:NSTitledWindowMask|NSMiniaturizableWindowMask|NSClosableWindowMask|NSResizableWindowMask
-						styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable
+            styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable
             backing:NSBackingStoreBuffered defer:NO];
 
 
-        if(!normalWindow) {
+        if (!normalWindow) {
             fprintf(stderr, "(cocoa) can't create window\n");
             exit(1);
         }
+
         [normalWindow setAcceptsMouseMovedEvents:YES];
-        [normalWindow setTitle:[NSString stringWithFormat:@"ZEsarUX "EMULATOR_VERSION]];
+
+        //Tenemos que iniciar el titulo ventana aqui porque esto en cocoa se hace despues de inicializar la ventana y entonces no tendriamos titulo
+        set_default_window_title();
+
+        [cocoaView performSelectorOnMainThread:@selector(cocoa_update_window_title:) withObject:nil waitUntilDone:YES];
+
         [normalWindow setContentView:cocoaView];
-        //deprecated . mirar alternativa [normalWindow useOptimizedDrawing:YES];
         [normalWindow makeKeyAndOrderFront:self];
-		[normalWindow center];
+        [normalWindow center];
+        [normalWindow activaSelectores];
 
-
-	//[normalWindow setResizeIncrements:NSMakeSize(screen_get_window_size_width_zoom_border_en(), screen_get_window_size_height_zoom_border_en()) ];
-
-	    [normalWindow activaSelectores];
-
-
-/*
-[[NSNotificationCenter defaultCenter]
-      addObserver:self
-      selector:@selector(windowDidEndLiveResize:)
-      name:NSWindowDidEndLiveResizeNotification
-      object:normalWindow];
-*/
 
     }
     return self;
@@ -2476,8 +2525,10 @@ int previous_timer_sleep_machine=0;
 {
     //COCOA_DEBUG("ZesaruxCocoaAppController: dealloc\n");
 
-    if (cocoaView)
+    if (cocoaView) {
         [cocoaView release];
+    }
+
     [super dealloc];
 }
 
@@ -2485,18 +2536,18 @@ int previous_timer_sleep_machine=0;
 {
     //COCOA_DEBUG("ZesaruxCocoaAppController: applicationDidFinishLaunching\n");
 
-[self startEmulationWithArgc:gArgc argv:(char **)gArgv];
+    [self startEmulationWithArgc:gArgc argv:(char **)gArgv];
 
 }
 
 - (void)applicationWillTerminate:(NSNotification *)aNotification
 {
-    //COCOA_DEBUG("ZesaruxCocoaAppController: applicationWillTerminate\n");
+
 
     //Cuando llega aqui la ventana ya esta cerrada. No hacer nada de refresco de ventana
     no_fadeout_exit.v=1;
 
-    end_emulator();
+    end_emulator_autosave_snapshot();
     exit(0);
 }
 
@@ -2505,19 +2556,14 @@ int previous_timer_sleep_machine=0;
     return YES;
 }
 
-/*- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
-{
-	end_emulator();
-	return NSTerminateCancel;
-}*/
+
 
 
 - (void)startEmulationWithArgc:(int)argc argv:(char**)argv
 {
     //COCOA_DEBUG("ZesaruxCocoaAppController: startEmulationWithArgc\n");
 
-    int status;
-    status = zesarux_main(argc, argv);
+    zesarux_main(argc, argv);
 
    //porque hay un exit aqui?? quiza del main de zesarux no se deba volver nunca, dejar el bucle como pthread y listo
    // exit(status);
@@ -2528,13 +2574,13 @@ int previous_timer_sleep_machine=0;
 {
     //COCOA_DEBUG("ZesaruxCocoaAppController: openPanelDidEnd\n");
 }
+
 - (void)toggleFullScreen:(id)sender
 {
-    //COCOA_DEBUG("ZesaruxCocoaAppController: toggleFullScreen\n");
+    //printf("ZesaruxCocoaAppController: toggleFullScreen\n");
 
     [cocoaView toggleFullScreen:sender];
 }
-
 
 
 - (void) openzesaruxmenu:(id)sender
@@ -2545,14 +2591,14 @@ int previous_timer_sleep_machine=0;
 
 - (void) setzoomone:(id)sender
 {
-	screen_set_window_zoom(1,1);
+    screen_set_window_zoom(1,1);
 }
 
 
 @end
 
 
-
+/*
 // Dock Connection
 typedef struct CPSProcessSerNum
 {
@@ -2563,100 +2609,101 @@ typedef struct CPSProcessSerNum
 OSErr CPSGetCurrentProcess( CPSProcessSerNum *psn);
 OSErr CPSEnableForegroundOperation( CPSProcessSerNum *psn, UInt32 _arg2, UInt32 _arg3, UInt32 _arg4, UInt32 _arg5);
 OSErr CPSSetFrontProcess( CPSProcessSerNum *psn);
-
+*/
 
 //Retorna no 0 si se ha seleccionado un driver no cocoa por linea de comandos
 int scrcocoa_non_cocoa_driver_set_cmd(int argc, const char * argv[])
 {
 
-	int i;
+    int i;
 
-	// Si se especifica un video driver diferente de cocoa, no inicializar GUI
-	for (i = 1; i < argc-1; i++) {
+    // Si se especifica un video driver diferente de cocoa, no inicializar GUI
+    for (i = 1; i < argc-1; i++) {
 
-		//Por linea de comandos
-		if (!strcmp(argv[i], "--vo") && strcmp(argv[i+1], "cocoa") ) return 1;
-	}
+        //Por linea de comandos
+        if (!strcmp(argv[i], "--vo") && strcmp(argv[i+1], "cocoa") ) return 1;
+    }
 
-	//O por archivo de configuración
-	//TODO
+    //O por archivo de configuración
+    //TODO
 
-	return 0;
+    return 0;
 }
 
 int main (int argc, const char * argv[]) {
 
-	gArgc = argc;
-	gArgv = (char **)argv;
+    gArgc = argc;
+    gArgv = (char **)argv;
 
 
-	// Si se especifica un video driver diferente de cocoa, no inicializar GUI
+    // Si se especifica un video driver diferente de cocoa, no inicializar GUI
 
     if (scrcocoa_non_cocoa_driver_set_cmd(argc,argv) ) {
-            //Y de aqui no salimos
-            printf ("Running ZEsarUX in non GUI mode because a non cocoa video driver is selected\n\n");
+        //Y de aqui no salimos
+        printf ("Running ZEsarUX in non GUI mode because a non cocoa video driver is selected\n\n");
 
+        zesarux_main(gArgc, gArgv);
 
-            zesarux_main(gArgc, gArgv);
-
-
-            //Bucle cerrado con sleep. El bucle main se ha lanzado como thread
-            while (1) {
-                    timer_sleep(1000);
-                    //printf ("bucle con sleep\n");
-            }
-
+        //Bucle cerrado con sleep. El bucle main se ha lanzado como thread
+        while (1) {
+            timer_sleep(1000);
+        }
     }
 
 
 
+    //Esto no hace falta. Asi como el [pool release] del final
+    //La memoria se libera correctamente con ARC
+    //NSAutoreleasePool * pool = [[NSAutoreleasePool alloc] init];
 
-	CPSProcessSerNum PSN;
 
-    NSAutoreleasePool * pool = [[NSAutoreleasePool alloc] init];
+    //Necesaria para activar el menu en la barra de menús de macOS
     [NSApplication sharedApplication];
-//	NSApplication *application = [NSApplication sharedApplication];
 
-// de qemu
-        if (!CPSGetCurrentProcess(&PSN))
-                if (!CPSEnableForegroundOperation(&PSN,0x03,0x3C,0x2C,0x1103))
-                        if (!CPSSetFrontProcess(&PSN))
-                        [NSApplication sharedApplication];
 
-//de ejemplos
+
+
+//Codigo viejo usado para forzar que la ventana de ZEsarUX aparezca y tome el foco del teclado
+//Esto es codigo antiguo y no deberia hacer falta. Quitado en ZEsarUX 13
+//Alguna vez con iTerm había fallado, ZEsarUX arrancaba pero no generaba ventana.
+//Alternativas:
+// A) meterlo en una carpeta "prueba.app/Contents/MacOS/zesarux" tal cual, con eso ya arranca
+// B) lanzarlo con "open ./zesarux"
+// C) Si se usa iTerm, quitar permiso de "Acceso total al disco" y volver a probar
+
+
+//Obtiene el identificador interno del proceso
+//Lo habilita como app de primer plano
+//Lo trae al frente
+//Inicializa NSApplication
 /*
-ProcessSerialNumber psn;
+CPSProcessSerNum PSN;
 
-     GetCurrentProcess( &psn );
-     CPSEnableForegroundOperation( &psn );
-     SetFrontProcess( &psn );
+    if (!CPSGetCurrentProcess(&PSN))
+        if (!CPSEnableForegroundOperation(&PSN,0x03,0x3C,0x2C,0x1103))
+            if (!CPSSetFrontProcess(&PSN))
+                [NSApplication sharedApplication];
 */
 
-//de ejemplo
-/*
-ProcessSerialNumber psn;
 
-if (!GetCurrentProcess(&psn))
-{
-    TransformProcessType(&psn, kProcessTransformToForegroundApplication);
-    SetFrontProcess(&psn);
-}
-*/
 
-    // Add menus
+    //
+    // Add macOS menus
+    //
     NSMenu      *menu;
     NSMenuItem  *menuItem;
 
     [NSApp setMainMenu:[[NSMenu alloc] init]];
 
+    //
     // Application menu
+    //
     menu = [[NSMenu alloc] initWithTitle:@""];
     [menu addItemWithTitle:@"About ZEsarUX" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
     [menu addItem:[NSMenuItem separatorItem]]; //Separator
+
     [menu addItemWithTitle:@"Hide ZEsarUX" action:@selector(hide:) keyEquivalent:@""];
     menuItem = (NSMenuItem *)[menu addItemWithTitle:@"Hide Others" action:@selector(hideOtherApplications:) keyEquivalent:@""];
-
-    //[menuItem setKeyEquivalentModifierMask:(NSAlternateKeyMask|NSCommandKeyMask)];
     [menuItem setKeyEquivalentModifierMask:(NSEventModifierFlagOption|NSEventModifierFlagCommand)];
 
     [menu addItemWithTitle:@"Show All" action:@selector(unhideAllApplications:) keyEquivalent:@""];
@@ -2665,22 +2712,30 @@ if (!GetCurrentProcess(&psn))
     [menu addItemWithTitle:@"Quit ZEsarUX" action:@selector(terminate:) keyEquivalent:@""];
     menuItem = [[NSMenuItem alloc] initWithTitle:@"Apple" action:nil keyEquivalent:@""];
     [menuItem setSubmenu:menu];
-    [[NSApp mainMenu] addItem:menuItem];
-    [NSApp performSelector:@selector(setAppleMenu:) withObject:menu]; // Workaround (this method is private since 10.4+)
+    //[[NSApp mainMenu] addItem:menuItem];
+    NSMenu *mainMenu = [[NSMenu alloc] init];
+    [mainMenu addItem:menuItem];
+    // API pública, reemplaza setAppleMenu
+    [NSApp setMainMenu:mainMenu];
 
+    //[NSApp performSelector:@selector(setAppleMenu:) withObject:menu]; // Workaround (this method is private since 10.4+)
+
+    //
     // View menu
+    //
     menu = [[NSMenu alloc] initWithTitle:@"View"];
-    [menu addItem: [[[NSMenuItem alloc] initWithTitle:@"Enter Fullscreen" action:@selector(toggleFullScreen:) keyEquivalent:@""] autorelease]]; // Fullscreen
+    [menu addItem: [[[NSMenuItem alloc] initWithTitle:@"Enter Fullscreen" action:@selector(toggleFullScreenPrevio:) keyEquivalent:@""] autorelease]];
     [menu addItem: [[[NSMenuItem alloc] initWithTitle:@"Open ZEsarUX menu" action:@selector(openzesaruxmenu:) keyEquivalent:@""] autorelease]];
 
     menuItem = [[[NSMenuItem alloc] initWithTitle:@"View" action:nil keyEquivalent:@""] autorelease];
     [menuItem setSubmenu:menu];
     [[NSApp mainMenu] addItem:menuItem];
 
+    //
     // Window menu
+    //
     menu = [[NSMenu alloc] initWithTitle:@"Window"];
-    [menu addItem: [[[NSMenuItem alloc] initWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@""] autorelease]]; // Miniaturize
-    //[menu addItem: [[[NSMenuItem alloc] initWithTitle:@"Minimize" action:@selector(performMiniaturize:) ] autorelease]]; // Miniaturize
+    [menu addItem: [[[NSMenuItem alloc] initWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@""] autorelease]];
     [menu addItem: [[[NSMenuItem alloc] initWithTitle:@"Set Zoom 1" action:@selector(setzoomone:) keyEquivalent:@""] autorelease]];
 
     menuItem = [[[NSMenuItem alloc] initWithTitle:@"Window" action:nil keyEquivalent:@""] autorelease];
@@ -2693,26 +2748,37 @@ if (!GetCurrentProcess(&psn))
     // Create an Application controller
     ZesaruxCocoaAppController *appController = [[ZesaruxCocoaAppController alloc] init];
 
-	//orig:
+    //orig:
     [NSApp setDelegate:(id<NSApplicationDelegate>)appController];
 
     //[NSApp setDelegate:(ZesaruxCocoaAppController *)appController];
-//[application setDelegate:appController];
+    //[application setDelegate:appController];
 
     //No queremos el menu de view tab bar
     [NSWindow setAllowsAutomaticWindowTabbing:NO];
 
+
+    // Que pueda tener el foco del teclado
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+
+    //Mandar a primer plano, pero con la anterior ya no hace falta
+    //Ademas tampoco hace falta al lanzarla con doble click
+    //[NSApp activate];
+
+    //Esto en teoria no hace falta
+    //[[NSApp mainWindow] makeKeyAndOrderFront:nil];
+
+
     // Start the main event loop
-//	printf ("\n\nrun app\n\n");
-
-
     [NSApp run];
 
 
-//	printf ("fin app\n");
+    //printf ("fin app\n");
 
     [appController release];
-    [pool release];
+
+
+    //[pool release];
 
     return 0;
 }
@@ -2731,6 +2797,12 @@ void scrcocoa_putpixel_final_rgb(int x,int y,unsigned int color_rgb)
     unsigned int *p;
     p=(unsigned int *) &pixel_screen_data[index];
 
+    if (screen_rgb_8bit) {
+        //Usamos color rgb 8 bits: 3 bits Red, 3 bits Green, 2 bits Blue : RRRGGGBB
+        //Nos quedamos con los bits mas significativos de cada componente
+        color_rgb &=0xE0E0C0; //11100000 11100000 11000000
+    }
+
     //agregar alpha
     color_rgb |=0xFF000000;
     //Escribir de golpe los 32 bits
@@ -2744,10 +2816,10 @@ void scrcocoa_putpixel_final_rgb(int x,int y,unsigned int color_rgb)
 void scrcocoa_putpixel_final(int x,int y,unsigned int color)
 {
 
-	if (pendingresize) {
-		//debug_printf (VERBOSE_DEBUG,"putpixel with pendingresize active");
-		return;
-	}
+    if (pendingresize) {
+        //debug_printf (VERBOSE_DEBUG,"putpixel with pendingresize active");
+        return;
+    }
 
 
     //Tabla con los colores reales del Spectrum. Formato RGB
@@ -2759,42 +2831,20 @@ void scrcocoa_putpixel_final(int x,int y,unsigned int color)
 
 }
 
-//int mostrado_trace=0;
-
-//extern int running_realloc;
 
 void scrcocoa_putpixel(int x,int y,unsigned int color)
 {
 
 
     if (menu_overlay_activo==0) {
-            //Putpixel con menu cerrado
-            scrcocoa_putpixel_final(x,y,color);
-            return;
-    }
-
-/*if (buffer_layer_machine==NULL) {
-        printf ("----buffer_layer_machine null running_realloc %d\n",running_realloc);
-        debug_exec_show_backtrace();
-        exit(1);
-}*/
-
-
-//temporal
-/*if (x>=ancho_layer_menu_machine || y>=alto_layer_menu_machine)  {
-        if (!mostrado_trace) {
-                printf ("out of range scrcocoa_putpixel x %d y %d limit %d %d\n",x,y,ancho_layer_menu_machine,alto_layer_menu_machine);
-                debug_exec_show_backtrace();
-                mostrado_trace=1;
-                sleep(1);
-        }
+        //Putpixel con menu cerrado
+        scrcocoa_putpixel_final(x,y,color);
         return;
-}*/
-
+    }
 
 
     //Metemos pixel en layer adecuado
-	buffer_layer_machine[y*ancho_layer_menu_machine+x]=color;
+    buffer_layer_machine[y*ancho_layer_menu_machine+x]=color;
 
 
     //Putpixel haciendo mix
@@ -2809,10 +2859,10 @@ void scrcocoa_putchar_zx8081(int x,int y, z80_byte caracter)
 void scrcocoa_debug_registers(void)
 {
 
-	char buffer[2048];
-	print_registers(buffer);
+    char buffer[2048];
+    print_registers(buffer);
 
-	printf ("%s\r",buffer);
+    printf ("%s\r",buffer);
 }
 
 void scrcocoa_messages_debug(char *s)
@@ -2836,68 +2886,47 @@ void scrcocoa_putchar_menu(int x,int y, z80_byte caracter,int tinta,int papel)
 
 void scrcocoa_putchar_footer(int x,int y, z80_byte caracter,int tinta,int papel)
 {
-
     scr_putchar_footer_comun_zoom(caracter,x,y,tinta,papel);
-
 }
 
-/*
-void old_scrcocoa_putchar_footer(int x,int y, z80_byte caracter,int tinta,int papel)
+char *scrcocoa_get_text_clipboard(int *p_longitud)
 {
+    NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
 
-    int yorigen;
-
-
-	yorigen=screen_get_emulated_display_height_no_zoom_bottomborder_en()/menu_char_height;
+    NSString *text = [pasteboard stringForType:NSPasteboardTypeString];
 
 
-        //scr_putchar_menu(x,yorigen+y,caracter,tinta,papel);
-	y +=yorigen;
-	//printf ("y: %d\n",y); entre 31,32 y 33 normalmente
-	z80_bit inverse;
 
-	inverse.v=0;
+    if (text) {
+        const char *cstr = [text UTF8String];
+        //printf("Texto: [%s]\n",cstr);
 
-	//128 y 129 corresponden a franja de menu y a letra enye minuscula
-	if (caracter<32 || caracter>MAX_CHARSET_GRAPHIC) caracter='?';
-	//scr_putchar_menu_comun_zoom(caracter,x,y,inverse,tinta,papel,1);
+        int longitud_texto=strlen(cstr)+1;
 
+        char *memoria_texto=util_malloc(longitud_texto,"Can not allocate memory for getting text from clipboard");
+        strcpy(memoria_texto,cstr);
+        *p_longitud=longitud_texto;
+        return memoria_texto;
+    }
 
-    scr_putchar_footer_comun_zoom(caracter,x,y,inverse,tinta,papel);
+    else {
+        *p_longitud=0;
+        return NULL;
+    }
 
 }
-*/
 
 void scrcocoa_set_fullscreen(void)
 {
-
-//[cocoaView toggleFullScreen:nil];
-
-/*
-A partir de OSX el capitan, la llamada
-[cocoaView toggleFullScreen:nil];
-
-
-genera este aviso al salir:
-CoreAnimation: warning, deleted thread with uncommitted CATransaction; set CA_DEBUG_TRANSACTIONS=1 in environment to log backtraces.
-
-Aparte que no funciona el full screen desde GUI settings. La solucion tiene el formato:
-[cocoaView performSelectorOnMainThread:@selector(myCustomDrawing:)
-                           withObject:myCustomData
-                        waitUntilDone:YES];
-*/
-
-[cocoaView performSelectorOnMainThread:@selector(toggleFullScreen:) withObject:nil waitUntilDone:YES];
-
+    //printf("scrcocoa_set_fullscreen\n");
+    [cocoaView performSelectorOnMainThread:@selector(toggleFullScreen:) withObject:nil waitUntilDone:YES];
 
 }
 
 
 void scrcocoa_reset_fullscreen(void)
 {
-//[cocoaView toggleFullScreen:nil];
-//Mismo comentario que set_fullscreen
-
+    //printf("scrcocoa_reset_fullscreen\n");
     [cocoaView performSelectorOnMainThread:@selector(toggleFullScreen:) withObject:nil waitUntilDone:YES];
 
 }
@@ -2905,7 +2934,7 @@ void scrcocoa_reset_fullscreen(void)
 void scrcocoa_refresca_pantalla_zx81(void)
 {
 
-	scr_refresca_pantalla_y_border_zx8081();
+    scr_refresca_pantalla_y_border_zx8081();
 
 }
 
@@ -2920,12 +2949,8 @@ void scrcocoa_refresca_pantalla(void);
 
 void scrcocoa_refresca_pantalla_solo_driver(void)
 {
-// Prueba para cuando se redimensiona ventana desde el easter egg
-//if (pendingresize) scrcocoa_refresca_pantalla();
 
-
-	[cocoaView render];
-
+    [cocoaView render];
 
 }
 
@@ -2933,27 +2958,28 @@ void scrcocoa_refresca_pantalla_solo_driver(void)
 
 void scrcocoa_refresca_pantalla(void)
 {
+    //printf("Inicio scrcocoa_refresca_pantalla\n");
 
-        //printf ("inicio scrcocoa_refresca_pantalla\n");
-
-	if (pendiente_z88_draw_lower) {
-		screen_z88_draw_lower_screen();
-		pendiente_z88_draw_lower=0;
-		menu_init_footer();
-	}
+    if (pendiente_z88_draw_lower) {
+        screen_z88_draw_lower_screen();
+        pendiente_z88_draw_lower=0;
+        menu_init_footer();
+    }
 
 
-    if (pendingresize) return;
+    if (pendingresize) {
+        //printf("Salir de scrcocoa_refresca_pantalla sin hacer nada porque esta pendingresize\n");
+        return;
+    }
 
-	/*if (pendingresize && pendingresize_w!=0 && pendingresize_h!=0) {
-		printf ("redimensionar desde refresca_pantalla\n");
-		[normalWindow redimensionaVentana:pendingresize_w height:pendingresize_h];
-		pendingresize=0;
-	}*/
+    /*if (pendingresize && pendingresize_w!=0 && pendingresize_h!=0) {
+        printf ("redimensionar desde refresca_pantalla\n");
+        [normalWindow redimensionaVentana:pendingresize_w height:pendingresize_h];
+        pendingresize=0;
+    }*/
 
     if (sem_screen_refresh_reallocate_layers) {
             //printf ("--Screen layers are being reallocated. return\n");
-            //debug_exec_show_backtrace();
             return;
     }
 
@@ -2962,13 +2988,12 @@ void scrcocoa_refresca_pantalla(void)
     scr_driver_redraw_desktop_windows();
 
     if (MACHINE_IS_ZX8081) {
-        //scr_refresca_pantalla_rainbow_comun();
         scrcocoa_refresca_pantalla_zx81();
     }
 
-	else if (MACHINE_IS_PRISM) {
-		screen_prism_refresca_pantalla();
-	}
+    else if (MACHINE_IS_PRISM) {
+        screen_prism_refresca_pantalla();
+    }
 
     else if (MACHINE_IS_TBBLUE) {
             screen_tbblue_refresca_pantalla();
@@ -2976,12 +3001,23 @@ void scrcocoa_refresca_pantalla(void)
 
     else if (MACHINE_IS_SPECTRUM) {
 
-		if (MACHINE_IS_TSCONF)	{
+        if (MACHINE_IS_TSCONF)	{
             screen_tsconf_refresca_pantalla();
         }
 
+        else if (MACHINE_IS_BASECONF)	{
+            baseconf_refresca_pantalla();
+        }
 
-		else { //Spectrum no TSConf
+        else if (MACHINE_IS_SCORPION_GMX)	{
+            scorpiongmx_refresca_pantalla();
+        }
+
+        else if (MACHINE_IS_ATM_TURBO)	{
+            atmturbo_refresca_pantalla();
+        }
+
+        else { //Spectrum no TSConf
 
                 //modo clasico. sin rainbow
                 if (rainbow_enabled.v==0) {
@@ -3000,65 +3036,64 @@ void scrcocoa_refresca_pantalla(void)
 
                 else {
                 //modo rainbow - real video
-                        scr_refresca_pantalla_rainbow_comun();
+                        scr_refresca_pantalla_rainbow_comun_spectrum();
                 }
 
-		}
+        }
     }
 
     else if (MACHINE_IS_Z88) {
-            screen_z88_refresca_pantalla();
+        screen_z88_refresca_pantalla();
     }
 
-	else if (MACHINE_IS_ACE) {
-		scr_refresca_pantalla_y_border_ace();
-	}
+    else if (MACHINE_IS_ACE) {
+        scr_refresca_pantalla_y_border_ace();
+    }
 
     else if (MACHINE_IS_CPC) {
-            scr_refresca_pantalla_y_border_cpc();
+        scr_refresca_pantalla_y_border_cpc();
     }
 
     else if (MACHINE_IS_PCW) {
-            scr_refresca_pantalla_y_border_pcw();
+        scr_refresca_pantalla_y_border_pcw();
     }
 
-	else if (MACHINE_IS_SAM) {
-		scr_refresca_pantalla_y_border_sam();
-	}
+    else if (MACHINE_IS_SAM) {
+        scr_refresca_pantalla_y_border_sam();
+    }
 
-	else if (MACHINE_IS_QL) {
-		scr_refresca_pantalla_y_border_ql();
-	}
+    else if (MACHINE_IS_QL) {
+        scr_refresca_pantalla_y_border_ql();
+    }
+
+    else if (MACHINE_IS_MK14) {
+        scr_refresca_pantalla_y_border_mk14();
+    }
+
+    else if (MACHINE_IS_MSX) {
+        scr_refresca_pantalla_y_border_msx();
+    }
+
+    else if (MACHINE_IS_SVI) {
+        scr_refresca_pantalla_y_border_svi();
+    }
+
+    else if (MACHINE_IS_COLECO) {
+        scr_refresca_pantalla_y_border_coleco();
+    }
 
 
-	else if (MACHINE_IS_MK14) {
-		scr_refresca_pantalla_y_border_mk14();
-	}
+    else if (MACHINE_IS_SG1000) {
+        scr_refresca_pantalla_y_border_sg1000();
+    }
 
-	else if (MACHINE_IS_MSX) {
-		scr_refresca_pantalla_y_border_msx();
-	}
-
-	else if (MACHINE_IS_SVI) {
-		scr_refresca_pantalla_y_border_svi();
-	}
-
-	else if (MACHINE_IS_COLECO) {
-		scr_refresca_pantalla_y_border_coleco();
-	}
+    else if (MACHINE_IS_SMS) {
+        scr_refresca_pantalla_y_border_sms();
+    }
 
 
-	else if (MACHINE_IS_SG1000) {
-		scr_refresca_pantalla_y_border_sg1000();
-	}
 
-	else if (MACHINE_IS_SMS) {
-		scr_refresca_pantalla_y_border_sms();
-	}
-
-        //printf ("%d\n",spectrum_colortable[1]);
-
-	screen_render_menu_overlay_if_active();
+    screen_render_menu_overlay_if_active();
 
     //Escribir footer
     draw_middle_footer();
@@ -3070,13 +3105,14 @@ void scrcocoa_refresca_pantalla(void)
 
     sem_screen_refresh_reallocate_layers=0;
 
+    //printf("Fin scrcocoa_refresca_pantalla\n");
 
 }
 
 
 void scrcocoa_end(void)
 {
-	debug_printf (VERBOSE_INFO,"Closing cocoa video driver");
+    debug_printf (VERBOSE_INFO,"Closing cocoa video driver");
 
     //Conservar estado joystick por si se cierra y abre driver, como ejemplo de quitar border, conservar valor anterior
     scrcocoa_ultimo_estado_realjoystick_present=realjoystick_present.v;
@@ -3089,7 +3125,7 @@ void scrcocoa_end(void)
 
 void scrcocoa_z88_cpc_load_keymap(void)
 {
-	debug_printf (VERBOSE_INFO,"Loading keymap");
+    debug_printf (VERBOSE_INFO,"Loading keymap");
 
 //Teclas se ubican en misma disposicion fisica del Z88, excepto:
         //libra~ -> spanish: cedilla (misma ubicacion fisica del z88). english: acento grave (supuestamente a la izquierda del 1)
@@ -3100,10 +3136,10 @@ void scrcocoa_z88_cpc_load_keymap(void)
         //y los codigos raw de retorno siempre son los mismos.
         //por tanto, devolvemos lo mismo que con keymap english siempre:
 
-	if (MACHINE_IS_Z88 || MACHINE_IS_SAM || MACHINE_IS_QL || MACHINE_IS_MSX || MACHINE_IS_SVI || MACHINE_IS_PCW) {
-	                scrcocoa_keymap_z88_cpc_minus='-';
+    if (MACHINE_IS_Z88 || MACHINE_IS_SAM || MACHINE_IS_QL || MACHINE_IS_MSX || MACHINE_IS_SVI || MACHINE_IS_PCW) {
+                    scrcocoa_keymap_z88_cpc_minus='-';
                         scrcocoa_keymap_z88_cpc_equal='=';
-			scrcocoa_keymap_z88_cpc_backslash=COCOA_SECOND_BACKSLASH;
+            scrcocoa_keymap_z88_cpc_backslash=COCOA_SECOND_BACKSLASH;
 
                         scrcocoa_keymap_z88_cpc_bracket_left='[';
                         scrcocoa_keymap_z88_cpc_bracket_right=']';
@@ -3114,27 +3150,27 @@ void scrcocoa_z88_cpc_load_keymap(void)
                         scrcocoa_keymap_z88_cpc_period='.';
                         scrcocoa_keymap_z88_cpc_slash='/';
                         scrcocoa_keymap_z88_cpc_leftz='`'; //Tecla a la izquierda de la Z. Solo usada en Chloe y pcw
-	}
+    }
 
-	else if (MACHINE_IS_CPC) {
-			scrcocoa_keymap_z88_cpc_minus='-';
-			scrcocoa_keymap_z88_cpc_circunflejo='=';
+    else if (MACHINE_IS_CPC) {
+            scrcocoa_keymap_z88_cpc_minus='-';
+            scrcocoa_keymap_z88_cpc_circunflejo='=';
 
-			scrcocoa_keymap_z88_cpc_arroba='[';
-			scrcocoa_keymap_z88_cpc_bracket_left=']';
-			scrcocoa_keymap_z88_cpc_colon=';';
-			scrcocoa_keymap_z88_cpc_semicolon='\'';
-			scrcocoa_keymap_z88_cpc_bracket_right='\\';
-			scrcocoa_keymap_z88_cpc_comma=',';
-			scrcocoa_keymap_z88_cpc_period='.';
-			scrcocoa_keymap_z88_cpc_slash='/';
+            scrcocoa_keymap_z88_cpc_arroba='[';
+            scrcocoa_keymap_z88_cpc_bracket_left=']';
+            scrcocoa_keymap_z88_cpc_colon=';';
+            scrcocoa_keymap_z88_cpc_semicolon='\'';
+            scrcocoa_keymap_z88_cpc_bracket_right='\\';
+            scrcocoa_keymap_z88_cpc_comma=',';
+            scrcocoa_keymap_z88_cpc_period='.';
+            scrcocoa_keymap_z88_cpc_slash='/';
 
-			scrcocoa_keymap_z88_cpc_backslash=COCOA_SECOND_BACKSLASH;
+            scrcocoa_keymap_z88_cpc_backslash=COCOA_SECOND_BACKSLASH;
                         scrcocoa_keymap_z88_cpc_leftz='`'; //Tecla a la izquierda de la Z. Solo usada en Chloe y pcw
-	}
+    }
 
-	//Para Chloe
-	else if (MACHINE_IS_SPECTRUM && chloe_keyboard.v) {
+    //Para Chloe
+    else if (MACHINE_IS_SPECTRUM && chloe_keyboard.v) {
                         scrcocoa_keymap_z88_cpc_minus='-';
                         scrcocoa_keymap_z88_cpc_equal='=';
                         scrcocoa_keymap_z88_cpc_backslash=COCOA_SECOND_BACKSLASH;
@@ -3157,9 +3193,9 @@ void scrcocoa_z88_cpc_load_keymap(void)
 
 }
 
-z80_byte scrcocoa_lee_puerto(z80_byte puerto_h,z80_byte puerto_l)
+z80_byte scrcocoa_lee_puerto(z80_byte puerto_h GCC_UNUSED,z80_byte puerto_l GCC_UNUSED)
 {
-	return 255;
+    return 255;
 }
 
 void scrcocoa_actualiza_tablas_teclado(void)
@@ -3168,13 +3204,13 @@ void scrcocoa_actualiza_tablas_teclado(void)
     //realmente las tablas de teclado se actualizan al pulsar una tecla, generando eventos, a diferencia de otros drivers de video,
     //como xwindows
 
-	if (cocoa_enviar_caps_contador) {
-		cocoa_enviar_caps_contador--;
-		if (cocoa_enviar_caps_contador==0) {
-			//printf ("liberar CAPS lock\n");
-			util_set_reset_key(UTIL_KEY_CAPS_LOCK,0);
-		}
-	}
+    if (cocoa_enviar_caps_contador) {
+        cocoa_enviar_caps_contador--;
+        if (cocoa_enviar_caps_contador==0) {
+            //printf ("liberar CAPS lock\n");
+            util_set_reset_key(UTIL_KEY_CAPS_LOCK,0);
+        }
+    }
 
 
 }
@@ -3193,7 +3229,7 @@ int scrcocoa_get_menu_width(void)
 
     max +=screen_get_ext_desktop_width_no_zoom();
 
-    max=max/menu_char_width/menu_gui_zoom;
+    max=max/menu_char_width/menu_gui_zoom/screen_reduce_menu_ancho;
     if (max>OVERLAY_SCREEN_MAX_WIDTH) max=OVERLAY_SCREEN_MAX_WIDTH;
 
             //printf ("max x: %d %d\n",max,screen_get_emulated_display_width_no_zoom_border_en());
@@ -3208,13 +3244,22 @@ int scrcocoa_get_menu_height(void)
 
     max +=screen_get_ext_desktop_height_no_zoom();
 
-    max=max/menu_char_height/menu_gui_zoom;
+    max=max/menu_char_height/menu_gui_zoom/screen_reduce_menu_alto;
     if (max>OVERLAY_SCREEN_MAX_HEIGTH) max=OVERLAY_SCREEN_MAX_HEIGTH;
 
             //printf ("max y: %d %d\n",max,screen_get_emulated_display_height_no_zoom_border_en());
     return max;
 }
 
+
+void scrcocoa_update_window_title(void)
+{
+
+    //printf("llamar a cambio titulo\n");
+
+    //Tiene que llamarlo desde el thread principal
+    [cocoaView performSelectorOnMainThread:@selector(cocoa_update_window_title:) withObject:nil waitUntilDone:YES];
+}
 
 /*
 int scrcocoa_driver_can_ext_desktop (void)
@@ -3241,23 +3286,13 @@ void realjoystick_cocoa_main(void)
 
 
 
-
-
 int scrcocoa_init_timer(void)
 {
-
-    //printf("--scrcocoa scrcocoa_init_timer\n");
-
-    //debug_exec_show_backtrace();
 
 
     debug_printf(VERBOSE_DEBUG,"Initializing Mac timer for %d microsec",timer_sleep_machine);
 
-    //printf("Initializing timer Mac for %d microsec\n",timer_sleep_machine);
 
-
-
-    //return [cocoaView startTimer];
 
     //hay que iniciar el timer desde el hilo principal
     //nota: si se inicia el timer al arrancar ZEsarUX, ya estaremos en el hilo principal y la llamada podria ser simplemente:
@@ -3280,35 +3315,35 @@ int scrcocoa_init_timer(void)
 void scrcocoa_stop_timer(void)
 {
     debug_printf(VERBOSE_INFO,"Stopping Mac timer");
-    //printf("Stopping timer Mac\n");
 
     [cocoaView performSelectorOnMainThread:@selector(stopTimer:) withObject:nil waitUntilDone:YES];
     //[cocoaView stopTimer];
 }
 
+int scrcocoa_fullscreen_inicial_comprobado=0;
 
-int scrcocoa_init (void) {
+int scrcocoa_init (void)
+{
 
 
-	debug_printf (VERBOSE_INFO,"Init COCOA(OpenGL) Video Driver");
+    debug_printf (VERBOSE_INFO,"Init COCOA(OpenGL) Video Driver");
 
     //Esto tiene que ir al principio de inicializar driver para leer correctamente el tamaño de ventana
     screen_este_driver_permite_ext_desktop=1;
 
-    //printf ("scrcocoa_init\n");
 
-    int soyelmainthread;
+    //int soyelmainthread;
 
     if ([NSThread isMainThread]) {
             //printf ("Soy el main thread\n");
-            soyelmainthread=1;
+            //soyelmainthread=1;
     }
 
     else {
             //printf ("No soy el main thread\n");
             //Esto solo se puede hacer desde el main thread
             //dispatch_sync(dispatch_get_main_queue(), cocoaView toggleFullScreen:nil);
-            soyelmainthread=0;
+            //soyelmainthread=0;
     }
 
     //Inicializaciones necesarias
@@ -3319,6 +3354,8 @@ int scrcocoa_init (void) {
     scr_get_menu_width=scrcocoa_get_menu_width;
     scr_get_menu_height=scrcocoa_get_menu_height;
     //scr_driver_can_ext_desktop=scrcocoa_driver_can_ext_desktop;
+    scr_update_window_title=scrcocoa_update_window_title;
+    scr_get_text_clipboard=scrcocoa_get_text_clipboard;
 
     scr_putchar_zx8081=scrcocoa_putchar_zx8081;
     scr_debug_registers=scrcocoa_debug_registers;
@@ -3337,7 +3374,7 @@ int scrcocoa_init (void) {
     //Esto debe estar al final, para que funcione correctamente desde menu, cuando se selecciona un driver, y no va, que pueda volver al anterior
     scr_set_driver_name("cocoa");
 
-	scr_z88_cpc_load_keymap();
+    scr_z88_cpc_load_keymap();
 
 
 
@@ -3353,6 +3390,8 @@ int scrcocoa_init (void) {
     NSInteger dataLength = pixel_screen_width * pixel_screen_height * 4;
     //UInt8 *pixel_screen_data = (UInt8*)malloc(dataLength * sizeof(UInt8));
     pixel_screen_data = (UInt8*)malloc(dataLength * sizeof(UInt8));
+    //printf("malloc init %d MiB\n",dataLength * sizeof(UInt8)/1024/1024);
+    //TODO: esta memoria no se libera, cada vez que cambia de full screen, hay un memory leak, pues se reasigna sin liberar el anterior
 
     scr_reallocate_layers_menu(pixel_screen_width,pixel_screen_height);
 
@@ -3362,11 +3401,18 @@ int scrcocoa_init (void) {
         });
 
 
-	if (ventana_fullscreen) {
-		//esto no lo hace bien. se queda la ventana con un escalado raro, y ademas en gui settings dice que fullscreen=0
-		[cocoaView toggleFullScreen:nil];
-	}
+    //Comprobar la opción inicial una sola vez: este driver se reinicializa al cambiar de máquina.
+    //Las transiciones posteriores se gestionan desde scrcocoa_set_fullscreen y scrcocoa_reset_fullscreen.
+    if (!scrcocoa_fullscreen_inicial_comprobado) {
+        scrcocoa_fullscreen_inicial_comprobado=1;
 
+        if (ventana_fullscreen) {
+            //AppKit exige que la transición inicial a pantalla completa se haga en el hilo principal.
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [cocoaView toggleFullScreenPrevio:nil];
+            });
+        }
+    }
 
     //Inicializar joystick y gamepads. Para el caso, las funciones se llamaran *joystick* aunque hagan referencia a los dos
     realjoystick_init=realjoystick_cocoa_init;
@@ -3375,18 +3421,10 @@ int scrcocoa_init (void) {
     realjoystick_initialize_joystick();
 
 
-
-    //En Mac OS X el timer en pthreads no funciona bien... lo metemos al final de la lista de prioridades
-    #ifdef USE_PTHREADS
-        timer_remove_timer(available_timers,TIMER_USLEEP);
-        timer_add_timer_usleep_to_bottom();
-    #endif
-
-    //printf("Adding mac timer\n");
     timer_add_timer_to_top(available_timers,TIMER_MAC,"mac",scrcocoa_init_timer,scrcocoa_stop_timer);
 
 
-	return 0;
+    return 0;
 }
 
 

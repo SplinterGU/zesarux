@@ -26,6 +26,7 @@
 #include "tape.h"
 #include "ay38912.h"
 #include "mem128.h"
+#include "betadisk.h"
 #include "zx8081.h"
 #include "zxvision.h"
 #include "screen.h"
@@ -49,6 +50,7 @@
 #include "spectra.h"
 #include "spritechip.h"
 #include "jupiterace.h"
+#include "core_spectrum.h"
 #include "chloe.h"
 #include "prism.h"
 #include "timex.h"
@@ -68,6 +70,7 @@
 #include "tsconf.h"
 #include "mk14.h"
 #include "betadisk.h"
+#include "vg93.h"
 #include "baseconf.h"
 #include "zxevo.h"
 #include "settings.h"
@@ -94,6 +97,9 @@
 #include "utils_text_adventure.h"
 #include "lec.h"
 #include "zxmmcplus.h"
+#include "scorpion.h"
+#include "didaktikgama.h"
+#include "atmturbo.h"
 
 
 void (*poke_byte)(z80_int dir,z80_byte valor);
@@ -106,7 +112,7 @@ z80_byte (*fetch_opcode)(void);
 
 void (*push_valor)(z80_int valor,z80_byte tipo);
 
-z80_byte lee_puerto_teclado(z80_byte puerto_h);
+
 z80_byte lee_puerto_spectrum_no_time(z80_byte puerto_h,z80_byte puerto_l);
 
 void set_value_beeper (int v);
@@ -615,9 +621,26 @@ z80_byte fetch_opcode_vacio(void)
 
 
 
+
+//Sincronizar el buffer rainbow de la ULA antes de una escritura en la zona de pantalla/atributos,
+//para que las celdas que la ULA real ya habia leido conserven el valor anterior a la escritura.
+//Sin esto, el valor nuevo se aplicaba retroactivamente a todas las celdas leidas durante el opcode,
+//produciendo columnas de atributos incorrectas en efectos multicolor (Nirvana, etc)
+void poke_byte_spectrum_sync_rainbow(z80_int dir)
+{
+        if (rainbow_enabled.v) {
+                //0x4000-0x7FFF: banco 5 (pantalla normal en 128k, pantalla en 48k)
+                //0xC000-0xFFFF: en 128k es el banco paginado, que puede ser el banco de pantalla (5 o 7)
+                if ( (dir&49152)==16384 || dir>=49152 ) {
+                        core_spectrum_store_rainbow_current_atributes();
+                }
+        }
+}
+
 void poke_byte_no_time_spectrum_48k(z80_int dir,z80_byte valor)
 {
         if (dir>16383) {
+		poke_byte_spectrum_sync_rainbow(dir);
 		memoria_spectrum[dir]=valor;
 
 #ifdef EMULATE_VISUALMEM
@@ -641,6 +664,7 @@ void poke_byte_spectrum_48k(z80_int dir,z80_byte valor)
 
 
         if (dir>16383) {
+		poke_byte_spectrum_sync_rainbow(dir);
 #ifdef EMULATE_VISUALMEM
 
 set_visualmembuffer(dir);
@@ -679,6 +703,7 @@ z80_byte *puntero;
                 segmento=dir / 16384;
 
         if (dir>16383) {
+		poke_byte_spectrum_sync_rainbow(dir);
 #ifdef EMULATE_VISUALMEM
 
 set_visualmembuffer(dir);
@@ -711,6 +736,7 @@ z80_byte *puntero;
 
 
         if (dir>16383) {
+		poke_byte_spectrum_sync_rainbow(dir);
 #ifdef EMULATE_VISUALMEM
 
 set_visualmembuffer(dir);
@@ -724,6 +750,8 @@ set_visualmembuffer(dir);
 	}
 }
 
+
+
 void poke_byte_no_time_spectrum_128kp2a(z80_int dir,z80_byte valor)
 {
 int segmento;
@@ -731,6 +759,7 @@ z80_byte *puntero;
                 segmento=dir / 16384;
 
         if (dir>16383) {
+		poke_byte_spectrum_sync_rainbow(dir);
 #ifdef EMULATE_VISUALMEM
 
 set_visualmembuffer(dir);
@@ -777,6 +806,7 @@ z80_byte *puntero;
 
 
         if (dir>16383) {
+		poke_byte_spectrum_sync_rainbow(dir);
 #ifdef EMULATE_VISUALMEM
 
 set_visualmembuffer(dir);
@@ -1139,12 +1169,73 @@ z80_byte peek_byte_ace(z80_int dir)
 }
 
 
+
 z80_byte fetch_opcode_spectrum(void)
 {
+
 #ifdef EMULATE_VISUALMEM
 	set_visualmemopcodebuffer(reg_pc);
 #endif
 	return peek_byte_no_time (reg_pc);
+}
+
+static int pentagon_trdos_active=0;
+
+void pentagon_trdos_reset(void)
+{
+    pentagon_trdos_active=0;
+}
+
+z80_byte fetch_opcode_pentagon(void)
+{
+    if (reg_pc>=0x4000) pentagon_trdos_active=0;
+    else if ((reg_pc&0xff00)==0x3d00 && (puerto_32765&16)) pentagon_trdos_active=1;
+
+    if (pentagon_trdos_active) betadisk_handle_trdos_traps();
+    return fetch_opcode_spectrum();
+}
+
+z80_byte peek_byte_no_time_pentagon(z80_int dir)
+{
+    if (pentagon_trdos_active && dir<0x4000) {
+#ifdef EMULATE_VISUALMEM
+        set_visualmemreadbuffer(dir);
+#endif
+        return pentagon_trdos_rom[dir];
+    }
+    return peek_byte_no_time_spectrum_128k(dir);
+}
+
+z80_byte peek_byte_pentagon(z80_int dir)
+{
+    if (pentagon_trdos_active && dir<0x4000) {
+#ifdef EMULATE_VISUALMEM
+        set_visualmemreadbuffer(dir);
+#endif
+        t_estados+=3;
+        return pentagon_trdos_rom[dir];
+    }
+    return peek_byte_spectrum_128k(dir);
+}
+
+z80_byte fetch_opcode_tsconf(void)
+{
+#ifdef EMULATE_VISUALMEM
+    set_visualmemopcodebuffer(reg_pc);
+#endif
+    return tsconf_cache_read(reg_pc);
+}
+
+z80_byte fetch_opcode_baseconf(void)
+{
+	z80_byte opcode;
+#ifdef EMULATE_VISUALMEM
+	set_visualmemopcodebuffer(reg_pc);
+#endif
+	baseconf_pre_opcode_fetch(reg_pc);
+	opcode=peek_byte_no_time(reg_pc);
+	baseconf_post_opcode_fetch(&opcode);
+	return opcode;
 }
 
 z80_byte fetch_opcode_ace(void)
@@ -1412,8 +1503,6 @@ z80_byte peek_byte_spectrum_128k(z80_int dir)
 //              printf ("segmento: %d dir: %d puntero: %p\n",segmento,dir,puntero);
 	return *puntero;
 }
-
-
 
 
 z80_byte peek_byte_no_time_spectrum_128kp2a(z80_int dir)
@@ -2924,14 +3013,14 @@ void poke_byte_no_time_baseconf(z80_int dir,z80_byte valor)
 	set_visualmembuffer(dir);
 #endif
 
+                baseconf_write_memory_aux(dir,valor);
+
 		z80_byte *puntero;
 		puntero=baseconf_return_segment_memory(dir);
-
-
 		//if (dir<16384) {
 	//return;
 
-			if (baseconf_memory_segments_type[dir/16384]==0) {
+			if (baseconf_memory_segments_type[dir/16384]==0 || !baseconf_memory_write_allowed(dir)) {
 				//0 rom
 				return;
 			}
@@ -3054,13 +3143,15 @@ void poke_byte_no_time_tsconf(z80_int dir,z80_byte valor)
 		if (dir<16384) {
 
 
-			if ((tsconf_get_memconfig()&8)==0) return; //si no ram en rom
+			// VDOS pagina la RAM #FF en esta ventana aunque MemConfig seleccione ROM.
+			if ((tsconf_get_memconfig()&8)==0 && !tsconf_vdos_is_active()) return;
 		}
 
 		dir = dir & 16383;
 		puntero=puntero+dir;
 
 		*puntero=valor;
+		tsconf_cache_invalidate(dir);
 
 }
 
@@ -3110,9 +3201,9 @@ z80_byte peek_byte_tsconf(z80_int dir)
                 }
 #endif
 
-                t_estados += 3;
+                t_estados += tsconf_cache_read_wait(dir,0)+3;
 
-        return peek_byte_no_time_tsconf(dir);
+        return tsconf_cache_read(dir);
 
 }
 
@@ -3515,7 +3606,7 @@ set_visualmembuffer(dir);
 		//Ver si es segmento de rom o ram
 int segmento;
 		segmento=dir/16384;
-		if (sam_memory_paged_type[segmento]) return;
+		if (sam_memory_paged_type[segmento]!=SAM_MEMORY_PAGE_RAM) return;
 
 
                 z80_byte *puntero;
@@ -3551,6 +3642,8 @@ z80_byte peek_byte_no_time_sam(z80_int dir)
 		set_visualmemreadbuffer(dir);
 	#endif
 
+		if (sam_memory_paged_type[dir/16384]==SAM_MEMORY_PAGE_UNMAPPED) return 255;
+
                 z80_byte *puntero;
                 puntero=sam_return_segment_memory(dir);
 
@@ -3582,6 +3675,11 @@ z80_byte lee_puerto_sam_no_time(z80_byte puerto_h,z80_byte puerto_l)
 {
 	debug_fired_in=1;
 	//printf ("Leer puerto sam H: %d L: %d\n",puerto_h,puerto_l);
+
+	if (puerto_l==248 && puerto_h==1) {
+		// HPEN refleja la línea del barrido cuando no hay lápiz óptico.
+		return (t_scanline_draw-screen_indice_inicio_pant)&255;
+	}
 
         //Decodificacion completa del puerto o no?
         if (puerto_l==252) {
@@ -3661,8 +3759,11 @@ z80_byte lee_puerto_sam_no_time(z80_byte puerto_h,z80_byte puerto_l)
 		//Puerto STATUS.
 		z80_byte valor;
 
-		valor=255 & (255-8);
-		//De momento devolver con bit FRAME a 0. Cuando devuelve 1???
+		valor=255;
+		// El bit 0 baja durante el pulso de interrupción de línea.
+		if (t_estados<sam_line_interrupt_active_until) valor &=~1;
+		// El bit 3 baja únicamente durante la petición de fotograma.
+		if (t_estados<sam_frame_interrupt_active_until) valor &=~8;
 
 
 		if (initial_tap_load.v==1 && initial_tap_sequence) {
@@ -3791,6 +3892,11 @@ void out_port_sam_no_time(z80_int puerto,z80_byte value)
 		//printf ("cambio paleta. Color %d valor %d\n",puerto_h,value);
 		sam_palette[puerto_h&15]=value;
 		modificado_border.v=1;
+	}
+
+	if (puerto_l==249) {
+		// La ROM programa aquí la siguiente interrupción de línea.
+		sam_line_interrupt_register=value;
 	}
 
        // Floppy drive 2 *OR* the ATOM hard disk
@@ -4369,7 +4475,19 @@ void rlca(void)
         reg_a=rlc_valor_comun(reg_a);
 }
 
+void ex_af_af(void)
+{
+    z80_byte valor;
 
+	valor=reg_a;
+	reg_a=reg_a_shadow;
+	reg_a_shadow=valor;
+
+	valor=Z80_FLAGS;
+	Z80_FLAGS=Z80_FLAGS_SHADOW;
+	Z80_FLAGS_SHADOW=valor;
+
+}
 
 //rutina comun a rl y rla
 z80_byte rl_valor_comun(z80_byte value)
@@ -5268,187 +5386,81 @@ void bit_bit_cb_reg(z80_byte numerobit, z80_byte *registro)
 z80_byte lee_puerto_zx80_no_time(z80_byte puerto_h,z80_byte puerto_l)
 {
 
-	debug_fired_in=1;
-	z80_byte valor;
+    debug_fired_in=1;
+    //z80_byte valor;
 
-	z80_int puerto=value_8_to_16(puerto_h,puerto_l);
+    z80_int puerto=value_8_to_16(puerto_h,puerto_l);
 
-	//xx1D Zebra Joystick                          - - - F R L D U   (0=Pressed)
-	if ( puerto_l==0x1d) {
-		 if (joystick_emulation==JOYSTICK_ZEBRA) {
-			z80_byte valor_joystick=255;
-			//si estamos con menu abierto, no retornar nada
-			if (zxvision_key_not_sent_emulated_mach() ) return valor_joystick;
+    //xx1D Zebra Joystick                          - - - F R L D U   (0=Pressed)
+    if ( puerto_l==0x1d) {
+        if (joystick_emulation==JOYSTICK_ZEBRA) {
+            z80_byte valor_joystick=255;
+            //si estamos con menu abierto, no retornar nada
+            if (zxvision_key_not_sent_emulated_mach() ) return valor_joystick;
 
-			//z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
+            //z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
 
-			if ((puerto_especial_joystick&1)) valor_joystick &=(255-8);
-			if ((puerto_especial_joystick&2)) valor_joystick &=(255-4);
-			if ((puerto_especial_joystick&4)) valor_joystick &=(255-2);
-			if ((puerto_especial_joystick&8)) valor_joystick &=(255-1);
-			if ((puerto_especial_joystick&16)) valor_joystick &=(255-16);
+            if ((puerto_especial_joystick&1)) valor_joystick &=(255-8);
+            if ((puerto_especial_joystick&2)) valor_joystick &=(255-4);
+            if ((puerto_especial_joystick&4)) valor_joystick &=(255-2);
+            if ((puerto_especial_joystick&8)) valor_joystick &=(255-1);
+            if ((puerto_especial_joystick&16)) valor_joystick &=(255-16);
 
-                        return valor_joystick;
-                }
-		return 255;
+            return valor_joystick;
+        }
+        return 255;
 	}
 
 	//xxDF Mikro-Gen Digital Joystick (Port DFh) - - - F L R D U   (0=Pressed)
 
-        else if ( puerto_l==0xdf) {
-                 if (joystick_emulation==JOYSTICK_MIKROGEN) {
-                        z80_byte valor_joystick=255;
-                        //si estamos con menu abierto, no retornar nada
-                        if (zxvision_key_not_sent_emulated_mach() ) return valor_joystick;
+    else if ( puerto_l==0xdf) {
+        if (joystick_emulation==JOYSTICK_MIKROGEN) {
+            z80_byte valor_joystick=255;
+            //si estamos con menu abierto, no retornar nada
+            if (zxvision_key_not_sent_emulated_mach() ) return valor_joystick;
 
-                        //z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
+            //z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
 
-                        if ((puerto_especial_joystick&1)) valor_joystick &=(255-4);
-                        if ((puerto_especial_joystick&2)) valor_joystick &=(255-8);
-                        if ((puerto_especial_joystick&4)) valor_joystick &=(255-2);
-                        if ((puerto_especial_joystick&8)) valor_joystick &=(255-1);
-                        if ((puerto_especial_joystick&16)) valor_joystick &=(255-16);
+            if ((puerto_especial_joystick&1)) valor_joystick &=(255-4);
+            if ((puerto_especial_joystick&2)) valor_joystick &=(255-8);
+            if ((puerto_especial_joystick&4)) valor_joystick &=(255-2);
+            if ((puerto_especial_joystick&8)) valor_joystick &=(255-1);
+            if ((puerto_especial_joystick&16)) valor_joystick &=(255-16);
 
-                        return valor_joystick;
-                }
-                return 255;
+            return valor_joystick;
         }
+        return 255;
+    }
 
 	//zx printer
-        else if (puerto_l==0xFB) {
-                if (zxprinter_enabled.v==1) {
-                        return zxprinter_get_port();
-                }
-
-
-                else return 255;
+    else if (puerto_l==0xFB) {
+        if (zxprinter_enabled.v==1) {
+                return zxprinter_get_port();
         }
+
+
+        else return 255;
+    }
 
 	//zxpand
 	else if (puerto_l==0x07 && zxpand_enabled.v) {
-        	//printf ("In Port ZXpand 0x%X asked, PC after=0x%x\n",puerto_l+256*puerto_h,reg_pc);
-		z80_byte valor_retorno=zxpand_read(puerto_h);
-		//printf ("Returning value 0x%X\n",valor_retorno);
-		return valor_retorno;
+        //printf ("In Port ZXpand 0x%X asked, PC after=0x%x\n",puerto_l+256*puerto_h,reg_pc);
+        z80_byte valor_retorno=zxpand_read(puerto_h);
+        //printf ("Returning value 0x%X\n",valor_retorno);
+        return valor_retorno;
 	}
 
 
 	//Puerto con A0 cero
 	else if ( (puerto_l&1)==0) {
-
-
-                if (nmi_generator_active.v==0) {
-
-			//printf ("lee puerto. t_estados=%d t_scanline_draw_timeout: %d\n",t_estados,t_scanline_draw_timeout);
-
-			//si es inicio vsync, guardar tiempo inicial
-
-			if (video_zx8081_linecntr_enabled.v==1) {
-
-
-				//solo admitir inicio vsync hacia el final de pantalla o hacia principio
-				//if (t_scanline_draw_timeout>MINIMA_LINEA_ADMITIDO_VSYNC || t_scanline_draw_timeout<=3) {
-				if (t_scanline_draw_timeout>MINIMA_LINEA_ADMITIDO_VSYNC) {
-					inicio_pulso_vsync_t_estados=t_estados;
-					//printf ("admitido inicio pulso vsync: t_estados: %d linea: %d\n",inicio_pulso_vsync_t_estados,t_scanline_draw_timeout);
-
-					//video_zx8081_linecntr=0;
-					//video_zx8081_linecntr_enabled.v=0;
-				}
-
-				else {
-					//printf ("no se admite inicio pulso vsync : t_estados: %d linea: %d\n",inicio_pulso_vsync_t_estados,t_scanline_draw_timeout);
-				}
-
-			}
-
-
-			video_zx8081_linecntr=0;
-			video_zx8081_linecntr_enabled.v=0;
-
-
-                        //printf("Disabling the HSYNC generator t_scanline_draw=%d\n",t_scanline_draw);
-                        hsync_generator_active.v=0;
-                        modificado_border.v=1;
-
-
-                	//y ponemos a low la salida del altavoz
-	                bit_salida_sonido_zx8081.v=0;
-
-			set_value_beeper_on_array(da_amplitud_speaker_zx8081() );
-
-
-			if (zx8081_vsync_sound.v==1) {
-				//solo resetea contador de silencio cuando esta activo el vsync sound - beeper
-				reset_beeper_silence_detection_counter();
-			}
-
-
-			video_zx8081_ula_video_output=255;
-
-
-			//ejecutado_zona_pantalla.v=0;
-
-		}
-
-                //Teclado
-
-		//probamos a enviar lo mismo que con teclado de spectrum
-		valor=lee_puerto_teclado(puerto_h);
-
-/*
-  Bit  Expl.
-  0-4  Keyboard column bits (0=Pressed)
-  5    Not used             (1)
-  6    Display Refresh Rate (0=60Hz, 1=50Hz)
-  7    Cassette input       (0=Normal, 1=Pulse)
-*/
-		//decimos que no hay pulso de carga. 50 Hz refresco
-
-		valor = (valor & 31) | (32+64);
-
-		//valor &= (255-128);
-
-
-		//decimos que hay pulso de carga, alternado
-		//if (reg_b!=0) temp_cinta_zx81=128;
-		//else temp_cinta_zx81=0;
-		//valor |=temp_cinta_zx81;
-
-		//printf ("valor: %d\n",valor);
-
-            int leer_cinta_real=0;
-
-            if (realtape_inserted.v && realtape_playing.v) leer_cinta_real=1;
-
-            if (audio_can_record_input()) {
-                if (audio_is_recording_input) {
-                    leer_cinta_real=1;
-                }
-            }
-
-            if (leer_cinta_real) {
-			    if (realtape_get_current_bit_playing()) {
-                                valor=valor|128;
-                                //printf ("1 ");
-                        }
-                        else {
-                                valor=(valor & (255-128));
-                                //printf ("0 ");
-                        }
-            }
-
-
-		return valor;
-
-
+        return zx8081_read_port_a0_low(puerto_h);
 	}
 
 	//ZEsarUX ZXI ports
 	if (hardware_debug_port.v) {
 		if (puerto==ZESARUX_ZXI_ZX8081_PORT_REGISTER) return zesarux_zxi_read_last_register();
 		if (puerto==ZESARUX_ZXI_ZX8081_PORT_DATA)     return zesarux_zxi_read_register_value();
-    	}
+    }
 
 
 
@@ -5467,7 +5479,6 @@ z80_byte lee_puerto_zx80_no_time(z80_byte puerto_h,z80_byte puerto_l)
 			return 0;
 		}
 	}
-
 
 
 
@@ -6189,13 +6200,59 @@ z80_byte lee_puerto_spectrum(z80_byte puerto_h,z80_byte puerto_l)
 
 z80_byte idle_bus_port_atribute_aux(void)
 {
+	// En 16/48K y 128K/+2, la lectura del bus depende del T-estado y de la RAM que lee la ULA.
+	// Los últimos bytes guardados por el renderizado pueden pertenecer a otra celda.
+	int bus_48k=0;
+	int bus_128k=0;
+	if (MACHINE_IS_SPECTRUM_16 || MACHINE_IS_SPECTRUM_48) {
+		if (screen_testados_linea==224) bus_48k=1;
+	}
+	if (MACHINE_IS_SPECTRUM_128_P2 && !MACHINE_IS_PENTAGON) {
+		if (screen_testados_linea==228) bus_128k=1;
+	}
+	if (bus_48k || bus_128k) {
+		// El cuadro se repite cada screen_testados_total T; el área de pantalla
+		// empieza en screen_indice_inicio_pant y ocupa 192 líneas.
+		int tiempo_en_frame=t_estados%screen_testados_total;
+		int linea=tiempo_en_frame/screen_testados_linea-screen_indice_inicio_pant;
+		int posicion=tiempo_en_frame%screen_testados_linea;
+		// La ULA solo lee memoria de vídeo durante los primeros 128 T de cada línea.
+		if (linea<0 || linea>=192 || posicion>=128) return get_ula_databus_value();
 
-	//Retorna el byte que lee la ULA
+		// En cada grupo de 8 T se leen dos columnas contiguas: bitmap y atributo
+		// de la primera, luego bitmap y atributo de la segunda.
+		int columna=(posicion/8)*2;
+		// La primera lectura cae en T=14338 (48K: fase 2) o T=14364
+		// (128K: posición 0, equivalente a fase 2). El resto de fases no lee RAM.
+		int fase=(posicion+(bus_128k ? 2 : 0))%8;
+		// El 128K muestra el banco 5 o el 7 según 7FFD; en 16/48K la
+		// pantalla comienza siempre en 4000H.
+		z80_byte *pantalla=bus_128k ? get_base_mem_pantalla() : &memoria_spectrum[0x4000];
+		switch (fase) {
+			case 2:
+			case 3:
+			case 4:
+			case 5:
+				// Las fases 4 y 5 corresponden a la segunda columna del grupo.
+				if (fase>=4) columna++;
+				// Las fases impares leen atributos: empiezan 1800H bytes después
+				// del bitmap y cada fila de 8 píxeles ocupa 32 atributos.
+				if (fase&1) {
+					return pantalla[0x1800+(linea/8)*32+columna];
+				}
+				// El bitmap entrelaza tercios de 64 líneas, líneas dentro de
+				// cada carácter de 8 píxeles y filas de caracteres de 32 bytes.
+				return pantalla[((linea&0xc0)<<5)+((linea&7)<<8)+((linea&0x38)<<2)+columna];
+		}
+		return get_ula_databus_value();
+	}
+
+	//Retorna el byte que lee la ULA en el resto de casos
 	//de momento solo retornar el ultimo atributo, teniendo en cuenta que el rainbow debe estar habilitado
 	//TODO: retornar tambien byte de pixeles
 	//Si no esta habilitado rainbow, retornara algun valor aleatorio fijo
 
-	//TODO: mirar que usa fuse en funcion spectrum_unattached_port
+	//TODO: revisar el cálculo directo del bus en las demás máquinas
 
 
 	//Si no esta habilitado rainbow y hay que detectar rainbow, habilitar rainbow, siempre que no este en ROM
@@ -6295,7 +6352,7 @@ z80_byte idle_bus_port(z80_int puerto)
 
 	//Caso 48k, 128k, tsconf. Retornar atributo de pantalla
 	//Parece que si en tsconf no retornamos esto, no acaba de arrancar la bios
-	if (MACHINE_IS_SPECTRUM_16_48 || MACHINE_IS_SPECTRUM_128_P2 || MACHINE_IS_TBBLUE || MACHINE_IS_PRISM || MACHINE_IS_TSCONF) {
+	if (MACHINE_IS_SPECTRUM_16_48 || MACHINE_IS_SPECTRUM_128_P2 || MACHINE_IS_TBBLUE || MACHINE_IS_PRISM || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION) {
 		z80_byte valor_idle=idle_bus_port_atribute();
 
 		//int t_estados_en_linea=(t_estados % screen_testados_linea);
@@ -6552,9 +6609,9 @@ z80_byte lee_puerto_teclado(z80_byte puerto_h)
 
 
     //Si esta spool file activo, generar siguiente tecla
-    if (input_file_keyboard_is_playing() ) {
-        if (input_file_keyboard_turbo.v==0) {
-            input_file_keyboard_get_key();
+    if (send_text_as_keystrokes_is_playing() ) {
+        if (send_text_as_keystrokes_turbo_mode.v==0) {
+            send_text_as_keystrokes_get_key();
         }
 
         else {
@@ -6641,12 +6698,12 @@ z80_byte lee_puerto_teclado(z80_byte puerto_h)
         }
 
         //gunstick
-        if (gunstick_emulation==GUNSTICK_SINCLAIR_2) {
+        if (lightgun_emulation_enabled.v && lightgun_emulation_type==GUNSTICK_SINCLAIR_2) {
             if (mouse_left!=0) {
 
                 acumulado &=(255-1);
 
-                if (gunstick_view_white()) acumulado &=(255-4);
+                if (lightgun_view_white()) acumulado &=(255-4);
 
 
             }
@@ -6695,12 +6752,12 @@ z80_byte lee_puerto_teclado(z80_byte puerto_h)
 
 
         //gunstick
-        if (gunstick_emulation==GUNSTICK_SINCLAIR_1) {
+        if (lightgun_emulation_enabled.v && lightgun_emulation_type==GUNSTICK_SINCLAIR_1) {
             if (mouse_left!=0) {
 
                 acumulado &=(255-1);
 
-                if (gunstick_view_white()) acumulado &=(255-4);
+                if (lightgun_view_white()) acumulado &=(255-4);
 
 
             }
@@ -6756,24 +6813,53 @@ z80_byte get_kempston_value(void)
 
                         z80_byte acumulado=0;
 
-                        //si estamos con menu abierto, no retornar nada
-                        if (zxvision_key_not_sent_emulated_mach() ) return 0;
 
                         if (joystick_emulation==JOYSTICK_KEMPSTON) {
+                            //si estamos con menu abierto, no retornar nada
+                            if (zxvision_key_not_sent_emulated_mach() ) return 0;
+
                                 //mapeo de ese puerto especial es igual que kempston
                                 acumulado=puerto_especial_joystick;
+
+
                         }
 
                        //gunstick
-                       if (gunstick_emulation==GUNSTICK_KEMPSTON) {
+                       if (lightgun_emulation_enabled.v && lightgun_emulation_type==GUNSTICK_KEMPSTON) {
+
+                                if (zxvision_key_not_sent_emulated_mach() ) return 0;
 
                                 if (mouse_left!=0) {
 
                                     acumulado |=16;
 
-                                    if (gunstick_view_white()) acumulado |=4;
+                                    if (lightgun_view_white()) acumulado |=4;
 
                                 }
+                        }
+
+                        //magnum kempston
+                        //Ejemplo billy the kid, bronx street cop, jungle warfare
+                        //en principio muchos de magnum pero cargado en spectrum 48k (porque no tiene puerto AUX)
+                       if (lightgun_emulation_enabled.v && lightgun_emulation_type==DEFENDER_LIGHTGUN) {
+                                acumulado=8+16;
+
+                                if (zxvision_key_not_sent_emulated_mach() ) return acumulado;
+
+                                if (!mouse_left) {
+                                    acumulado |=8;
+                                }
+                                else {
+                                    acumulado &=(255-8);
+                                }
+
+                                if (lightgun_view_electron()) {
+                                    acumulado |=16;
+                                }
+                                else {
+                                    acumulado &=(255-16);
+                                }
+
                         }
 
                         return acumulado;
@@ -6818,6 +6904,33 @@ z80_byte get_last_bit_6_feh(void)
 
     //printf("last valor: %d\n",last_bit_6_feh);
 
+    if (lightgun_emulation_enabled.v && lightgun_emulation_type==TROJAN_LIGHT_PEN_EAR && !zxvision_key_not_sent_emulated_mach()) {
+        int luz=lightgun_view_electron();
+        //int boton=mouse_left;
+        int final=luz; // ^ boton;
+        //printf("final: %d\n",final);
+        if (final) valor=valor|64;
+        else valor=(valor & (255-64));
+    }
+
+
+    //Magnum al puerto MIC. Por ejemplo Billy the kid soporta este, también soporta Defender light gun y Magnum puerto AUX
+    //Billy the kid tiene autodetección de cual de las 3 pistolas está conectada
+    //Jungle Warfare también
+    //Bronx Street Cop también
+    //F-16 Fighting Falcon también
+    if (lightgun_emulation_enabled.v && lightgun_emulation_type==MAGNUM_EAR) {
+        if (zxvision_key_not_sent_emulated_mach()) return 64;
+
+        int luz=lightgun_view_electron();
+        int boton=mouse_left;
+        int final=luz ^ boton;
+        //printf("final: %d\n",final);
+        if (!final) valor=valor|64;
+        else valor=(valor & (255-64));
+        //printf("valor final: %d\n",valor);
+    }
+
     return valor;
 }
 
@@ -6849,7 +6962,7 @@ z80_byte lee_puerto_spectrum_ula(z80_byte puerto_h)
     }*/
 
     //Si esta cinta insertada en realtape, acelerar
-    if (accelerate_loaders.v && realtape_inserted.v && realtape_playing.v) {
+    if (storage_accelerate_loading.v && realtape_inserted.v && realtape_playing.v) {
         //Mirar que esta haciendo
         tape_check_known_loaders();
 
@@ -6858,16 +6971,19 @@ z80_byte lee_puerto_spectrum_ula(z80_byte puerto_h)
             //Si no estaba modo turbo, poner turbo
             if (top_speed_timer.v==0) {
                 debug_printf (VERBOSE_DEBUG,"Setting Top speed");
-                top_speed_timer.v=1;
+                //top_speed_timer.v=1;
+                //Usamos el comun, asi si no se detecta fin de cargador, se desactivara igualmente por timer
+                timer_storage_common_accelerate_loading();
                 draw_tape_text_top_speed();
             }
         }
 
         //Si no esta en cargador, pero estabamos en turbo, detener
         else {
-            if (top_speed_timer.v) {
+            if (top_speed_timer.v && storage_accelerate_loading.v) {
                 debug_printf (VERBOSE_DEBUG,"Resetting top speed");
                 top_speed_timer.v=0;
+                //printf("Quitar turbo por deteccion de fin\n");
             }
         }
 
@@ -6906,7 +7022,6 @@ z80_byte betadisk_temp_puerto_7f=0;
 
 
 
-z80_byte temp_tsconf_first_sd_0=1;
 
 
 //Devuelve valor puerto para maquinas Spectrum
@@ -6925,11 +7040,37 @@ z80_byte lee_puerto_spectrum_no_time(z80_byte puerto_h,z80_byte puerto_l)
 
 	z80_int puerto=value_8_to_16(puerto_h,puerto_l);
 
+    z80_byte valor_smuc;
+    if (ide_smuc_read(puerto,&valor_smuc)) return valor_smuc;
+    if (scorpion_gmx_zcontroller_read(puerto,&valor_smuc)) return valor_smuc;
+
+    if (MACHINE_IS_SCORPION_GMX && (puerto & 0x0023)==0x0021 &&
+        (puerto_h==0x78 || puerto_h==0x7a || puerto_h==0x7e)) {
+        return scorpion_gmx_read_port(puerto);
+    }
+
+    /*
+    Puerto	Dirección	Utilización
+    A	1Fh	E/S de 8 bits; habitualmente joystick
+    B	3Fh	E/S de 8 bits; permite conectar otro joystick
+    C	5Fh	E/S y control de paginación de RAM
+    Control	7Fh	Configuración del 8255
+    */
+    if (MACHINE_IS_DIDAKTIKGAMA && (puerto_l==0x1f || puerto_l==0x3f || puerto_l==0x5f || puerto_l==0x7f)) {
+        return didaktikgama_in_port(puerto);
+    }
+
 
 	if (puerto_l==0xFD) {
 		if (puerto_h==0xFF) {
 			activa_ay_chip_si_conviene();
-			if (ay_chip_present.v==1) return in_port_ay(puerto_h);
+			if (ay_chip_present.v==1) return in_port_ay(0xFF);
+		}
+
+        //BFFD 10............0. R   Spectrum +2A/+3 Mirror of Port FFFDh (+2A/+3 only)
+		if (puerto_h==0xBF && MACHINE_IS_SPECTRUM_P2A_P3) {
+			activa_ay_chip_si_conviene();
+			if (ay_chip_present.v==1) return in_port_ay(0xFF);
 		}
 
 		//Puertos disco +3
@@ -6946,22 +7087,53 @@ z80_byte lee_puerto_spectrum_no_time(z80_byte puerto_h,z80_byte puerto_l)
         //Con handler
         else if (plus3dos_traps.v) {
             //Bit Request for Master
-			if (puerto_h==0x2F) return 0x80;
+			if (puerto_h==0x2F && MACHINE_IS_SPECTRUM_P2A_P3) return 0x80;
 
-			if (puerto_h==0x3F) return 255;
+			if (puerto_h==0x3F && MACHINE_IS_SPECTRUM_P2A_P3) return 255;
         }
 
 		else {
-			if (puerto_h==0x2F) return 255;
-			if (puerto_h==0x3F) return 255;
+			if (puerto_h==0x2F && MACHINE_IS_SPECTRUM_P2A_P3) return 255;
+			if (puerto_h==0x3F && MACHINE_IS_SPECTRUM_P2A_P3) return 255;
 		}
 
 	}
 
-    //Test betadisk
-    if (betadisk_enabled.v) {
+    /* #BF de ATM3 tiene decodificación de ocho bits y no depende de DOS. */
+    if (MACHINE_IS_ATM_TURBO3 && puerto_l==0xbf) return atmturbo3_read_port_bf();
+    if (MACHINE_IS_ATM_TURBO3 && puerto_l==0x1f && !atmturbo2_shadow_ports_enabled())
+        return get_kempston_value();
 
-        if (betadisk_check_if_rom_area(reg_pc)) {
+    /* El IDE de ATM2/2+ ocupa los puertos de sombra terminados en #xF. */
+    if (MACHINE_IS_ATM_TURBO2_FAMILY && ide_enabled.v && ide_atm_enabled.v &&
+        atmturbo2_shadow_ports_enabled() &&
+        (puerto&0x1f)==0x0f) return atmturbo2_ide_read_port(puerto);
+
+    /* Estado del receptor XT en D7 de #7FFD y códigos serie en #7DFD. */
+    if (MACHINE_IS_ATM_TURBO2_FAMILY && (puerto & 0x8202)==0x0200)
+        return MACHINE_IS_ATM_TURBO2PLUS_TURBO3 ? atmturbo2plus_read_device_status() : atmturbo2_read_keyboard_status();
+    if (MACHINE_IS_ATM_TURBO2_FAMILY && (puerto & 0x8203)==0x0001)
+        return MACHINE_IS_ATM_TURBO2PLUS_TURBO3 ? 0xff : atmturbo2_read_keyboard_data();
+
+    if ((MACHINE_IS_ATM_TURBO1 || MACHINE_IS_ATM_TURBO2_FAMILY) &&
+        atmturbo_fdc_is_active(puerto,1) &&
+        (puerto_l==0x1f || puerto_l==0x3f || puerto_l==0x5f ||
+         puerto_l==0x7f || puerto_l==0xff)) {
+        return atmturbo_fdc_read_port(puerto);
+    }
+
+    //El VG93 de Scorpion, incluido GMX, responde durante TR-DOS.
+    if (MACHINE_IS_SCORPION && trd_enabled.v &&
+        scorpion_trdos_is_active() && reg_pc<0x4000 &&
+        (puerto_l==0x1f || puerto_l==0x3f || puerto_l==0x5f ||
+         puerto_l==0x7f || puerto_l==0xff)) {
+        return vg93_read_port(puerto);
+    }
+
+    //Acceso betadisk
+    if (betadisk_enabled.v || (MACHINE_IS_SCORPION && scorpion_trdos_is_active() && trd_enabled.v)) {
+
+        if (betadisk_check_if_rom_area(reg_pc) || (MACHINE_IS_SCORPION && scorpion_trdos_is_active() && reg_pc<0x4000)) {
 
             z80_byte return_value;
 
@@ -7119,48 +7291,51 @@ z80_byte lee_puerto_spectrum_no_time(z80_byte puerto_h,z80_byte puerto_l)
 	}
 
 
-	//Puerto DF parece leerse desde juego Bestial Warrior en el menu, aunque dentro del juego no se lee
-	//Quiza hace referencia a la Stack Light Rifle
+    if ( lightgun_emulation_enabled.v && lightgun_emulation_type==STACK_LIGHT_RIFLE && puerto_l==0xdf) {
+        //lightgun.
+        //Stack Light Rifle (Stack Computer Services Ltd) (1983)
+        //connects to expansion port, accessed by reading from Port DFh:
 
-	//Dejarlo comentado dado que entra en conflicto con kempston mouse
-
-	/*
-
-	if ( puerto_l==0xdf) {
-		//gunstick.
-//Stack Light Rifle (Stack Computer Services Ltd) (1983)
-//connects to expansion port, accessed by reading from Port DFh:
-
-//  bit1       = Trigger Button (0=Pressed, 1=Released)
-//  bit4       = Light Sensor   (0=Light, 1=No Light)
-//  other bits = Must be "1"    (the programs use compare FDh to test if bit1=0)
-
-               if (gunstick_emulation==GUNSTICK_PORT_DF) {
-
-                        z80_byte acumulado=255;
-                        if (mouse_left!=0) {
-
-                            acumulado &=(255-2);
-
-                            if (gunstick_view_white()) acumulado &=(255-16);
+        //  bit1       = Trigger Button (0=Pressed, 1=Released)
+        //  bit4       = Light Sensor   (0=Light, 1=No Light)
+        //  other bits = Must be "1"    (the programs use compare FDh to test if bit1=0)
 
 
-                        }
+        z80_byte acumulado=255;
+        if (mouse_left) {
+            acumulado &=(255-2);
+        }
 
-			printf ("gunstick acumulado: %d\n",acumulado);
+        if (lightgun_view_electron()) acumulado &=(255-16);
 
-                        return acumulado;
-                }
 
-		//puerto kempston tambien es DF en kempston mouse
-		//else return idle_bus_port(puerto_l+256*puerto_h);
+        return acumulado;
 
+    }
+
+
+
+	/* BaseConf decodifica #xxDF y usa A10/A8 para distinguir botones, X e Y.
+	   Las demás máquinas conservan la decodificación parcial genérica. */
+	int kempston_mouse_port=0;
+	if (MACHINE_IS_BASECONF) {
+		if (puerto_l==0xdf) {
+			switch (puerto_h&5) {
+				case 0: kempston_mouse_port=1; break; // Botones (#FADF).
+				case 1: kempston_mouse_port=2; break; // Eje X (#FBDF).
+				case 5: kempston_mouse_port=3; break; // Eje Y (#FFDF).
+			}
+		}
+	}
+	else if ((puerto_l&32)==0 &&
+	         ((puerto_h&7)==3 || (puerto_h&7)==7 || (puerto_h&2)==2)) {
+		if ((puerto_h&7)==3) kempston_mouse_port=2;
+		else if ((puerto_h&7)==7) kempston_mouse_port=3;
+		else if ((puerto_h&3)==2) kempston_mouse_port=1;
 	}
 
-	*/
-
 	//kempston mouse. Solo con menu cerrado
-	if ( kempston_mouse_emulation.v  &&  (puerto_l&32) == 0  &&  ( (puerto_h&7)==3 || (puerto_h&7)==7 || (puerto_h&2)==2 ) ) {
+	if (kempston_mouse_emulation.v && kempston_mouse_port) {
 		//printf ("kempston mouse. port 0x%x%x\n",puerto_h,puerto_l);
 
         //IN 64479 - return X axis (0-255)
@@ -7184,21 +7359,21 @@ z80_byte lee_puerto_spectrum_no_time(z80_byte puerto_h,z80_byte puerto_l)
         //Lo mejor es que al abrir el menu, se envie valor fijo, y así no se provocan movimientos indeseados
 
 
-		if ((puerto_h&7)==3) {
+		if (kempston_mouse_port==2) {
             if (!zxvision_key_not_sent_emulated_mach() ) {
                 //X-Axis
                 acumulado=kempston_mouse_x*kempston_mouse_factor_sensibilidad;
             }
 		}
 
-        if ((puerto_h&7)==7) {
+        if (kempston_mouse_port==3) {
             if (!zxvision_key_not_sent_emulated_mach() ) {
                 //Y-Axis
 			    acumulado=kempston_mouse_y*kempston_mouse_factor_sensibilidad;
             }
         }
 
-        if ((puerto_h&3)==2) {
+        if (kempston_mouse_port==1) {
             //Buttons
 			acumulado=255;
 
@@ -7221,41 +7396,134 @@ z80_byte lee_puerto_spectrum_no_time(z80_byte puerto_h,z80_byte puerto_l)
 
 	}
 
+    //Datel Lightwriter
+    if (puerto_l==0x3f && lightgun_emulation_enabled.v && lightgun_emulation_type==DATEL_LIGHTWRITER) {
+            z80_byte acumulado=0;
+            if (zxvision_key_not_sent_emulated_mach() ) return acumulado;
+
+
+
+            if (!lightgun_view_electron()) acumulado |=1;
+
+            //printf("acumulado: %d\n",acumulado);
+
+            return acumulado;
+
+
+    }
+
+    //Spectrum Doodler Lightpen. El dispositivo retorna la posición en pantalla,
+    //el software no tiene que averiguar nada, sólo leer las coordenadas
+    //Creo que el lapiz como tal no tiene botón, aunque creo que si que detecta si el lapiz está tocando la pantalla
+    //(bit 7 del puerto 0x7f). Por tanto lo que hago es que si se pulsa clic izquierdo del ratón, es como si tocase la pantalla
+    //Para que el usuario pueda mover el ratón por la pantalla sin accionar (sin pulsar boton)
+    //Aunque el programa incluido de ejemplo puede detectar la posición sin hacer presión con el lapiz, pulsando la tecla shift
+    //Rango: x: 64-192 (128 margen) y: 29-127 (92 rango)?
+    if (puerto_l==0x7f && lightgun_emulation_enabled.v && lightgun_emulation_type==SPECTRUM_DOODLER) {
+
+            if (zxvision_key_not_sent_emulated_mach() ) return 0;
+            int pos_y=lightgun_y-screen_borde_superior;
+            pos_y /=2;
+            pos_y +=29;
+            if (pos_y<0) pos_y=0;
+            if (pos_y>127) pos_y=127;
+
+            z80_byte acumulado=pos_y;
+
+            if (mouse_left) acumulado |=128;
+            else acumulado &=(255-128);
+
+            //printf("y: %d\n",acumulado & 127);
+
+            return acumulado;
+    }
+
+    //Spectrum Doodler Lightpen
+    if (puerto_l==191 && lightgun_emulation_enabled.v && lightgun_emulation_type==SPECTRUM_DOODLER) {
+            if (zxvision_key_not_sent_emulated_mach() ) return 0;
+            int pos_x=lightgun_x-screen_testados_total_borde_izquierdo*2;
+            pos_x /=2;
+            pos_x +=64;
+            if (pos_x<0) pos_x=0;
+            if (pos_x>255) pos_x=255;
+
+            z80_byte acumulado=pos_x;
+
+            //printf("x: %d\n",acumulado);
+
+            return acumulado;
+    }
+
+
+    //Al parecer el gunstick kempston también se lee por puerto DF
+    //Bestial warrior por ejemplo lo usa
+    //Tambien shooting range mix 1
+    if (puerto_l==0xDF && lightgun_emulation_enabled.v && lightgun_emulation_type==GUNSTICK_KEMPSTON)  {
+        //printf("Leyendo puerto DF\n");
+        return get_kempston_value();
+    }
+
+
 	//If you read from a port that activates both the keyboard and a joystick port (e.g. Kempston), the joystick takes priority.
 
         //kempston joystick en Inves
 	//En Inves, Si A5=0 solamente
-        if ( (puerto_l & 32) ==0 && (MACHINE_IS_INVES) ) {
+    if ( (puerto_l & 32) ==0 && (MACHINE_IS_INVES) ) {
 
-                if (joystick_emulation==JOYSTICK_KEMPSTON || gunstick_emulation==GUNSTICK_KEMPSTON) {
-			return get_kempston_value();
-                }
+            if (joystick_emulation==JOYSTICK_KEMPSTON ||
+                (lightgun_emulation_enabled.v && (lightgun_emulation_type==GUNSTICK_KEMPSTON || lightgun_emulation_type==DEFENDER_LIGHTGUN))
+                ) {
+        return get_kempston_value();
+            }
 
+    }
+
+    // El byte alto de Nemo IDE en #11 tiene prioridad sobre Kempston.
+    if (MACHINE_IS_TSCONF && zxevo_nemo_ide_port(puerto_l)) {
+        return zxevo_nemo_ide_read(puerto_l);
+    }
+
+    // TR-DOS de TSConf comparte #1F con Kempston: atiende antes el FDC.
+    if (MACHINE_IS_TSCONF) {
+        int beta_value=tsconf_beta_read_port(puerto_l);
+        if (beta_value>=0) return beta_value;
+    }
+
+    // En GMX, A0-A2 deben valer 1 y A5 debe valer 0. TR-DOS
+    // desactiva Kempston; la ROM de servicio también consulta 1Fh.
+    // Las demás máquinas conservan la decodificación Kempston genérica.
+    int puerto_kempston=MACHINE_IS_SCORPION_GMX ?
+        ((puerto_l & 0x27)==0x07 && scorpion_gmx_kempston_port_enabled(puerto)) :
+        ((puerto_l & (1+32+64+128))==1);
+    if (puerto_kempston && !(MACHINE_IS_INVES)) {
+
+        if (joystick_emulation==JOYSTICK_KEMPSTON ||
+                (lightgun_emulation_enabled.v && (lightgun_emulation_type==GUNSTICK_KEMPSTON || lightgun_emulation_type==DEFENDER_LIGHTGUN))
+                ) {
+            return get_kempston_value();
         }
 
-        //kempston joystick para maquinas no Inves
-        //Si A5=A6=A7=0 y A0=1, kempston joystick
-        if ( (puerto_l & (1+32+64+128)) == 1 && !(MACHINE_IS_INVES) ) {
 
-                if (joystick_emulation==JOYSTICK_KEMPSTON || gunstick_emulation==GUNSTICK_KEMPSTON) {
-			return get_kempston_value();
-                }
+        //Máquinas que tienen kempston "de serie", si está deshabiliado en ZEsarUX, debe retornar 0 en vez del valor de bus idle
+        //Kempston en zxuno, cuando no esta seleccionado kempston devolver 0 en vez de FF o si no, la bios no funciona
+        if (MACHINE_IS_ZXUNO) return 0;
 
-		//Kempston en zxuno, cuando no esta seleccionado kempston devolver 0 en vez de FF o si no, la bios no funciona
-	        if (MACHINE_IS_ZXUNO) return 0;
+        // El menu nmi de Scorpion lee Kempston aunque no se haya seleccionado
+        // en el menú.
+        if (MACHINE_IS_SCORPION) return 0;
 
-                //Los juegos: alteregobeta, xnx, y todos los de los mojon twins, leen el joystick kempston
-                //Si retorno el valor del bus idle, esos juegos se saltan los menus , como si hubiese tecla pulsada
-                //Retorno 0, por si no se ha seleccionado joystick kempston en el menu de ZEsarUX
+        //Los juegos: alteregobeta, xnx, y todos los de los mojon twins, leen el joystick kempston
+        //Si retorno el valor del bus idle, esos juegos se saltan los menus , como si hubiese tecla pulsada
+        //Retorno 0, por si no se ha seleccionado joystick kempston en el menu de ZEsarUX
 
-                if (MACHINE_IS_TSCONF) return 0;
+        if (MACHINE_IS_TSCONF) return 0;
 
-        }
+    }
 
-        //ZXUNO
-        if ( MACHINE_IS_ZXUNO && (puerto==0xFC3B  || puerto==0xFD3B)) {
-		return zxuno_read_port(puerto);
-        }
+    //ZXUNO
+    if ( MACHINE_IS_ZXUNO && (puerto==0xFC3B  || puerto==0xFD3B)) {
+        return zxuno_read_port(puerto);
+    }
 
 
 	if (MACHINE_IS_TBBLUE) {
@@ -7313,6 +7581,11 @@ z80_byte lee_puerto_spectrum_no_time(z80_byte puerto_h,z80_byte puerto_l)
     //Puerto ZXMMC+
     if (zxmmcplus_enabled.v && puerto_l==0x7f) return zxmmcplus_read_port();
 
+	//Puertos NemoIDE nativos de BaseConf
+	if (MACHINE_IS_BASECONF && zxevo_nemo_ide_port(puerto_l)) {
+		return zxevo_nemo_ide_read(puerto_l);
+	}
+
 	//Puertos 8-bit simple ide
 	if (eight_bit_simple_ide_enabled.v && (puerto_l&16)==0) {
 		return eight_bit_simple_ide_read(puerto_l);
@@ -7352,22 +7625,22 @@ z80_byte lee_puerto_spectrum_no_time(z80_byte puerto_h,z80_byte puerto_l)
 
                 return 255;
 
-        }
+    }
 
 
-        //Puerto DIVIDE
-        if (divide_ide_ports_enabled.v && ( (puerto_l&(128+64+32+2+1))==128+32+2+1) ) {
-                //printf ("Puerto DIVIDE Read: %02x%02xH command: %d PC=%X\n",puerto_h,puerto_l,(puerto_l>>2)&7,reg_pc);
+    //Puerto DIVIDE
+    if (divide_ide_ports_enabled.v && ( (puerto_l&(128+64+32+2+1))==128+32+2+1) ) {
+            //printf ("Puerto DIVIDE Read: %02x%02xH command: %d PC=%X\n",puerto_h,puerto_l,(puerto_l>>2)&7,reg_pc);
 
-                //So you can access all
-                //eight IDE-registers from so caled command block (rrr=0..7) at addresses
-                //xxxx xxxx  101r rr11
-                z80_byte ide_retorno=ide_read_command_block_register((puerto_l>>2)&7);
-                //printf("Retorno: %X\n",ide_retorno);
+            //So you can access all
+            //eight IDE-registers from so caled command block (rrr=0..7) at addresses
+            //xxxx xxxx  101r rr11
+            z80_byte ide_retorno=ide_read_command_block_register((puerto_l>>2)&7);
+            //printf("Retorno: %X\n",ide_retorno);
 
-                return ide_retorno;
+            return ide_retorno;
 
-        }
+    }
 
 
 
@@ -7380,11 +7653,29 @@ z80_byte lee_puerto_spectrum_no_time(z80_byte puerto_h,z80_byte puerto_l)
 
 
 
+        /* BaseConf configuration port is even, so it must be decoded
+           before the generic Spectrum ULA handler. */
+        /* BaseConf 2014 lee la configuración en xxBE; las revisiones
+           posteriores la leen en xxBD. Se conservan ambas interfaces. */
+        if (MACHINE_IS_BASECONF && (puerto_l==0xbd || puerto_l==0xbe)) {
+            return baseconf_read_config_port(puerto_h);
+        }
+
+        /* BaseConf only decodes the ULA at FE/F6 (A3 selects bright
+           border), rather than responding to every even port. */
+        if (MACHINE_IS_BASECONF && (puerto_l&0xf7)==0xf6) {
+            return lee_puerto_spectrum_ula(puerto_h);
+        }
+
         //Puerto ULA, cualquier puerto par. En un Spectrum normal, esto va al final
 	//En un Inves, deberia ir al principio, pues el inves hace un AND con el valor de los perifericos que retornan valor en el puerto leido
-        if ( (puerto_l & 1)==0 && !(MACHINE_IS_CHLOE) && !(MACHINE_IS_TIMEX_TS_TC_2068) && !(MACHINE_IS_PRISM) ) {
+        if ( (puerto_l & 1)==0 && !(MACHINE_IS_CHLOE) && !(MACHINE_IS_TIMEX_TS_TC_2068) && !(MACHINE_IS_PRISM) && !(MACHINE_IS_BASECONF) ) {
 
-		return lee_puerto_spectrum_ula(puerto_h);
+                z80_byte value=lee_puerto_spectrum_ula(puerto_h);
+                if (MACHINE_IS_ATM_TURBO1) value=atmturbo_read_port_fe(value);
+                if (MACHINE_IS_ATM_TURBO2_FAMILY) value=atmturbo2_read_port_fe(value);
+                if (MACHINE_IS_ATM_TURBO2PLUS_TURBO3) value=atmturbo2plus_read_port_fe(puerto,value);
+		return value;
 
         }
 
@@ -7460,12 +7751,21 @@ Bit 5 If set disable Chrome features ( reading/writing to port 1FFDh, reading fr
         if (puerto_l==0xB3) return gs_read_port_b3_from_speccy();
     }
 
+    if (MACHINE_IS_ATM_TURBO1) {
+        if (puerto_l==0xfb) return atmturbo_read_port_fb();
+        if (puerto_l==0x7b) return atmturbo_read_port_7b();
+    }
+
 	if (MACHINE_IS_TSCONF) {
 
 		//Puertos nvram
 		if (puerto==0xeff7) return puerto_eff7;
 		if (puerto==0xdff7) return zxevo_last_port_dff7;
-		if (puerto==0xbff7) return zxevo_nvram[zxevo_last_port_dff7];
+		if (puerto==0xbff7) {
+            if ((puerto_eff7&128) && zxevo_last_port_dff7>=0xf0 && !(zxevo_nvram[0x0c]&0x80))
+                return baseconf_read_cmos();
+            return zxevo_nvram[zxevo_last_port_dff7];
+        }
 		if (puerto_l==0xaf) return tsconf_get_af_port(puerto_h);
 
 		//Puertos ZIFI
@@ -7474,9 +7774,6 @@ Bit 5 If set disable Chrome features ( reading/writing to port 1FFDh, reading fr
 		if (puerto==TSCONF_ZIFI_INPUT_FIFO_STATUS) return tsconf_zifi_read_input_fifo_status();
 		if (puerto==TSCONF_ZIFI_OUTPUT_FIFO_STATUS) return tsconf_zifi_read_output_fifo_status();
 
-		//Puerto desconocido pero que usa la demo zifi. Tambien lo usa en escritura pero no se como va
-		if (puerto==0x57) return tsconf_read_port_57();
-
 		//Otros puertos
 		//printf ("Leyendo puerto %04XH\n",puerto);
 
@@ -7484,6 +7781,32 @@ Bit 5 If set disable Chrome features ( reading/writing to port 1FFDh, reading fr
 
 	if (MACHINE_IS_BASECONF) {
 		//printf ("Baseconf reading port %04XH on pc=%04XH\n",puerto,reg_pc);
+
+                if (puerto_l==0xff && baseconf_shadow_ports_available()) {
+                        z80_byte value=baseconf_read_beta_system_port();
+                        baseconf_beta_fdc_access(puerto);
+                        return value;
+                }
+
+                if (baseconf_beta_fdc_access(puerto)) return 0xff;
+
+                if (baseconf_shadow_ports_available() &&
+                    (puerto_l==0x2f || puerto_l==0x4f ||
+                     puerto_l==0x6f || puerto_l==0x8f))
+                        return baseconf_read_extended_dos_port(puerto_l);
+
+        /* Outside DOS these are the ZX Evo SPI ports.  The bootstrap
+           uses INIR on xx57 to load its continuation into RAM page 0. */
+        if (puerto_l==0x77) return baseconf_sd_interface_enabled.v ? 0 : 1;
+        if (puerto_l==0x57) {
+            int i;
+            if (!baseconf_sd_interface_enabled.v) return 0xff;
+            if (!baseconf_sd_enabled || baseconf_sd_cs) return 0xff;
+            for (i=0;i<MMC_MAX_CARDS;i++) {
+                if (mmc_enabled[i].v) return mmc_read();
+            }
+            return 0xff;
+        }
 
 		//Puertos nvram. TODO gestion puertos shadow
 		if (puerto==0xeff7 /*&& !baseconf_shadow_ports_available()*/ ) return puerto_eff7;
@@ -7496,7 +7819,8 @@ Bit 5 If set disable Chrome features ( reading/writing to port 1FFDh, reading fr
 			//return zxevo_nvram[zxevo_last_port_dff7];
 
 
-			return (puerto_eff7 & 0x80) ? zxevo_nvram[zxevo_last_port_dff7] : 0xff;
+			if (!(baseconf_last_port_eff7&0x80)) return 0xff;
+			return baseconf_read_cmos();
 		}
 
         if ( (puerto&0x00FF)==0xBF ) {
@@ -7508,12 +7832,38 @@ Bit 5 If set disable Chrome features ( reading/writing to port 1FFDh, reading fr
 		if (puerto==0xbef7 /*&& baseconf_shadow_ports_available()*/ ) {
 			//printf ("baseconf reading nvram register %02XH\n",zxevo_last_port_dff7);
 
-			return zxevo_nvram[zxevo_last_port_dff7];
+			return baseconf_read_cmos();
 		}
 
-		printf ("Baseconf reading unhandled port %04XH on pc=%04XH\n",puerto,reg_pc);
+		// Unimplemented BaseConf ports return the idle bus value below.
 
 	}
+
+    //Control de turbo scorpion leyendo puertos 7ffd y 1ffd
+   if (MACHINE_IS_SCORPION_ZS_256_TURBO_PLUS)
+    {
+
+        //32765. turbo 2
+        if (
+                (puerto & 0xD027) == 0x5025  ) {
+
+
+                scorpion_set_cpu_speed(2);
+
+
+        }
+
+
+
+		//Puerto tipicamente 8189. turbo 1
+
+		// the hardware will respond to all port addresses with bit 1 reset, bit 12 set and bits 13, 14 and 15 reset).
+		if ( (puerto & 0xD027)== 0x1025) {
+			scorpion_set_cpu_speed(1);
+        }
+
+    }
+
 
 
 //Final. Puertos de paginacion y puerto no asignado. No agregar nada despues de aqui
@@ -7538,37 +7888,12 @@ if (MACHINE_IS_SPECTRUM_128_P2)
 		//In Port fbdf unknown asked, PC after=0xe292
 		//In Port ffdf unknown asked, PC after=0xe2a2
 
-        int i;
         if (puerto_l==0x77) {
-            for (i=0;i<MMC_MAX_CARDS;i++) {
-                //Puertos SD
-                if (mmc_enabled[i].v && puerto_l==0x77) {
-                    //Read: always 0 (the card is inserted in the regime R / W - in accordance with the interpretation of the Z-controller). The actual presence of maps should attempt to verify its initialization time an out.
-                    //printf ("Returning SD port %04XH value 1\n",puerto);
-                    return 1; //1=inserted
-                 }
-            }
+            return zcontroller_enabled.v ? 0 : 1;
         }
 
-		//if (!sdc->image || !sdc->on || sdc->cs) return 0xff;    // no image or OFF or !CS
-
-
         if (puerto_l==0x57) {
-
-            for (i=0;i<MMC_MAX_CARDS;i++)
-                if (mmc_enabled[i].v) {
-                    if (!baseconf_sd_enabled || baseconf_sd_cs) return 0xFF;
-
-                    z80_byte valor_leido=mmc_read();
-
-                    //otro parche feo
-                    if (reg_pc==0x06B3 || reg_pc==0x695) {
-                        //printf ("Changing return value to ff\n");
-                        return 0xff; //Parche
-                    }
-
-                    return valor_leido;
-                }
+            return tsconf_sd_read_byte();
         }
 
 
@@ -7690,12 +8015,20 @@ void out_port_zx80_no_time(z80_int puerto,z80_byte value)
 	//Bi-Pak ZON-X81 Sound
 		if (puerto_l==0xDF || puerto_l==0xCF) {
 			activa_ay_chip_si_conviene();
-			if (ay_chip_present.v==1) out_port_ay(65533,value);
+			if (ay_chip_present.v==1) {
+                out_port_ay(65533,value);
+                //no interpretar los out como acciones sobre el video
+                return;
+            }
 		}
 
 		if (puerto_l==0x0F || puerto_l==0x1F) {
 			activa_ay_chip_si_conviene();
-			if (ay_chip_present.v==1) out_port_ay(49149,value);
+			if (ay_chip_present.v==1) {
+                out_port_ay(49149,value);
+                //no interpretar los out como acciones sobre el video
+                return;
+            }
 		}
 
 
@@ -7736,98 +8069,7 @@ void out_port_zx80_no_time(z80_int puerto,z80_byte value)
 	   	if (puerto==ZESARUX_ZXI_ZX8081_PORT_DATA)     zesarux_zxi_write_register_value(value);
     	}
 
-
-	//Cualquier puerto generara vsync
-
-
-	//printf ("Sending vsync with hsync_generator_active : %d video_zx8081_ula_video_output: %d\n",hsync_generator_active.v,video_zx8081_ula_video_output);
-
-
-        //printf("Enabling the HSYNC generator t_scanline_draw=%d\n",t_scanline_draw);
-
-        hsync_generator_active.v=1;
-        modificado_border.v=1;
-
-
-	//reseteamos contador de deteccion de modo fast-pantalla negra. Para modo no-realvideo
-	video_fast_mode_next_frame_black=0;
-
-
-	//y ponemos a high la salida del altavoz
-	bit_salida_sonido_zx8081.v=1;
-
-	set_value_beeper_on_array(da_amplitud_speaker_zx8081() );
-
-
-	if (zx8081_vsync_sound.v==1) {
-		//solo resetea contador de silencio cuando esta activo el vsync sound - beeper
-		reset_beeper_silence_detection_counter();
-	}
-
-
-
-        //Calcular cuanto ha tardado el vsync
-        int longitud_pulso_vsync;
-
-        if (t_estados>inicio_pulso_vsync_t_estados) longitud_pulso_vsync=t_estados-inicio_pulso_vsync_t_estados;
-
-        //contador de t_estados ha dado la vuelta. estamos al reves
-        else longitud_pulso_vsync=screen_testados_total-inicio_pulso_vsync_t_estados+t_estados;
-
-        //printf ("escribe puerto. final vsync  t_estados=%d. diferencia: %d t_scanline_draw: %d t_scanline_draw_timeout: %d\n",t_estados,longitud_pulso_vsync,t_scanline_draw,t_scanline_draw_timeout);
-
-
-	if (video_zx8081_linecntr_enabled.v==0) {
-		if (longitud_pulso_vsync >= minimo_duracion_vsync) {
-			//if (t_scanline_draw_timeout>MINIMA_LINEA_ADMITIDO_VSYNC || t_scanline_draw_timeout<=3) {
-			if (t_scanline_draw_timeout>MINIMA_LINEA_ADMITIDO_VSYNC) {
-				//printf ("admitido final pulso vsync\n");
-
-		                if (!simulate_lost_vsync.v) {
-
-
-
-					if (zx8081_detect_vsync_sound.v) {
-						//printf ("vsync total de zx8081 t_estados: %d\n",t_estados);
-						if (zx8081_detect_vsync_sound_counter>0) zx8081_detect_vsync_sound_counter--;
-
-					}
-
-					generar_zx8081_vsync();
-					vsync_per_second++;
-				}
-
-
-			}
-		}
-
-		else {
-			//printf ("no admitimos pulso vsync, duracion: %d\n",longitud_pulso_vsync);
-		}
-
-	}
-
-
-	video_zx8081_linecntr_enabled.v=1;
-
-	//modo slow ?¿
-	/*
-	if (nmi_generator_active.v==1) {
-		video_zx8081_lnctr_adjust.v=1;
-	}
-	else {
-		video_zx8081_lnctr_adjust.v=0;
-	}
-	*/
-
- 	video_zx8081_ula_video_output=0;
-
-	//Prueba para no tener que usar ajuste lnctr
-	//con esto: modo zx80 lnctr desactivado y zx81 activado y todos juegos se ven bien. PERO modo fast zx81 se ve mal
-	//video_zx8081_linecntr=0;
-
-
-	//prueba if (nmi_generator_active.v==1) video_zx8081_linecntr=0;
+    zx8081_out_any_port_video_stuff();
 
 
 }
@@ -7836,27 +8078,17 @@ void out_port_zx81_no_time(z80_int puerto,z80_byte value)
 
 	debug_fired_out=1;
 
-	if ((puerto&0xFF)==0xfd) {
-		//debug_printf (VERBOSE_DEBUG,"Disabling NMI generator\n");
-		nmi_generator_active.v=0;
-		//return;
-	}
-
-        if ((puerto&0xFF)==0xfe) {
-		//debug_printf (VERBOSE_DEBUG,"Enabling NMI generator\n");
-                nmi_generator_active.v=1;
-		//return;
-        }
-
-
-	//TODO
-	//Con el luego wrx/nucinv16.p esto NO da imagen estable
-	//para imagen estable, los if de antes no deben finalizar con return, es decir,
-	//se debe activar/desactivar nmi y luego lanzar la sentencia out_port_zx80_no_time(puerto,value);
-	//para wrx/nucinv16.p se hace el truco de bajar el timeout de vsync
 	out_port_zx80_no_time(puerto,value);
 
+    // A1=0 , A0=1: disable nmi
+	if ((puerto&3)==1) {
+        zx81_disable_nmi_generator();
+	}
 
+    //A1=1 , A0=0: enable nmi
+    if ((puerto&3)==2) {
+        zx81_enable_nmi_generator();
+    }
 
 }
 
@@ -8455,8 +8687,29 @@ z80_byte lee_puerto_sms_no_time(z80_byte puerto_h GCC_UNUSED,z80_byte puerto_l)
             //7EH & 193 = 0x40
 
             //0x7E : Reading: returns VDP V counter
-            //printf("scanline draw: %d\n",t_scanline_draw);
-            return t_scanline_draw;
+            // t_scanline_draw avanza linealmente, pero el contador vertical que lee
+            // la CPU por 7EH no: empieza en cero en la primera línea visible.
+            {
+                int linea_vdp=t_scanline_draw-screen_indice_inicio_pant;
+                // Las líneas anteriores a la imagen activa pertenecen al final
+                // de la cuenta anterior; la conversión a byte da esos valores.
+                if (linea_vdp<0) return (z80_byte)linea_vdp;
+
+                // Después de DAH, NTSC vuelve a D5H; después de F2H, PAL vuelve
+                // a BAH. Al llegar a la línea del salto, restar la diferencia
+                // hace que el valor leído sea D5H o BAH y siga creciendo desde ahí.
+                if (machine_60hz.v) {
+                    if (linea_vdp>=VDP_9918A_SMS_VCOUNTER_NTSC_WRAP_LINE) {
+                        linea_vdp-=VDP_9918A_SMS_VCOUNTER_NTSC_WRAP_LINE-VDP_9918A_SMS_VCOUNTER_NTSC_RESTART_VALUE;
+                    }
+                }
+                else {
+                    if (linea_vdp>=VDP_9918A_SMS_VCOUNTER_PAL_WRAP_LINE) {
+                        linea_vdp-=VDP_9918A_SMS_VCOUNTER_PAL_WRAP_LINE-VDP_9918A_SMS_VCOUNTER_PAL_RESTART_VALUE;
+                    }
+                }
+                return (z80_byte)linea_vdp;
+            }
 
             //return 0xB0; //sonic por ejemplo espera este valor
         break;
@@ -8551,62 +8804,92 @@ z80_byte lee_puerto_sms(z80_byte puerto_h,z80_byte puerto_l)
 
 
 
-//Extracted from Fuse emulator
-void set_value_beeper (int v)
-{
-  static int beeper_ampl[] = { 0, AMPLITUD_TAPE, AMPLITUD_BEEPER,
-                               AMPLITUD_BEEPER+AMPLITUD_TAPE };
+
 /*
-  if( tape_is_playing() ) {
-    // Timex machines have no loading noise
-    if( !settings_current.sound_load || machine_current->timex ) on = on & 0x02;
-  } else {
-    // ULA book says that MIC only isn't enough to drive the speaker as output voltage is below the 1.4v threshold
-    if( on == 1 ) on = 0;
-  }
+
+Podria ser:
+-normal (mic no se oye practicamente)
+-mic amplified. se oye beeper tambien
+-only beeper. a 50. sin mic
+-only mic. a 50. sin beeper
 */
+enum beeper_mic_mixer_modes beeper_mic_mixer_current_mode=BEEPER_MIC_MIXER_NORMAL;
 
-  //Si estamos en rutina de SAVE, enviar sonido teniendo en cuenta como referencia el 0 y de ahi hacia arriba o abajo
-  //siempre que el parametro de filtro lo tengamos activo en el menu
+char *beeper_mic_mixer_modes_strings[]={
+    "Normal",
+    "Amplified MIC",
+    "Only Beeper",
+    "Only MIC"
+};
 
-  //valores de PC en hacer out 254:
-  //rutina save : 1244, 1262, 1270, 1310. oscila solo bit MIC
-  //rutina load: 1374
-  //rutina beep: 995
-  if (reg_pc>1200 && reg_pc<1350 && output_beep_filter_on_rom_save.v) {
-		//Estamos en save.
-		//printf ("valor beeper: %d\n",v);
-		value_beeper=( v ? AMPLITUD_TAPE*2 : -AMPLITUD_TAPE*2);
+void beeper_mic_mixer_modes_strings_print(void)
+{
+    int i;
 
-		//Si activamos modo alteracion beeper. Ideal para que se escuche mas alto y poder enviar a inves
-		/*
-		En audacity, despues de exportar con valor 122 de beeper, aplicar reduccion de ruido:
-		db 3, sensibilidad 0, suavidad 150 hz, ataque 0.15
-		Tambien se puede aplicar reduccion de agudos -5
-		Luego reproducir con volumen del pc al maximo
-		*/
+    for (i=BEEPER_MIC_MIXER_NORMAL;i<=BEEPER_MIC_MIXER_ONLY_MIC;i++) {
+        printf("%d=%s",i,beeper_mic_mixer_modes_strings[i]);
 
-		if (output_beep_filter_alter_volume.v) {
-			//value_beeper=( v ? 122 : -122);
-			value_beeper=( v ? output_beep_filter_volume : -output_beep_filter_volume);
-		}
+        if (i!=BEEPER_MIC_MIXER_ONLY_MIC) printf(",");
+    }
+}
 
+char *beeper_mic_mixer_modes_string_unknown="Unknown";
 
+char *get_beeper_mic_mixer_mode_string(void)
+{
+    if (beeper_mic_mixer_current_mode>=BEEPER_MIC_MIXER_NORMAL && beeper_mic_mixer_current_mode<=BEEPER_MIC_MIXER_ONLY_MIC) return beeper_mic_mixer_modes_strings[beeper_mic_mixer_current_mode];
+    else {
+        //por si acaso se sale de rango
+        return beeper_mic_mixer_modes_string_unknown;
+    }
+}
 
-  }
+static int beeper_ampl[] = { 0, AMPLITUD_TAPE, AMPLITUD_BEEPER,
+                            AMPLITUD_BEEPER+AMPLITUD_TAPE };
 
-  else {
+static int beeper_ampl_amplify_mic[] = { 0, AMPLITUD_TAPE_MIC_AMPLIFIED, AMPLITUD_BEEPER_MIC_AMPLIFIED,
+                            AMPLITUD_BEEPER_MIC_AMPLIFIED+AMPLITUD_TAPE_MIC_AMPLIFIED };
 
+static int beeper_ampl_only_beeper[] = { 0, 0, AMPLITUD_BEEPER,
+                            AMPLITUD_BEEPER };
 
-
-	//Por defecto el sonido se genera en negativo y de ahi oscila
-
-	//temp normal en fuse
-	value_beeper = -beeper_ampl[3] + beeper_ampl[v]*2;
-
+static int beeper_ampl_only_mic[] = { 0, AMPLITUD_BEEPER, 0,
+                            AMPLITUD_BEEPER };
 
 
-  }
+//Extracted from Fuse emulator
+void set_value_beeper(int v)
+{
+
+
+    switch (beeper_mic_mixer_current_mode) {
+        case BEEPER_MIC_MIXER_NORMAL:
+        default:
+            //Por defecto el sonido se genera en negativo y de ahi oscila
+            value_beeper = -beeper_ampl[3] + beeper_ampl[v]*2;
+        break;
+
+        case BEEPER_MIC_MIXER_MIC_AMPLIFIED:
+            value_beeper = -beeper_ampl_amplify_mic[3] + beeper_ampl_amplify_mic[v]*2;
+        break;
+
+        case BEEPER_MIC_MIXER_ONLY_BEEPER:
+            value_beeper = -beeper_ampl_only_beeper[3] + beeper_ampl_only_beeper[v]*2;
+        break;
+
+        case BEEPER_MIC_MIXER_ONLY_MIC:
+            value_beeper = -beeper_ampl_only_mic[3] + beeper_ampl_only_mic[v]*2;
+        break;
+    }
+
+
+    //printf("%d\n",value_beeper);
+
+    if (audio_nagra_effect.v) {
+        if (value_beeper<0) value_beeper=0;
+        audio_apply_nagra_effect_beeper();
+        return;
+    }
 
 
 
@@ -8616,6 +8899,9 @@ z80_byte get_border_colour_from_out(void)
 {
 
 z80_byte color_border;
+
+if (MACHINE_IS_BASECONF) return baseconf_get_border_colour();
+if (MACHINE_IS_ATM_TURBO) return atmturbo_get_border_colour();
 
 if (MACHINE_IS_ZXUNO && zxuno_is_prism_mode_enabled() ) {
 //IxxxxGRB puerto FE
@@ -8697,6 +8983,10 @@ void out_port_spectrum_fe_issue(z80_byte value)
 
 void out_port_spectrum_border(z80_int puerto,z80_byte value)
 {
+    if (MACHINE_IS_ATM_TURBO1 && (puerto & 7)==6)
+        atmturbo_out_port_fe(puerto,value);
+    if (MACHINE_IS_ATM_TURBO2_FAMILY)
+        atmturbo2_out_port_fe(puerto,value);
 
     //Actualizar bit 6 de puerto feh segun si teclado issue 2 o 3
     out_port_spectrum_fe_issue(value);
@@ -8770,12 +9060,15 @@ void out_port_spectrum_border(z80_int puerto,z80_byte value)
     if (rainbow_enabled.v) {
         //printf ("%d\n",t_estados);
         int i;
+        // GMX aplica el ajuste del puerto sin cambiar la geometría del menú.
+        int borde_pentagon=pentagon_timing.v ||
+            (MACHINE_IS_SCORPION_GMX && scorpion_gmx_uses_pentagon_timing());
 
         i=t_estados;
         //printf ("t_estados %d screen_testados_linea %d bord: %d\n",t_estados,screen_testados_linea,i);
 
         //Con esto se ve la ukflag, la confusio y la rage se ven perfectas
-        if (pentagon_timing.v) i -=2;
+        if (borde_pentagon) i -=2;
 
         else {
             //Maquinas no pentagon, pero de 128k
@@ -8790,7 +9083,7 @@ void out_port_spectrum_border(z80_int puerto,z80_byte value)
             //Ajuste valor de indice a multiple de 4 (lo normal en la ULA)
             //O sea, quitamos los 2 bits inferiores
             //Excepto en pentagon
-            if (pentagon_timing.v==0) i=i&(0xFFFFFFFF-3);
+            if (!borde_pentagon) i=i&(0xFFFFFFFF-3);
 
             //En Inves. Snow in border
             if (MACHINE_IS_INVES) {
@@ -8853,10 +9146,24 @@ void out_port_spectrum_no_time(z80_int puerto,z80_byte value)
 	z80_byte puerto_l=puerto&255;
 	z80_byte puerto_h=(puerto>>8)&0xFF;
 
+        if (ide_smuc_write(puerto,value)) return;
+        if (scorpion_gmx_zcontroller_write(puerto,value)) return;
+
+        // Nemo IDE de TSConf atiende estos puertos antes que los alias de ULA y #7FFD.
+        if (MACHINE_IS_TSCONF && zxevo_nemo_ide_port(puerto_l)) {
+                zxevo_nemo_ide_write(puerto_l,value);
+                return;
+        }
+
         //super wonder boy usa puerto 1fe
         //paperboy usa puertos xxfe
 	//Puerto 254 realmente es cualquier puerto par
-       	if ( (puerto & 1 )==0 && !(MACHINE_IS_CHLOE) && !(MACHINE_IS_TIMEX_TS_TC_2068) && !(MACHINE_IS_PRISM) ) {
+        if (MACHINE_IS_BASECONF && (puerto_l&0xf7)==0xf6) {
+                baseconf_set_border_colour(puerto,value);
+                out_port_spectrum_border(puerto,value);
+        }
+
+	if ( (puerto & 1 )==0 && !(MACHINE_IS_CHLOE) && !(MACHINE_IS_TIMEX_TS_TC_2068) && !(MACHINE_IS_PRISM) && !(MACHINE_IS_BASECONF) ) {
 
 		out_port_spectrum_border(puerto,value);
 
@@ -8892,6 +9199,18 @@ Port: 10-- ---- ---- --0-
 
 */
 
+    /*
+    Puerto	Dirección	Utilización
+    A	1Fh	E/S de 8 bits; habitualmente joystick
+    B	3Fh	E/S de 8 bits; permite conectar otro joystick
+    C	5Fh	E/S y control de paginación de RAM
+    Control	7Fh	Configuración del 8255
+    */
+    if (MACHINE_IS_DIDAKTIKGAMA && (puerto_l==0x1f || puerto_l==0x3f || puerto_l==0x5f || puerto_l==0x7f)) {
+        didaktikgama_out_port(puerto,value);
+    }
+
+
 	//Puertos Chip AY
 	if ( ((puerto & 49154) == 49152) || ((puerto & 49154) == 32768) ) {
 		z80_int puerto_final=puerto;
@@ -8910,9 +9229,42 @@ Port: 10-- ---- ---- --0-
 	}
 
 
-   //Test betadisk
-    if (betadisk_enabled.v) {
-        if (betadisk_check_if_rom_area(reg_pc)) {
+   if (MACHINE_IS_ATM_TURBO3 && puerto_l==0xbf) {
+       atmturbo3_out_port_bf(value);
+       return;
+   }
+
+   if (MACHINE_IS_ATM_TURBO2_FAMILY && ide_enabled.v && ide_atm_enabled.v &&
+       atmturbo2_shadow_ports_enabled() &&
+       (puerto&0x1f)==0x0f) {
+       atmturbo2_ide_write_port(puerto,value);
+       return;
+   }
+
+   if (MACHINE_IS_ATM_TURBO2_FAMILY && puerto_l==0xff &&
+       atmturbo2_palette_port_enabled())
+       atmturbo2_out_port_ff(puerto,value);
+
+   if ((MACHINE_IS_ATM_TURBO1 || MACHINE_IS_ATM_TURBO2_FAMILY) &&
+       atmturbo_fdc_is_active(puerto,0) &&
+       (puerto_l==0x1f || puerto_l==0x3f || puerto_l==0x5f ||
+        puerto_l==0x7f || puerto_l==0xff)) {
+       atmturbo_fdc_write_port(puerto,value);
+       return;
+   }
+
+   //Los accesos directos al VG93 de Scorpion, incluido GMX, usan el controlador común.
+    if (MACHINE_IS_SCORPION && trd_enabled.v &&
+        scorpion_trdos_is_active() && reg_pc<0x4000 &&
+        (puerto_l==0x1f || puerto_l==0x3f || puerto_l==0x5f ||
+         puerto_l==0x7f || puerto_l==0xff)) {
+        vg93_write_port(puerto,value);
+        return;
+    }
+
+   //Acceso betadisk
+    if (betadisk_enabled.v || (MACHINE_IS_SCORPION && scorpion_trdos_is_active() && trd_enabled.v)) {
+        if (betadisk_check_if_rom_area(reg_pc) || (MACHINE_IS_SCORPION && scorpion_trdos_is_active() && reg_pc<0x4000)) {
 
 
          if (puerto_l==0xFF) {
@@ -8963,16 +9315,19 @@ Port: 10-- ---- ---- --0-
 			if (mem_paging_is_enabled()) {
 
 				puerto_32765=value;
-				//Paginar RAM y ROM
-                	        //32 kb rom, 128 ram
 
-	                        //asignar ram
-        	                mem_page_ram_128k();
 
-                	        //asignar rom
-                        	mem_page_rom_128k();
+                //Paginar RAM y ROM
+                //32 kb rom, 128 ram
+
+                //asignar ram
+                mem_page_ram_128k();
+
+                //asignar rom
+                mem_page_rom_128k();
 
                 if (zxmmcplus_enabled.v) zxmmcplus_sync_bit_7ffd();
+
 
 			}
 
@@ -8980,6 +9335,99 @@ Port: 10-- ---- ---- --0-
 
         }
 	}
+
+    if (MACHINE_IS_ATM_TURBO)
+    {
+        if (MACHINE_IS_ATM_TURBO2_FAMILY && atmturbo2_shadow_ports_enabled()) {
+            if (puerto_l==0x77) {
+                atmturbo2_out_port_77(puerto,value);
+                return;
+            }
+            if (puerto_l==0xf7 || (MACHINE_IS_ATM_TURBO3 && puerto_l==0xe7)) {
+                if (MACHINE_IS_ATM_TURBO3) atmturbo3_out_port_mmu(puerto,value);
+                else atmturbo2_out_port_f7(puerto,value);
+                return;
+            }
+        }
+
+        if (MACHINE_IS_ATM_TURBO1 && (puerto & 0x8202)==0 && (puerto & 1)) {
+            atmturbo_out_port_7dfd(value);
+            return;
+        }
+
+        /* ATM2 decodifica parcialmente #7FFD; CP/M también escribe #52FD. */
+        if (puerto==32765 ||
+            (MACHINE_IS_ATM_TURBO2_FAMILY && (puerto & 0x8202)==0x0200)) {
+
+
+				atmturbo_out_port_32765(value);
+
+        }
+
+        if (puerto==0xfdfd) {
+
+
+				atmturbo_out_port_fdfd(value);
+
+        }
+
+
+    }
+
+    if (MACHINE_IS_SCORPION)
+    {
+		// Los puertos GMX también coinciden con la máscara parcial de 7FFD.
+		int puerto_gmx_extendido=MACHINE_IS_SCORPION_GMX &&
+			!scorpion_gmx_is_pentagon_scheme() &&
+			(puerto & 0x0023)==0x0021 &&
+			((puerto & 0xff00)==0xdf00 || (puerto & 0xff00)==0x7800 ||
+			 (puerto & 0xff00)==0x7a00 || (puerto & 0xff00)==0x7c00 ||
+			 (puerto & 0xff00)==0x7e00);
+
+		if (MACHINE_IS_SCORPION_GMX && (puerto & 0xff)==0) {
+			scorpion_gmx_write_port(puerto,value);
+		}
+		if (puerto_gmx_extendido) {
+			scorpion_gmx_write_port(puerto,value);
+		}
+
+        int puerto_paginacion_7ffd=scorpion_gmx_is_pentagon_scheme() ?
+            (puerto & 0x8002)==0 : (puerto & 0xD027)==0x5025;
+        if (puerto_paginacion_7ffd && !puerto_gmx_extendido) {
+
+
+
+			if (MACHINE_IS_SCORPION_GMX ? scorpion_gmx_7ffd_paging_enabled() :
+			    (puerto_32765 & 32)==0) {
+
+				puerto_32765=value;
+
+
+                //asignar ram
+                scorpion_mem_page_ram();
+
+                //asignar rom
+                scorpion_mem_page_rom();
+
+
+
+
+			}
+
+
+
+        }
+
+
+
+		//Puerto tipicamente 8189
+
+		// the hardware will respond to all port addresses with bit 1 reset, bit 12 set and bits 13, 14 and 15 reset).
+		if (!scorpion_gmx_is_pentagon_scheme() && (puerto & 0xD027)==0x1025) {
+			scorpion_write_port_1ffd(value);
+        }
+
+    }
 
 	if (MACHINE_IS_SPECTRUM_P2A_P3)
 	{
@@ -9327,56 +9775,11 @@ acts as expected unless this registe is explicitly changed by the user/software.
 				//Puertos de Paginacion
 				if (MACHINE_IS_TSCONF)
 				{
-					//Para 128k
-					//Puerto tipicamente 32765
-					//The additional memory features of the 128K/+2 are controlled to by writes to port 0x7ffd. As normal on Sinclair hardware, the port address is in fact only partially decoded and the hardware will respond to any port address with bits 1 and 15 reset. However, 0x7ffd should be used if at all possible to avoid conflicts with other hardware.
-
-
+					tsconf_beta_write_port(puerto_l,value);
+					// El puerto #7FFD responde si A1 y A15 valen cero.
 					if ( (puerto & 32770) == 0 ) {
-
-						//printf ("paginacion pc: %d\n",reg_pc);
-						//printf ("puerto_32765: %d enviando valor: %d\n",puerto_32765,value);
-
-						//ver si paginacion desactivada
-						//if (puerto_32765 & 32) return;
-
-						//printf ("Paginando mediante 32765. valor: %02XH\n",value);
-
-
-						//if (1==1) {
-						if ((puerto_32765 & 32)==0) {
-                        //if (puerto==32765) {
-
-							puerto_32765=value;
-
-							//Port 0x7FFD is an alias of Page3, page3=tsconf_af_ports[0x13];
-							tsconf_af_ports[0x13]=value&7;
-
-
-
-							//Bit 4 de 32765 es bit 0 de #21AF
-							z80_byte memconfig=tsconf_af_ports[0x21];
-							memconfig &=(255-1); //Reset del bit 0
-
-							//Bit vshadow
-							z80_byte vpage=(value&8 ? 7 : 5);
-							tsconf_af_ports[1]=vpage;
-
-
-							//Y ponemos a 1 si conviene
-							if (value&16) memconfig |=1;
-
-							tsconf_af_ports[0x21]=memconfig;
-
-							//Paginar RAM y ROM
-							tsconf_set_memory_pages();
-
-
-						}
-
-						else {
-							//printf ("Paginacion 32765 desactivada\n");
-						}
+						// El modo Auto distingue el opcode OUT (n),A del opcode OUT (C),r.
+						tsconf_write_7ffd_port(value,peek_byte_no_time((reg_pc-2)&0xffff)==0xd3);
 			    }
 
 					//Puertos NVRAM
@@ -9386,7 +9789,11 @@ acts as expected unless this registe is explicitly changed by the user/software.
 
 					if (puerto==0xbff7) {
 						//Si esta permitida la escritura
-						if (puerto_eff7&128) zxevo_nvram[zxevo_last_port_dff7]=value;
+						if (puerto_eff7&128) {
+                            if (zxevo_last_port_dff7>=0xf0 && !(zxevo_nvram[0x0c]&0x80))
+                                baseconf_write_cmos(value);
+                            else zxevo_nvram[zxevo_last_port_dff7]=value;
+                        }
 					}
 
 					if (puerto_l==0xaf) tsconf_write_af_port(puerto_h,value);
@@ -9402,57 +9809,18 @@ acts as expected unless this registe is explicitly changed by the user/software.
 					//if (puerto_l==0x57 || puerto_l==0x77) printf ("Writing SD port %04XH value %02XH\n",puerto,value);
 
                     if (puerto_l==0x77) {
-                        int i;
-                        int salir=0;
-                        for (i=0;i<MMC_MAX_CARDS && !salir;i++) {
-                            if (mmc_enabled[i].v) {
-                                //printf ("Writing SD port %04Xh value %02XH\n",puerto,value);
-        /*
-        Bits 7 .. 2: set to 0 for compatibility
-
-        Bit 1: signal CS, 1 after the reset, set to 0 to select the SD-card
-
-        Bit 0: Set to 1 for compatibility with Z-controller
-
-
-                comp->sdc->on = val & 1;
-                comp->sdc->cs = (val & 2) ? 1 : 0;
-
-        */
-
-                                baseconf_sd_enabled=value&1;
-                                baseconf_sd_cs=(value & 2) ? 1 : 0;
-
-                                mmc_cs(0xFE);  //TODO. Este valor FE deberia depender de baseconf_sd_cs...
-                                salir=1;
-                            }
+                        if (zcontroller_enabled.v) {
+                            baseconf_sd_enabled=value&1;
+                            baseconf_sd_cs=(value&2) ? 1 : 0;
+                            tsconf_sd_read_buffer=0xff;
+                            mmc_cs(baseconf_sd_cs ? 0xff : 0xfe);
                         }
                     }
 
                     if (puerto_l==0x57) {
-                        int i;
-                        int salir=0;
-                        for (i=0;i<MMC_MAX_CARDS && !salir;i++) {
-                            if (mmc_enabled[i].v) {
-                                //printf ("Writing SD port %04XH 57h value %02XH\n",puerto,value);
-
-        /* Envia valores FF y no se porque. Quien entienda esto que me lo explique...
-
-        Note: in the cycle of exchange on the SPI, initiated by writing or reading port # xx57, occurs simultaneously sending bytes to the SD-card and receive bytes from it. Sending byte is the same as that recorded in the port (if the cycle is initiated by the exchange of records), or # FF, if the cycle of exchange initiated by reading the port.
-        Received bytes is stored in an internal buffer and is available for the reading from the same port. This reading of the re-initiates the cycle of exchange, etc.
-        Allowed to read / write port # xx57 teams INIR and OTIR. Example of reading the sector:
-
-            LD	C,#57
-            LD	B,0
-            INIR
-            INIR
-
-        */
-                                if (!baseconf_sd_enabled || baseconf_sd_cs) return;
-
-                                mmc_write(value);
-                                salir=1;
-                            }
+                        if (zcontroller_enabled.v && baseconf_sd_enabled && !baseconf_sd_cs) {
+                            mmc_write(value);
+                            tsconf_sd_read_buffer=0xff;
                         }
                     }
 
@@ -9469,8 +9837,13 @@ acts as expected unless this registe is explicitly changed by the user/software.
 				}
 
 	if (MACHINE_IS_BASECONF) {
-		if (puerto_l==0xBF || puerto_l==0x77 || (puerto&0x0FFF)==0xff7 || (puerto&0x0FFF)==0x7f7 || puerto==0x7ffd || puerto==0xeff7
-			|| puerto==0xEFF7 || puerto==0xDFF7 || puerto==0xDEF7 || puerto==0xBFF7 || puerto==0xBEF7)
+		if (puerto_l==0x1f || puerto_l==0x3f || puerto_l==0x5f ||
+            puerto_l==0x7f || puerto_l==0xBF || puerto_l==0xBD ||
+            puerto_l==0xBE || puerto_l==0xFF ||
+            puerto_l==0x2f || puerto_l==0x4f || puerto_l==0x6f || puerto_l==0x8f ||
+            puerto_l==0x77 || puerto_l==0x57 || (puerto&0x0FFF)==0xff7 || (puerto&0x0FFF)==0x7f7 ||
+            (puerto&0x0FFF)==0xbf7 || (puerto&0x80fe)==0x00fc || puerto==0xeff7 ||
+            puerto==0xDFF7 || puerto==0xDEF7 || puerto==0xBFF7 || puerto==0xBEF7)
 		{
 			//printf ("Out port baseconf port %04XH value %02XH. PC=%04XH\n",puerto,value,reg_pc);
 			baseconf_out_port(puerto,value);
@@ -9623,6 +9996,11 @@ acts as expected unless this registe is explicitly changed by the user/software.
 
     if (zxmmc_emulation.v==0 && zxmmcplus_enabled.v && puerto_l==0x1f) {
         zxmmcplus_mmc_cs(value);
+    }
+
+    //Puertos NemoIDE nativos de BaseConf
+    if (MACHINE_IS_BASECONF && zxevo_nemo_ide_port(puerto_l)) {
+            zxevo_nemo_ide_write(puerto_l,value);
     }
 
     //Puertos 8-bit simple ide

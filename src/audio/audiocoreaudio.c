@@ -38,6 +38,12 @@
 #include "settings.h"
 
 
+//Simbolo introducido en macOS 12. Para poder soportar compilacion en macOS < 12
+#if __MAC_OS_X_VERSION_MAX_ALLOWED < 120000
+#define kAudioObjectPropertyElementMain kAudioObjectPropertyElementMaster
+#endif
+
+
 //saudiocoreaudio_fifo_t sound_fifo;
 
 char *buffer_actual;
@@ -86,7 +92,7 @@ int get_default_output_device(AudioDeviceID* device)
   AudioObjectPropertyAddress property_address = {
     kAudioHardwarePropertyDefaultOutputDevice,
     kAudioObjectPropertyScopeGlobal,
-    kAudioObjectPropertyElementMaster
+    kAudioObjectPropertyElementMain
   };
 
   /* get the default output device for the HAL */
@@ -114,7 +120,7 @@ get_default_sample_rate( AudioDeviceID device, Float64 *rate )
   AudioObjectPropertyAddress property_address = {
     kAudioDevicePropertyNominalSampleRate,
     kAudioObjectPropertyScopeGlobal,
-    kAudioObjectPropertyElementMaster
+    kAudioObjectPropertyElementMain
   };
 
   /* get the default output device for the HAL */
@@ -150,8 +156,8 @@ freqptr=&freqqqq;
   OSStatus err = kAudioHardwareNoError;
   AudioDeviceID device = kAudioObjectUnknown; /* the default device */
   //int error;
-  float hz;
-  int sound_framesiz;
+  //flotante hz;
+  //int sound_framesiz;
 
   if( get_default_output_device(&device) ) return 1;
   if( get_default_sample_rate( device, &deviceFormat.mSampleRate ) ) return 1;
@@ -258,9 +264,10 @@ stereoptr=&pepe;
      speed to about 2000% on my Mac, 100Hz allows up to 5000% for me) */
 
 
-	hz=FRECUENCIA_SONIDO;
+	//hz=FRECUENCIA_SONIDO;
 
-  sound_framesiz = deviceFormat.mSampleRate / hz;
+
+  //sound_framesiz = deviceFormat.mSampleRate / hz;
 
   /* wait to run sound until we have some sound to play */
   audio_output_started = 0;
@@ -291,14 +298,16 @@ void sound_lowlevel_frame( char *data, int len );
 //https://developer.apple.com/library/archive/documentation/MusicAudio/Conceptual/AudioQueueProgrammingGuide/AQRecord/RecordingAudio.html
 
 //Total de buffers utilizado por las funciones de Mac OS X
-static const int coreaudio_record_buffers = 3;
+//static const int coreaudio_record_buffers = 3;
+
+#define COREAUDIO_RECORD_BUFFERS 3
 
 //Estructura para almacenar el estado de la grabacion
 //Estructura Obtenida de los ejemplos, modificada con las cosas que uso realmente
 struct AQRecorderState {
     AudioStreamBasicDescription  mDataFormat;
     AudioQueueRef                mQueue;
-    AudioQueueBufferRef          mBuffers[coreaudio_record_buffers];
+    AudioQueueBufferRef          mBuffers[COREAUDIO_RECORD_BUFFERS];
     UInt32                       bufferByteSize;
 };
 
@@ -357,7 +366,7 @@ void audiocoreaudio_start_record_input(void)
     fmt->mBytesPerPacket   = fmt->mBytesPerFrame * fmt->mFramesPerPacket;
     fmt->mFormatFlags      = kLinearPCMFormatFlagIsSignedInteger;
 
-
+    //TODO: no leemos codigos retorno de cada llamada (ese OSStatus)
     OSStatus r = 0;
 
     r = AudioQueueNewInput(&coreaudio_record_state.mDataFormat, coreaudio_handleinputbuffer, &coreaudio_record_state,
@@ -376,7 +385,7 @@ void audiocoreaudio_start_record_input(void)
     coreaudio_record_state.bufferByteSize = AUDIO_RECORD_BUFFER_SIZE;
 
     int i;
-    for (i = 0; i < coreaudio_record_buffers; ++i) {
+    for (i = 0; i < COREAUDIO_RECORD_BUFFERS; ++i) {
         r = AudioQueueAllocateBuffer(coreaudio_record_state.mQueue, coreaudio_record_state.bufferByteSize, &coreaudio_record_state.mBuffers[i]);
 
         r = AudioQueueEnqueueBuffer(coreaudio_record_state.mQueue, coreaudio_record_state.mBuffers[i], 0, NULL);
@@ -674,7 +683,7 @@ void coreaudio_mid_add_note(z80_byte *note,int messagesize)
          coreaudio_midi_currentpacket, timestamp, messagesize, note);
 
     if (coreaudio_midi_currentpacket==NULL) {
-      debug_printf (VERBOSE_DEBUG,"Coreaudio midi queue was full. Flush and retry");
+      DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: coreaudio: midi queue was full. Flush and retry");
       //Hacemos flush y reintentamos
       coreaudio_midi_output_flush_output();
       coreaudio_midi_currentpacket = MIDIPacketListAdd(coreaudio_midi_packetlist, COREAUDIO_MIDI_BUFFER_SIZE,
@@ -798,7 +807,7 @@ void coreaudio_mid_finish_all(void)
 int coreaudio_note_on(unsigned char channel, unsigned char note,unsigned char velocity)
 {
 
-  debug_printf (VERBOSE_PARANOID,"noteon event channel %d note %d velocity %d",channel,note,velocity);
+  DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: coreaudio: noteon event channel %d note %d velocity %d",channel,note,velocity);
 
   z80_byte noteon[] = {0x90, note, velocity};
 
@@ -810,7 +819,7 @@ int coreaudio_note_on(unsigned char channel, unsigned char note,unsigned char ve
 int coreaudio_note_off(unsigned char channel, unsigned char note,unsigned char velocity)
 {
 
-  debug_printf (VERBOSE_PARANOID,"noteoff event channel %d note %d velocity %d",channel,note,velocity);
+  DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: coreaudio: noteoff event channel %d note %d velocity %d",channel,note,velocity);
 
   z80_byte noteoff[] = {0x80, note, velocity};
 
@@ -823,7 +832,7 @@ int coreaudio_note_off(unsigned char channel, unsigned char note,unsigned char v
 int coreaudio_change_instrument(unsigned char instrument)
 {
 
-  debug_printf (VERBOSE_PARANOID,"change instrument event instrument %d",instrument);
+  DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: coreaudio: change instrument event instrument %d",instrument);
 
     //El mensaje seria 0xC0 + canal
 
@@ -860,7 +869,7 @@ void playPacketListOnAllDevices(MIDIPortRef midiout,const MIDIPacketList* pktlis
       dest = MIDIGetDestination(iDest);
       status = MIDISend(midiout, dest, pktlist);
       if (status) {
-          debug_printf(VERBOSE_DEBUG,"coreaudio_midi: Problem sending MIDI data");
+          DBG_PRINT_MIDI_OUT VERBOSE_DEBUG,"MIDI_OUT: coreaudio: Problem sending MIDI data");
           //printf("%s\n", GetMacOSStatusErrorString(status));
           //exit(status);
       }

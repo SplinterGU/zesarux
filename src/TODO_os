@@ -31,11 +31,19 @@ Ouch, thank you for the response – this will require some hard studying to fig
 -cocoa: visibilidad raton en pantalla completa. Se puede corregir eliminando funciones grabMouse/ungrabMouse pero luego
 la posición del ratón no la lee correctamente, seguramente por culpa del factor de zoom
 
+-cocoa: memory leak cada vez que se redimensiona ventana o se conmuta full screen
+
 -Joystick en Mac: decir nombre de joystick y total botones/axis
 
 
 
 -asociar archivos tap, tzx etc en Mac a ZEsarUX
+
+
+
+-Compilar binario universal https://developer.apple.com/documentation/apple-silicon/building-a-universal-macos-binary
+->tendria que hacer compilación de cada archivo .c en dos .o, uno para cada arquitectura. Demasiado complicado.
+Lo mas fácil es generar dos binarios en dos entornos diferentes (uno en Mac silicon y el otro en Mac intel - o -target x86_64 en silicon)
 
 
 ----Mac SSL
@@ -100,3 +108,9 @@ Fifosdlbuffersize 4 y sdlsamplesize 2048
 
 
 ------------------
+
+
+-poder detectar si una instancia se ejecuta desde docker (y NO si se ha compilado desde docker):
+esto a nivel de estadística, permito saber en estadisticas web (enviando un parametro) que se han ejecutado instancias de testeo de docker
+Para que quiero esa estadística? Se podria simplemente que el Dockerfile al ejecutar zesarux le pase un parámetro --docker y luego
+eso se envía en las estadísticas

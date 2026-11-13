@@ -42,9 +42,13 @@ extern void util_get_file_extension(char *filename,char *extension);
 extern void util_get_file_no_directory(char *filename,char *file_no_dir);
 extern void util_get_file_without_extension(char *filename,char *filename_without_extension);
 extern void util_get_complete_path(char *dir,char *name,char *fullpath);
+extern void util_get_file_extension_ql(char *filename,char *extension);
+extern void util_get_subfolder_in_path(char *folder,char *subfolder);
 
 
 extern int util_compare_file_extension(char *filename,char *extension_compare);
+extern int util_compare_file_name(char *filename,char *file_compare);
+extern int util_compare_file_extension_ql(char *filename,char *extension_compare);
 
 extern void util_get_dir(char *ruta,char *directorio);
 
@@ -65,45 +69,47 @@ extern void get_compile_info(char *s);
 
 extern void show_compile_info(void);
 
-extern FILE *ptr_input_file_keyboard;
+
 extern char input_file_keyboard_name_buffer[];
 extern char *input_file_keyboard_name;
-extern z80_bit input_file_keyboard_inserted;
-extern int input_file_keyboard_delay;
-extern int input_file_keyboard_delay_counter;
-extern z80_bit input_file_keyboard_pending_next;
-extern unsigned char input_file_keyboard_last_key;
-extern z80_bit input_file_keyboard_is_pause;
-extern z80_bit input_file_keyboard_send_pause;
-extern z80_bit input_file_keyboard_turbo;
+extern z80_bit send_text_as_keystrokes_is_inserted;
+extern int send_text_as_keystrokes_delay;
+extern int send_text_as_keystrokes_delay_counter;
+extern z80_bit send_text_as_keystrokes_pending_next;
+extern unsigned char send_text_as_keystrokes_last_key;
+extern z80_bit send_text_as_keystrokes_is_pause;
+extern z80_bit send_text_as_keystrokes_send_pause;
+extern z80_bit send_text_as_keystrokes_turbo_mode;
+extern void send_text_as_keystrokes_init(char *texto,int longitud);
+extern void send_text_as_keystrokes_get_from_clipboard(void);
 
 
-extern void insert_input_file_keyboard(void);
-extern void eject_input_file_keyboard(void);
+extern void send_text_as_keystrokes_insert(void);
+extern void send_text_as_keystrokes_eject(void);
 extern int input_file_keyboard_init(void);
+extern void send_text_as_keystrokes_simple(char *texto_entrada);
 
 extern void reset_keyboard_ports(void);
 extern void ascii_to_keyboard_port(unsigned tecla);
 extern void ascii_to_keyboard_port_set_clear(unsigned tecla,int pressrelease);
-extern void input_file_keyboard_get_key(void);
-extern void input_file_keyboard_close(void);
+extern void send_text_as_keystrokes_get_key(void);
 
 
 #ifdef EMULATE_CPU_STATS
-	extern unsigned int stats_codsinpr[];
-	extern unsigned int stats_codpred[];
-	extern unsigned int stats_codprcb[];
-	extern unsigned int stats_codprdd[];
-	extern unsigned int stats_codprfd[];
-	extern unsigned int stats_codprddcb[];
-	extern unsigned int stats_codprfdcb[];
+    extern unsigned int stats_codsinpr[];
+    extern unsigned int stats_codpred[];
+    extern unsigned int stats_codprcb[];
+    extern unsigned int stats_codprdd[];
+    extern unsigned int stats_codprfd[];
+    extern unsigned int stats_codprddcb[];
+    extern unsigned int stats_codprfdcb[];
 
-	extern void util_stats_increment_counter(unsigned int *stats_array,int index);
-	extern unsigned int util_stats_get_counter(unsigned int *stats_array,int index);
-	extern void util_stats_set_counter(unsigned int *stats_array,int index,unsigned int value);
-	extern void util_stats_init(void);
-	extern int util_stats_find_max_counter(unsigned int *stats_array);
-	extern unsigned int util_stats_sum_all_counters(void);
+    extern void util_stats_increment_counter(unsigned int *stats_array,int index);
+    extern unsigned int util_stats_get_counter(unsigned int *stats_array,int index);
+    extern void util_stats_set_counter(unsigned int *stats_array,int index,unsigned int value);
+    extern void util_stats_init(void);
+    extern int util_stats_find_max_counter(unsigned int *stats_array);
+    extern unsigned int util_stats_sum_all_counters(void);
 
 #endif
 
@@ -161,8 +167,8 @@ extern char *string_machines_list_description;
 #define MAX_MACHINE_NAME 40
 
 struct s_machines_info {
-	char nombre_maquina[MAX_MACHINE_NAME];
-	int machine_id;
+    char nombre_maquina[MAX_MACHINE_NAME];
+    int machine_id;
     enum machine_families_list family_id;
     int fabricante;
 };
@@ -292,14 +298,15 @@ extern void get_size_bps_human_friendly(long long int tamanyo,char *texto);
 extern int lee_archivo(char *nombre,char *buffer,int max_longitud);
 
 extern int util_get_configfile_name(char *configfile);
+extern int util_get_file_in_home_dir(char *destpath,char *file_to_find);
 
 //extern void util_print_second_overlay(char *texto, int x, int y);
 
 //valores usados en funcion util_set_reset_mouse
 enum util_mouse_buttons
 {
-	UTIL_MOUSE_LEFT_BUTTON,
-	UTIL_MOUSE_RIGHT_BUTTON
+    UTIL_MOUSE_LEFT_BUTTON,
+    UTIL_MOUSE_RIGHT_BUTTON
 };
 
 
@@ -308,74 +315,74 @@ extern void util_set_reset_mouse(enum util_mouse_buttons boton,int pressrelease)
 //valores usados en funcion util_set_reset_key
 enum util_teclas
 {
-	UTIL_KEY_NONE=0,  //None se usa en teclado chloe
+    UTIL_KEY_NONE=0,  //None se usa en teclado chloe
 
-	UTIL_KEY_SPACE=128,  //128 en adelante para no entrar en conflicto con teclas ascii <128
-	UTIL_KEY_ENTER,
+    UTIL_KEY_SPACE=128,  //128 en adelante para no entrar en conflicto con teclas ascii <128
+    UTIL_KEY_ENTER,
     UTIL_KEY_HOME,
     UTIL_KEY_END,
     UTIL_KEY_DEL,
-	UTIL_KEY_SHIFT_L,
-	UTIL_KEY_SHIFT_R,
-	UTIL_KEY_CAPS_SHIFT,
-	UTIL_KEY_ALT_L,
-	UTIL_KEY_ALT_R,
-	UTIL_KEY_CONTROL_L,
-	UTIL_KEY_CONTROL_R,
-	UTIL_KEY_BACKSPACE,
-	UTIL_KEY_FIRE,
-	UTIL_KEY_LEFT,
-	UTIL_KEY_RIGHT,
-	UTIL_KEY_DOWN,
-	UTIL_KEY_UP,
-	UTIL_KEY_TAB,
-	UTIL_KEY_CAPS_LOCK,
-	UTIL_KEY_COMMA,
-	UTIL_KEY_PERIOD,
-	UTIL_KEY_F1,
-	UTIL_KEY_F2,
-	UTIL_KEY_F3,
-	UTIL_KEY_F4,
-	UTIL_KEY_F5,
-	UTIL_KEY_F6,
-	UTIL_KEY_F7,
-	UTIL_KEY_F8,
-	UTIL_KEY_F9,
-	UTIL_KEY_F10,
-	UTIL_KEY_F11,
-	UTIL_KEY_F12,
-	UTIL_KEY_F13,
-	UTIL_KEY_F14,
-	UTIL_KEY_F15,
-	UTIL_KEY_ESC,
-	UTIL_KEY_PAGE_UP,
-	UTIL_KEY_PAGE_DOWN,
-	UTIL_KEY_KP_PLUS,
+    UTIL_KEY_SHIFT_L,
+    UTIL_KEY_SHIFT_R,
+    UTIL_KEY_CAPS_SHIFT,
+    UTIL_KEY_ALT_L,
+    UTIL_KEY_ALT_R,
+    UTIL_KEY_CONTROL_L,
+    UTIL_KEY_CONTROL_R,
+    UTIL_KEY_BACKSPACE,
+    UTIL_KEY_FIRE,
+    UTIL_KEY_LEFT,
+    UTIL_KEY_RIGHT,
+    UTIL_KEY_DOWN,
+    UTIL_KEY_UP,
+    UTIL_KEY_TAB,
+    UTIL_KEY_CAPS_LOCK,
+    UTIL_KEY_COMMA,
+    UTIL_KEY_PERIOD,
+    UTIL_KEY_F1,
+    UTIL_KEY_F2,
+    UTIL_KEY_F3,
+    UTIL_KEY_F4,
+    UTIL_KEY_F5,
+    UTIL_KEY_F6,
+    UTIL_KEY_F7,
+    UTIL_KEY_F8,
+    UTIL_KEY_F9,
+    UTIL_KEY_F10,
+    UTIL_KEY_F11,
+    UTIL_KEY_F12,
+    UTIL_KEY_F13,
+    UTIL_KEY_F14,
+    UTIL_KEY_F15,
+    UTIL_KEY_ESC,
+    UTIL_KEY_PAGE_UP,
+    UTIL_KEY_PAGE_DOWN,
+    UTIL_KEY_KP_PLUS,
     UTIL_KEY_KP_NUMLOCK,
     UTIL_KEY_KP_DIVIDE,
     UTIL_KEY_KP_MULTIPLY,
     UTIL_KEY_KP_MINUS,
-	UTIL_KEY_KP0,
-	UTIL_KEY_KP1,
-	UTIL_KEY_KP2,
-	UTIL_KEY_KP3,
-	UTIL_KEY_KP4,
-	UTIL_KEY_KP5,
-	UTIL_KEY_KP6,
-	UTIL_KEY_KP7,
-	UTIL_KEY_KP8,
-	UTIL_KEY_KP9,
-	UTIL_KEY_KP_COMMA,
-	UTIL_KEY_KP_ENTER,
-	UTIL_KEY_WINKEY_L,
+    UTIL_KEY_KP0,
+    UTIL_KEY_KP1,
+    UTIL_KEY_KP2,
+    UTIL_KEY_KP3,
+    UTIL_KEY_KP4,
+    UTIL_KEY_KP5,
+    UTIL_KEY_KP6,
+    UTIL_KEY_KP7,
+    UTIL_KEY_KP8,
+    UTIL_KEY_KP9,
+    UTIL_KEY_KP_COMMA,
+    UTIL_KEY_KP_ENTER,
+    UTIL_KEY_WINKEY_L,
     UTIL_KEY_WINKEY_R,
 
-	//Estos 5 son para enviar eventos de joystick mediante ZENG
-	UTIL_KEY_JOY_FIRE,
-	UTIL_KEY_JOY_UP,
-	UTIL_KEY_JOY_DOWN,
-	UTIL_KEY_JOY_LEFT,
-	UTIL_KEY_JOY_RIGHT,
+    //Estos 5 son para enviar eventos de joystick mediante ZENG
+    UTIL_KEY_JOY_FIRE,
+    UTIL_KEY_JOY_UP,
+    UTIL_KEY_JOY_DOWN,
+    UTIL_KEY_JOY_LEFT,
+    UTIL_KEY_JOY_RIGHT,
 
     //Esta es para enviar mediante ZENG una orden de reset todas teclas. Usado en driver curses
     UTIL_KEY_RESET_ALL,
@@ -395,16 +402,16 @@ enum util_teclas
 enum util_teclas_z88_keymap
 {
         UTIL_KEY_Z88_MINUS,
-	UTIL_KEY_Z88_EQUAL,
-	UTIL_KEY_Z88_BACKSLASH,
-	UTIL_KEY_Z88_BRACKET_LEFT,
-	UTIL_KEY_Z88_BRACKET_RIGHT,
-	UTIL_KEY_Z88_SEMICOLON,
-	UTIL_KEY_Z88_APOSTROPHE,
-	UTIL_KEY_Z88_POUND,
-	UTIL_KEY_Z88_COMMA,
-	UTIL_KEY_Z88_PERIOD,
-	UTIL_KEY_Z88_SLASH
+    UTIL_KEY_Z88_EQUAL,
+    UTIL_KEY_Z88_BACKSLASH,
+    UTIL_KEY_Z88_BRACKET_LEFT,
+    UTIL_KEY_Z88_BRACKET_RIGHT,
+    UTIL_KEY_Z88_SEMICOLON,
+    UTIL_KEY_Z88_APOSTROPHE,
+    UTIL_KEY_Z88_POUND,
+    UTIL_KEY_Z88_COMMA,
+    UTIL_KEY_Z88_PERIOD,
+    UTIL_KEY_Z88_SLASH
 };
 
 
@@ -432,9 +439,9 @@ enum util_teclas_cpc_keymap
 {
         UTIL_KEY_CPC_MINUS,
         UTIL_KEY_CPC_CIRCUNFLEJO,
-	UTIL_KEY_CPC_ARROBA,
+    UTIL_KEY_CPC_ARROBA,
         UTIL_KEY_CPC_BRACKET_LEFT,
-	UTIL_KEY_CPC_COLON,
+    UTIL_KEY_CPC_COLON,
         UTIL_KEY_CPC_SEMICOLON,
         UTIL_KEY_CPC_BRACKET_RIGHT,
         UTIL_KEY_CPC_COMMA,
@@ -520,6 +527,8 @@ extern int convert_mdr_to_rmd(char *origen, char *destino);
 
 extern int util_get_random(void);
 
+extern int util_get_random_enhanced(void);
+
 extern z80_bit quickload_guessing_tzx_type;
 
 extern int load_binary_file(char *binary_file_load,int valor_leido_direccion,int valor_leido_longitud);
@@ -540,6 +549,8 @@ extern void zmenufiles_help(void);
 extern char letra_mayuscula(char c);
 
 extern char letra_minuscula(char c);
+
+extern int int_minuscula(int c);
 
 extern void string_a_minusculas(char *origen, char *destino);
 
@@ -573,12 +584,12 @@ extern int util_enhanced_convert_raw_to_p_p81_memoria_tamanyo;
 
 struct s_pokfile
 {
-        int indice_accion;
-        char texto[MAX_LENGTH_LINE_POKE_FILE+1];
-	z80_byte banco;
-	z80_int direccion;
-	z80_byte valor;
-	z80_byte valor_orig;
+    int indice_accion;
+    char texto[MAX_LENGTH_LINE_POKE_FILE+1];
+    z80_byte banco;
+    z80_int direccion;
+    z80_byte valor;
+    z80_byte valor_orig;
 };
 
 
@@ -588,66 +599,47 @@ extern int util_poke(z80_byte banco,z80_int direccion,z80_byte valor);
 
 extern int util_busca_archivo_nocase(char *archivo,char *directorio,char *nombreencontrado);
 
-extern void set_peek_byte_function_spoolturbo(void);
-extern void reset_peek_byte_function_spoolturbo(void);
-
+extern void set_peek_byte_function_sendtextkeystrokes_spoolturbo(void);
+extern void reset_peek_byte_function_sendtextkeystrokes_spoolturbo(void);
+extern void util_send_text_as_keystrokes_setreset_nested_turbo(void);
+extern void send_text_as_keystrokes_get_key_turbo_rst_repeat(void);
 
 extern void set_poke_byte_function_writerom(void);
 extern void reset_poke_byte_function_writerom(void);
 
-/*
-Lista fabricantes
-Amstrad
-Ascii Corp
-Cambridge Computers
-Chloe Corporation
-Coleco Industries
-Czerweny Electronica
-Investronica
-Jupiter Cantab
-Mario Prato
-Microdigital Eletronica
-Miles Gordon Technology
-NedoPC
-New Horizons
-Pentagon
-Science of Cambridge
-Sega
-Sinclair Research
-Spectravideo Intl
-Timex Computers
-Timex Sinclair
-TS Labs
-VTrucco/FB Labs
-ZXUno Team
-*/
 
-#define TOTAL_FABRICANTES 23
+
+#define TOTAL_FABRICANTES 27
 
 //Deben estar en mismo orden alfabetico siempre, por ejemplo en array_fabricantes lo mismo que aqui
 #define FABRICANTE_AMSTRAD                      0
 #define FABRICANTE_ASCII_CORP                   1
-#define FABRICANTE_CAMBRIDGE_COMPUTERS          2
-#define FABRICANTE_CHLOE_CORPORATION            3
-#define FABRICANTE_COLECO_INDUSTRIES            4
-#define FABRICANTE_CZERWENY_ELECTRONICA         5
-#define FABRICANTE_INVESTRONICA                 6
-#define FABRICANTE_JUPITER_CANTAB               7
-#define FABRICANTE_MARIOPRATO                   8
-#define FABRICANTE_MICRODIGITAL_ELECTRONICA     9
-#define FABRICANTE_MILES_GORDON                 10
-#define FABRICANTE_NEDOPC                       11
-#define FABRICANTE_NEW_HORIZONS                 12
-#define FABRICANTE_NEXT_TEAM                    13
-#define FABRICANTE_PENTAGON                     14
-#define FABRICANTE_SCIENCE_OF_CAMBRIDGE         15
-#define FABRICANTE_SEGA                         16
-#define FABRICANTE_SINCLAIR                     17
-#define FABRICANTE_SPECTRAVIDEO_INTERNATIONAL   18
-#define FABRICANTE_TIMEX_COMPUTERS              19
-#define FABRICANTE_TIMEX_SINCLAIR               20
-#define FABRICANTE_TSLABS                       21
-#define FABRICANTE_ZXUNO_TEAM                   22
+#define FABRICANTE_ATM_MICROART                 2
+#define FABRICANTE_CAMBRIDGE_COMPUTERS          3
+#define FABRICANTE_CHLOE_CORPORATION            4
+#define FABRICANTE_COLECO_INDUSTRIES            5
+#define FABRICANTE_CZERWENY_ELECTRONICA         6
+#define FABRICANTE_DIDAKTIK                     7
+#define FABRICANTE_INVESTRONICA                 8
+#define FABRICANTE_JUPITER_CANTAB               9
+#define FABRICANTE_MARIOPRATO                   10
+#define FABRICANTE_MICROART                     11
+#define FABRICANTE_MICRODIGITAL_ELECTRONICA     12
+#define FABRICANTE_MILES_GORDON                 13
+#define FABRICANTE_NEDOPC                       14
+#define FABRICANTE_NEW_HORIZONS                 15
+#define FABRICANTE_NEXT_TEAM                    16
+#define FABRICANTE_SCIENCE_OF_CAMBRIDGE         17
+#define FABRICANTE_SCORPION                     18
+#define FABRICANTE_SEGA                         19
+#define FABRICANTE_SINCLAIR                     20
+#define FABRICANTE_SPECTRAVIDEO_INTERNATIONAL   21
+#define FABRICANTE_TIMEX_COMPUTERS              22
+#define FABRICANTE_TIMEX_SINCLAIR               23
+#define FABRICANTE_TSLABS                       24
+#define FABRICANTE_ZOREL                        25
+#define FABRICANTE_ZXUNO_TEAM                   26
+
 
 
 extern char *array_fabricantes[];
@@ -673,9 +665,9 @@ typedef struct s_tecla_redefinida tecla_redefinida;
 //Tabla para subzonas. Se usa en array y un elemento de 0,0,"" indica el ultimo elemento
 struct s_subzone_info
 {
-	int inicio;
-	int fin;
-	char nombre[33];
+    int inicio;
+    int fin;
+    char nombre[33];
 };
 
 typedef struct s_subzone_info subzone_info;
@@ -684,8 +676,8 @@ typedef struct s_subzone_info subzone_info;
 //Tabla para guardar configuracion de geometria de ventanas
 struct s_saved_config_window_geometry
 {
-	char nombre[MAX_NAME_WINDOW_GEOMETRY];
-	int x,y,ancho,alto,is_minimized,is_maximized,width_before_max_min_imize,height_before_max_min_imize;
+    char nombre[MAX_NAME_WINDOW_GEOMETRY];
+    int x,y,ancho,alto,is_minimized,is_maximized,width_before_max_min_imize,height_before_max_min_imize;
 };
 
 typedef struct s_saved_config_window_geometry saved_config_window_geometry;
@@ -719,10 +711,11 @@ extern void util_set_reset_key_continue(enum util_teclas tecla,int pressrelease)
 extern void util_set_reset_key_continue_after_zeng(enum util_teclas tecla,int pressrelease);
 
 extern void convert_numeros_letras_puerto_teclado_continue(z80_byte tecla,int pressrelease);
+extern void convert_numeros_puerto_teclado(z80_byte tecla,int pressrelease);
 
 
 
-extern int util_tape_tap_get_info(z80_byte *tape,char *texto,int origin_tap);
+extern int util_tape_tap_get_info(z80_byte *origen_tape,char *texto,int origin_tap,int longitud_origen);
 
 #define DEFAULT_ZESARUX_CONFIG_FILE ".zesaruxrc"
 
@@ -764,9 +757,20 @@ extern int util_parse_commands_argvc(char *texto, char *parm_argv[], int maximo)
 
 extern int util_parse_commands_argvc_comillas(char *texto, char *parm_argv[], int maximo);
 
+
+//Nombres cortos de maquinas y sus id y su icono
+struct s_machines_short_names_id {
+        char machine_name[32];
+        int machine_id;
+        char **bitmap;
+};
+
+extern struct s_machines_short_names_id machines_short_names_id[];
+
 extern int get_machine_id_by_name(char *machine_name);
 extern char **get_machine_icon_by_name(char *machine_name);
 extern void get_machine_list_whitespace(void);
+extern int count_total_machine_id(void);
 
 extern void util_truncate_file(char *filename);
 
@@ -815,12 +819,18 @@ extern int find_sharedfile(char *archivo,char *ruta_final);
 extern int si_existe_editionnamegame(char *nombre_final);
 
 extern int util_extract_mdv(char *mdvname, char *dest_dir);
+extern int util_extract_img(char *imgname, char *dest_dir);
+extern int util_extract_win(char *imgname, char *dest_dir);
 extern int util_extract_hdf(char *hdfname, char *dest_dir);
 extern int util_extract_rzx(char *filename,char *tempdir,char *z80_destination,char *force_z80_file_name);
 extern int util_convert_rzx_to_z80(char *filename,char *archivo_destino);
+extern int util_extract_hobeta(char *filename,char *tempdir);
 
 extern void util_save_file(z80_byte *origin, long long int tamanyo_origen, char *destination_file);
+extern void util_save_append_file(z80_byte *origin, long long int tamanyo_origen, char *destination_file);
 extern int util_load_file_bytes(z80_byte *taperead,char *filename,int total_leer);
+
+extern void util_convert_txt_to_scr_putchar(z80_byte caracter,int x,int y,z80_byte *pantalla_destino);
 
 extern void util_string_replace_char(char *s,char orig,char dest);
 
@@ -867,23 +877,29 @@ extern int util_convert_z80_to_scr(char *filename,char *archivo_destino);
 
 extern int util_convert_p_to_scr(char *filename,char *archivo_destino,int *p_pantalla_vacia);
 
+extern int util_convert_zx80ram_to_scr(char *filename,char *archivo_destino,int *p_pantalla_vacia);
+
 extern int util_convert_zsf_to_scr(char *filename,char *archivo_destino);
 
 extern int util_convert_any_to_scr(char *filename,char *archivo_destino);
 
-extern int util_get_absolute(int valor);
+extern int util_convert_o_p_p81_spec_basic_to_scr(char *filename,char *archivo_destino);
 
-extern int util_get_sign(int valor);
 
-extern int input_file_keyboard_is_playing(void);
 
-extern z80_bit input_file_keyboard_playing;
+extern int send_text_as_keystrokes_is_playing(void);
+
+extern z80_bit send_text_as_keystrokes_playing;
+
+extern char *send_text_as_keystrokes_memory;
+extern int send_text_as_keystrokes_indice;
+extern int send_text_as_keystrokes_length;
 
 extern void convert_to_rwa_common_tmp(char *origen, char *destino);
 
 extern void util_tape_get_name_header(z80_byte *tape,char *texto);
 
-extern int util_extract_tap(char *filename,char *tempdir,char *tzxfile,int tzx_turbo_rg);
+extern int util_extract_tap(char *filename,char *tempdir,char *tzxfile,int tzx_turbo_rg,int generate_preview_scr);
 
 extern int util_extract_ddh(char *filename,char *tempdir);
 
@@ -895,9 +911,9 @@ extern int util_extract_p(char *filename,char *tempdir);
 
 extern int util_extract_o(char *filename,char *tempdir);
 
-extern int util_extract_tzx(char *filename,char *tempdir,char *tapfile);
+extern int util_extract_tzx(char *filename,char *tempdirectory,char *tapfile,int generate_preview_scr);
 
-extern int util_extract_pzx(char *filename,char *tempdir,char *tapfile);
+extern int util_extract_pzx(char *filename,char *tempdirectory,char *tapfile,int generate_preview_scr);
 
 extern int util_extract_trd(char *filename,char *tempdir);
 
@@ -918,18 +934,25 @@ extern void util_save_game_config(char *filename);
 extern int util_is_digit(char c);
 extern int util_is_letter(char c);
 
+extern void util_quitar_ceros_decimales(char *numero);
+
 extern int util_get_available_drives(char *texto);
 
 extern int get_cpu_frequency(void);
+
+extern void get_cpu_frequency_mhz_string(char *buffer_velocidad);
 
 
 extern void util_clear_final_spaces(char *orig,char *destination);
 
 extern int util_concat_string(char *original,char *string_to_add,int limite);
+extern int util_count_lines(char *texto);
 
 extern void snapshot_get_date_time_string_human(char *texto);
 extern void snapshot_get_date_time_string(char *texto);
 
+extern void util_get_time_string(char *texto);
+extern int util_get_time_milliseconds(void);
 
 #define MEMORY_ZONE_NUM_FILE_ZONE 16
 #define MEMORY_ZONE_NUM_TBBLUE_COPPER 17
@@ -995,7 +1018,7 @@ extern void util_normalize_name(char *texto);
 extern int util_download_file(char *hostname,char *url,char *archivo,int use_ssl,int estimated_maximum_size,char *ssl_sni_host_name);
 extern void util_normalize_query_http(char *orig,char *dest);
 
-extern int util_extract_scl(char *sclname, char *dest_dir);
+extern int util_extract_scl(char *sclname, char *dest_dir, char *nombre_trd);
 extern int util_extract_zip(char *zipname, char *dest_dir);
 
 extern z80_byte *util_compress_memory_zip(z80_byte *memoria_input,int longitud,int *longitud_comprimido,char *nombre_archivo_interno);
@@ -1048,7 +1071,7 @@ extern const char *spectrum_colour_names[];
 extern void util_write_long_value(z80_byte *destino,unsigned int valor);
 extern unsigned int util_read_long_value(z80_byte *origen);
 
-extern int util_get_input_file_keyboard_ms(void);
+extern int util_send_text_as_keystrokes_ms(void);
 
 extern char fatfs_disk_zero_path[];
 
@@ -1061,14 +1084,11 @@ extern int util_copy_files_to_mmc_addlist(char *source, char *destination);
 extern void util_copy_files_to_mmc_doit(void);
 
 extern z80_byte util_get_byte_protect(z80_byte *memoria,int total_size,int offset);
-extern void util_memcpy_protect_origin(z80_byte *destino,z80_byte *memoria,int total_size,int offset,int total_copiar);
-extern int util_abs(int v);
-extern int util_sign(int v);
-extern int util_get_cosine(int degrees);
-extern int util_get_sine(int degrees);
+extern void util_memcpy_protect_origin(z80_byte *destino,z80_byte *origen,int total_origin_size,int offset,int total_copiar);
+
+
+
 extern int util_compare_bytes_address(menu_z80_moto_int dir,int *lista,int total_items,int case_insensitive);
-extern z80_64bit util_sqrt(z80_64bit number,int *result_type);
-extern int util_get_acosine(int cosine);
 
 extern void util_print_minutes_seconds(int segundos_totales, char *texto);
 
@@ -1147,5 +1167,12 @@ extern labeltree *parse_string_labeltree;
 extern void labels_load(char *archivo);
 
 extern void labeltree_free(labeltree *l);
+
+extern int util_get_pos_character_in_string(char *texto,int pos_character);
+extern int util_strlen_utf(char *texto);
+
+extern int util_min(int a,int b);
+
+extern int util_max(int a,int b);
 
 #endif

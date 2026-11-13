@@ -7,18 +7,21 @@
     * Sinclair ZX Spectrum models: 16k, 48k (English and Spanish), 48k+ (English and Spanish), Spectrum 128k (English and Spanish), Spectrum +2 (English, Spanish and French), Spectrum +2A (English and Spanish), Spectrum +3 (English and Spanish)
     * Sinclair QL
     * Cambridge Z88
-    * Microdigital TK80, TK82, TK82C, TK83, TK85, TK90X (Portuguese and Spanish), TK95 (Portuguese and Spanish)
+    * Microdigital TK80, TK82, TK82C, TK83, TK85, TK90X (Portuguese and Spanish, Ferranti and Microdigital ULA), TK95 (Portuguese and Spanish)
     * Czerweny CZ 1000, CZ 1500, CZ 1000 Plus, CZ 1500 Plus, CZ 2000, CZ Spectrum, CZ Spectrum Plus
     * Timex Sinclair 1000, 1500, 2068
     * Timex Computer 2048, 2068
     * Inves Spectrum +
     * Sam Coupe
     * Pentagon
+    * Scorpion ZS-256, Scorpion ZS-256 Turbo+, Scorpion GMX
+    * ATM Turbo 1, ATM Turbo 2, ATM Turbo 2+, ATM Turbo 3
+    * Didaktik Gama
     * Chloe 140 SE, 280 SE
     * Chrome
     * Prism
     * ZX-Uno
-    * ZX-Evolution BaseConf (beta)
+    * ZX-Evolution BaseConf
     * ZX-Evolution TS-Conf
     * ZX Spectrum Next
     * Jupiter Ace
@@ -33,6 +36,8 @@
 * Is the only emulator for machines: Chloe 140/280, Prism and Chrome
 
 * Almost perfect emulation of timing of all Spectrum machines
+
+* Supports 60 Hz modes on Master System, SG1000, MSX, Colecovision, Spectravideo and Timex Sinclair 2068
 
 * Emulates undocumented Z80 flags, features, and MEMPTR register
 
@@ -68,7 +73,13 @@
 
 * Emulates hi-res modes on ZX Spectrum (rainbow effects and others) and ZX80/ZX81 (UDG, CHR$128, WRX, HRG and some other hi-res modes)
 
-* Supports reducing the screen to 192x144 (0.75 scale)
+* Supports lots of video effects:
+    - Reduce, Unsteady, Flip Vertical, Flip Horizontal, Rotate, Twirl, Interferences, Sea, Waves, Magnetic Field, Shear, Lens, Radar
+    - Zoom, Zoom Mouse, Pixelate, Blur, Shader Border, LED, LED RGB, Hsync lost, Vsync lost, Scroll Horizontal, Scroll Vertical, Fade In, Fade Out, Fade InOut
+    - Scanlines, Sepia, Red, RGB, Decolorize, Persistence, Contrast, Brightness, Nagravision, Random Lines, Decode Nagravision, Sortalike, Logo Rebound
+    - Restore Original, Copy to buffer, Mix from Buffer, Load BMP
+
+* Can generate Anaglyph images for 3D glasses (red-blue glasses)
 
 * Uses its own powerful window environment (ZX Vision) inside the program application window, having the same GUI style on all plattforms. Allows to have an extended display to hold menus and multitask windows in the GUI (ZX Desktop)
 
@@ -86,7 +97,7 @@
 
 * Allows to save screen to formats: SCR, PBM, BMP, TXT, STL (3D Model)
 
-* Supports loading from real tape (any external audio source, like tape player, mp3 player, etc)
+* Supports loading from real tape (any external audio source, like tape player, mp3 player, etc), with tools to view the tape waveform and frequency spectrum and to help adjust the azimuth
 
 * Supports real tape loading of file formats: RWA, SMP, WAV, TZX, PZX, CDT, TAP, P, P81, O. It handles loading of turbo load tapes or any type of tape loading for standard/non standard loading routines
 
@@ -94,7 +105,11 @@
 
 * Handles real audio loading (RWA, SMP, WAV) on standard ROM routines for ZX Spectrum, ZX80, ZX81, Amstrad CPC, Jupiter Ace
 
+* Converts ZX81 tape audio recordings to P/P81 files, with a waveform view of decoded pulses, bits and bytes
+
 * Simulates real tape loading on standard ROM routines for ZX Spectrum, ZX80, ZX81
+
+* Supports tape save traps for Super Tape Copier and Lao Copy 2
 
 * Handles snapshot formats: ZSF, ZX, Z80, SP, SPG, NEX, SNA, P, P81, O, Z81, ACE
 
@@ -108,6 +123,8 @@
 
 * Handles cartridge formats: DCK, ROM, COL, SG
 
+* Supports MSX cartridges with ASCII 8 KB and 16 KB, Konami (with or without SCC), and R-Type memory mappers
+
 * Handles RZX playback
 
 * Emulates the following Copy Interfaces: Defcon, Dinamid3, Hilow Barbanegra, Interface007, Microhobby Pokeador Automatico, Multiface (One, 128 and Three), Phoenix, Ramjet, Spec-Mate, Transtape
@@ -118,9 +135,9 @@
 
 * Emulates Nec PD765 floppy disk controller, used on Spectrum +3, CPC 664, CPC 6128, PCW
 
-* Emulates ZX Microdrive on ZX Spectrum and QL: on ZX Spectrum supports MDR (standard file system format) and raw format (extension RMD). On QL is simulated by rom traps, accessing files from your computer and also from MDV (QLAY format)
+* Emulates ZX Microdrive on ZX Spectrum and QL: on ZX Spectrum supports MDR (standard file system format) and raw format (extension RMD), including tape gaps, sync bytes and bad sectors. On QL is simulated by rom traps, accessing files from your computer and also from MDV (QLAY format)
 
-* Emulates Betadisk/TR-DOS. Direct support for .trd files. scl files can be converted from file selector pressing space
+* Emulates Betadisk/TR-DOS. Direct support for .trd files. scl files can be smartloaded or converted from file selector pressing space
 
 * Emulates ZX Spectrum MMC Interfaces: ZXMMC, ZXMMC+, DivMMC
 
@@ -146,11 +163,15 @@
 
 * Handles RAM, EPROM, Intel Flash and Hybrid (RAM+EPROM) cards on Z88
 
-* Handles QL microdrive/floppy file access using files from your computer. Allows reading Q-emuLator file headers. Allows EXECuting files without headers
+* Handles QL microdrive/floppy file access using files from your computer, MDV, QDOS QL5A/QL5B IMG and WIN images, and a second floppy drive. Allows reading Q-emuLator file headers, EXECuting files without headers and smartloading boot, BASIC and executable files
+
+* Emulates QL QIMI mouse, additional ROMs, configurable video aspect ratio and Vision-QL palette, and selectable real-time clock source and timezone
 
 * Handles compressed formats zip (with internal decompressor), and tar, rar, gz through external utilities
 
 * Emulates AY Audio Chip, Turbosound (2 AY Channels), 3 AY Channels, MIDI channels, different DAC: Specdrum, Covox, ACB/ABC/BAC/CBA Stereo
+
+* Allows selecting Beeper and MIC audio on Spectrum
 
 * Emulates General Sound
 
@@ -162,7 +183,9 @@
 
 * Experimental simulation of the Sam Coupe Audio Chip (SAA1099)
 
-* Emulates i8049 QL sound
+* Emulates i8049 and Qsound on QL
+
+* Simulates Nagravision Audio effect
 
 * Supports RAM size up to 1024 KB on Spectrum and Pentagon
 
@@ -171,6 +194,10 @@
 * Supports RAM packs on Jupiter Ace up to 51 KB
 
 * Joystick emulation with real joystick and keyboard cursors: Kempston, Sinclair 1&2, Cursor Joystick, Cursor & Shift, OPQA, Fuller, Zebra, Mikro-Gen, ZXPand, SAM Coupe Cursors, CPC, MSX, Spectravideo, Cascade, DKTronics. Autofire function too
+
+* Joystick buttons can trigger configurable F-function actions, such as CPU reset, NMI or opening a window
+
+* Allow to use a steering wheel joystick on Spectrum racing games as an analog controller
 
 * On Screen keyboard useful when playing with joystick, two types: one with keyboard letters, and another with words, useful for playing Text Adventures. Also a tool to extract words from text adventures (Daad, Paws, Quill and Gac)
 
@@ -182,7 +209,7 @@
 
 * ZX Printer emulation
 
-* Lightgun emulation: Almost perfect emulation of Gunstick from MHT Ingenieros S.L and experimental emulation of Magnum Light Phaser
+* Optical Input emulation: Emulates Gunstick from MHT Ingenieros S.L, Magnum Light Phaser, Stack Light Rifle, Defender Light Gun, Trojan Light Pen, Datel Lightwriter, Spectrum Doodler Lightpen
 
 * Kempston mouse emulation
 
@@ -194,7 +221,9 @@
 
 * Can browse online Spectrum games
 
-* Supports Input spool text file to simulate keyboard press
+* Supports Send Text as keystrokes, reading from a text file or the system clipboard on systems: Mac, Windows, GNU/Linux (SDL2, Xwindow)
+
+* Supports drag & drop on systems: Mac, Windows, GNU/Linux (SDL2, Xwindow)
 
 * Supports reading Pokes from .POK files
 
@@ -220,13 +249,13 @@
 
 * Can generate Automatic Snapshots to RAM and also do a Rewind operation
 
-* Powerful debug features: Reverse Debugging, CPU History, Assembler, Registers, Dissassemble, Conditional Breakpoints using text expressions, Watches, Step-to-step, Step-over, Runto, Show TV electron position, Load source code, Hexadecimal Editor, View Sprites, View Tiles, Find bytes, Infinite lives finder, CPU Transaction log, View BASIC, View BASIC variables, verbose messages on console
+* Powerful debug features: Reverse Debugging, CPU History, Assembler, Registers, Dissassemble, Conditional Breakpoints using text expressions, Watches, Step-to-step, Step-over, Runto, Show TV electron position, Load source code, Hexadecimal Editor, View Sprites, View Tiles, Find bytes, Infinite lives finder, CPU Transaction log, View BASIC, View BASIC variables, View BASIC GOSUB stack, verbose messages on console
 
 * Text adventure debugger: On a Quill/Paws/Daad/Gac text adventure you can Step to Step condact, watch flags/objects, list messages (objects, user/system messages, locations, compressed tokens, vocabulary), connections, Text Adventure Map. Can also view graphics from a Quill, Paws, Daad or Gac aventure.
 
 * Use artificial intelligence to get realistic images for location description on Text Adventure games
 
-* File utilities menu: Allowing to view, expand and convert some common file formats: tap, tzx, pzx, trd, dsk, mdv, hdf, ddh, etc. Can also browse inside file system images (.mmc, .img, etc)
+* File utilities menu: Allowing to view, expand and convert some common file formats: tap, tzx, pzx, trd, dsk, mdv, hdf, ddh, Hobeta files, etc. Can also browse inside file system images (.mmc, .img, etc)
 
 * Accessibility support: Print char traps allows to capture generated text from almost any program or game, using standard ROM calls (RST 10H) or even non standard print character routines. Can send generated text from a game to a text-to-speech program. It's ready for text to speech support for blind or visually impaired people. Menu emulator can also be read by a text-to-speech program.
 
@@ -240,7 +269,6 @@
 
 * Supports execution on Docker, tested on Debian, Ubuntu and Fedora containers
 
-* Other features: Visualmem menu, CPU Statistics, Toy ZXeyes, Toy ZXlife, Ascii Table, Sensors
+* Other features: Visualmem menu, CPU Statistics, Toys ZXeyes, ZXlife, Clive and Simon, Clock, Calculator, Ascii Table, Sensors
 
 * Includes seven easter eggs. Can you find them? :)
-

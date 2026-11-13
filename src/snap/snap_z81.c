@@ -93,7 +93,8 @@ int hex2dec(char *str)
 void load_snap_cpu(FILE *f)
 {
         char *tok;
-	z80_int registro,nada;
+	z80_int registro;
+    //z80_int nada;
 
         while(!feof(f))
         {
@@ -156,7 +157,10 @@ void load_snap_cpu(FILE *f)
                 if (!strcmp(tok,"IF1")) iff1.v = hex2dec(get_token(f));
                 if (!strcmp(tok,"IF2")) iff2.v = hex2dec(get_token(f));
                 //if (!strcmp(tok,"HT")) z80.halted = hex2dec(get_token(f));
-                if (!strcmp(tok,"HT")) nada = hex2dec(get_token(f));
+                if (!strcmp(tok,"HT")) {
+                    //nada = hex2dec(get_token(f));
+                    get_token(f);
+                }
                 if (!strcmp(tok,"IR"))
 
                 {
@@ -184,14 +188,13 @@ void load_snap_cpu(FILE *f)
                 }
         }
 
-	//Para que el compilador no se queje de variable no usada
-	nada++;
+
 }
 
 void load_snap_zx81(FILE *f)
 {
         char *tok;
-	int nada;
+	//int nada;
 
         while(!feof(f))
         {
@@ -214,12 +217,15 @@ void load_snap_zx81(FILE *f)
                 if (!strcmp(tok,"NMI")) {
 			nmi_generator_active.v = hex2dec(get_token(f));
 		}
-                if (!strcmp(tok,"HSYNC")) hsync_generator_active.v = hex2dec(get_token(f));
-                if (!strcmp(tok,"ROW")) nada = hex2dec(get_token(f));
+            //TODO: este "HSYNC" deberia habilitar probablemente la señal hsync pero... durante cuanto tiempo?
+                //if (!strcmp(tok,"HSYNC")) hsync_generator_active.v = hex2dec(get_token(f));
+                if (!strcmp(tok,"ROW")) {
+                    //nada = hex2dec(get_token(f));
+                    get_token(f);
+                }
         }
 
-        //Para que el compilador no se queje de variable no usada
-        nada++;
+
 
 }
 
@@ -277,16 +283,12 @@ void load_snap_mem(FILE *f)
         }
 }
 
+
+/*
 void load_snap_ace(FILE *f)
 {
-	printf ("TODO\n");
 
-	//de momento volver sin mas
-	//y que el compilador no se queje de variable no usada
-	f=NULL;
-	f++;
-	return;
-/*
+
         int puntero_memoria=0x2000;
         unsigned char c;
         int len, eof;
@@ -336,9 +338,9 @@ void load_snap_ace(FILE *f)
         z80.iff2 = memory[puntero_memoria]; puntero_memoria+=4;
         z80.i = memory[puntero_memoria]; puntero_memoria+=4;
         z80.r = memory[puntero_memoria];
-	*/
-}
 
+}
+*/
 
 void load_z81_snapshot(char *archivo)
 {

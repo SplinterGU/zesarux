@@ -34,6 +34,9 @@
         #include <unistd.h>
 #endif
 
+//Cuando se cambie alguna funcionalidad en el protocolo de ZENG Online que lo haga incompatible con versiones anteriores, incrementar este número
+#define ZENG_ONLINE_PROTOCOL_VERSION 1
+
 //Maximo nombre para una habitacion
 //Si se cambia esto, ajustar nombre con espacios en init_zeng_online_rooms, para que quede 30 de longitud,
 //Y en cabecera de list-rooms
@@ -53,7 +56,7 @@
 #define ZENG_ONLINE_MAX_BROADCAST_MESSAGE_LENGTH 64
 
 //En el mensaje se le agrega:
-//Message from room XX user XX
+//Broadcast Message from room XX user XX
 //Mas que suficiente el margen de ZOC_MAX_NICKNAME_LENGTH+100
 #define ZENG_ONLINE_MAX_BROADCAST_MESSAGE_SHOWN_LENGTH (ZENG_ONLINE_MAX_BROADCAST_MESSAGE_LENGTH+ZOC_MAX_NICKNAME_LENGTH+100+1)
 
@@ -133,11 +136,14 @@ struct zeng_online_room {
     int created;
     int max_players;
     int current_players;
+    int uptime; //en minutos
     int do_not_allow_events; //TODO: no permitir envio de eventos en esta room, util para solo transmitir desde el master y que nadie interactue
     char name[ZENG_ONLINE_MAX_ROOM_NAME+1]; //+1 para el 0 del final
 
     char user_password[ZENG_ROOM_PASSWORD_LENGTH+1]; //+1 para el 0 del final. un password simple, para tener un minimo de seguridad
     //que no se pueden lanzar acciones sobre una habitacion sino se ha unido a dicha habitacion
+    //No quiere decir "password para cada usuario" sino que es un password único por habitación que todos los usuarios de esa habitación reciben al hacer join,
+    //para que solo puedan hacer acciones en esa habitación y no en otras
 
     char creator_password[ZENG_ROOM_PASSWORD_LENGTH+1]; //+1 para el 0 del final. un password simple, para las operaciones
       //del que ha creado la habitacion
@@ -190,6 +196,9 @@ struct zeng_online_room {
     //Mas que suficiente el margen de ZOC_MAX_NICKNAME_LENGTH+100
     char broadcast_message[ZENG_ONLINE_MAX_BROADCAST_MESSAGE_SHOWN_LENGTH];
     int broadcast_messages_allowed;
+
+    char private_message[ZENG_ONLINE_MAX_BROADCAST_MESSAGE_SHOWN_LENGTH];
+    char private_message_uuid[STATS_UUID_MAX_LENGTH+1];
 
     //Usuarios logueados
     //Si "", indica que no hay user en esa posicion

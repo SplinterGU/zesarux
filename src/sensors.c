@@ -29,6 +29,8 @@
 #include "debug.h"
 #include "ay38912.h"
 #include "sn76489an.h"
+#include "utils.h"
+#include "utils_math.h"
 #include "screen.h"
 #include "zxvision.h"
 #include "timer.h"
@@ -37,6 +39,7 @@
 #include "zeng_online_client.h"
 #include "ula.h"
 #include "tbblue.h"
+#include "gs.h"
 
 
 
@@ -131,6 +134,80 @@ int sensor_next_dac_funcion_get_value(int id)
 
 }
 
+//Retorna valor DAC de General sound
+//Id es:
+int sensor_gensound_dac_funcion_get_value(int id)
+{
+    int valor;
+
+    switch(id) {
+        case 0:
+            valor=gs_dac_channels[0];
+        break;
+
+        case 1:
+            valor=gs_dac_channels[1];
+        break;
+
+        case 2:
+            valor=gs_dac_channels[2];
+        break;
+
+        default:
+            valor=gs_dac_channels[3];
+        break;
+    }
+
+    valor -=128;
+
+    //TODO: esto permite que un valor +127 o -128 sean el 100% del sensor,
+    //pero por otra parte impide ver el valor real del DAC desde aqui
+    //Quizá habría que extender estas funciones de sensors para que retornasen el valor real tambien, aparte del valor que ya se retorna ahora
+    int absoluto=util_get_absolute(valor);
+
+    //Considerar tambien un valor de +127 como +128 asi es el tope de 100%
+    if (absoluto==127) absoluto=128;
+    return absoluto;
+
+}
+
+//Retorna valor left/right de general sound
+int sensor_gensound_leftright_funcion_get_value(int id)
+{
+    int valor;
+
+    switch(id) {
+        case 0:
+            valor=gs_dac_valor_final_left;
+        break;
+
+        default:
+            valor=gs_dac_valor_final_right;
+        break;
+    }
+
+    valor -=128;
+
+    //TODO: esto permite que un valor +127 o -128 sean el 100% del sensor,
+    //pero por otra parte impide ver el valor real del DAC desde aqui
+    //Quizá habría que extender estas funciones de sensors para que retornasen el valor real tambien, aparte del valor que ya se retorna ahora
+    int absoluto=util_get_absolute(valor);
+
+    //Considerar tambien un valor de +127 como +128 asi es el tope de 100%
+    if (absoluto==127) absoluto=128;
+    return absoluto;
+
+}
+
+
+
+//Retorna volumen de canal de General Sound
+int sensor_gensound_vol_funcion_get_value(int id)
+{
+    if (id<0 || id>=4) id=0;
+
+    return gs_volumes[id] & 0x3F;
+}
 
 //Retorna valor DAC de Spectrum (specdrum, etc)
 int sensor_spec_dac_funcion_get_value(int id GCC_UNUSED)
@@ -208,6 +285,12 @@ int sensor_last_menu_overlay_render_get_value(int id GCC_UNUSED)
 int sensor_avg_menu_overlay_render_get_value(int id GCC_UNUSED)
 {
     return core_render_menu_overlay_media;
+}
+
+int sensor_avg_zxdesktop_draw_icons_get_value(int id GCC_UNUSED)
+{
+    //printf("sensor %ld\n",draw_zxdesktop_icons_media);
+    return draw_zxdesktop_icons_media;
 }
 
 int sensor_last_zeng_online_uncompress_get_value(int id GCC_UNUSED)
@@ -459,6 +542,87 @@ pues de una octava a la otra es el doble de valor
     sensor_next_dac_funcion_get_value,3
     },
 
+    {
+    "gensound_dac_0","General Sound DAC 0","GENSNDAC0",
+    0,128,
+    80,-80,
+    9999,-9999,
+    sensor_gensound_dac_funcion_get_value,0
+    },
+
+    {
+    "gensound_dac_1","General Sound DAC 1","GENSNDAC1",
+    0,128,
+    80,-80,
+    9999,-9999,
+    sensor_gensound_dac_funcion_get_value,1
+    },
+
+    {
+    "gensound_dac_2","General Sound DAC 2","GENSNDAC_2",
+    0,128,
+    80,-80,
+    9999,-9999,
+    sensor_gensound_dac_funcion_get_value,2
+    },
+
+    {
+    "gensound_dac_3","General Sound DAC 3","GENSNDAC3",
+    0,128,
+    80,-80,
+    9999,-9999,
+    sensor_gensound_dac_funcion_get_value,3
+    },
+
+
+    {
+    "gensound_vol_0","General Sound VOL 0","GENSNVOL0",
+    0,0x3f,
+    84,-9999,
+    9999,-9999,
+    sensor_gensound_vol_funcion_get_value,0
+    },
+
+    {
+    "gensound_vol_1","General Sound VOL 1","GENSNVOL1",
+    0,0x3f,
+    84,-9999,
+    9999,-9999,
+    sensor_gensound_vol_funcion_get_value,1
+    },
+
+    {
+    "gensound_vol_2","General Sound VOL 2","GENSNVOL2",
+    0,0x3f,
+    84,-9999,
+    9999,-9999,
+    sensor_gensound_vol_funcion_get_value,2
+    },
+
+    {
+    "gensound_vol_3","General Sound VOL 3","GENSNVOL3",
+    0,0x3f,
+    84,-9999,
+    9999,-9999,
+    sensor_gensound_vol_funcion_get_value,3
+    },
+
+    {
+    "gensound_left","General Sound Left","GENSNLEFT",
+    0,128,
+    80,-80,
+    9999,-9999,
+    sensor_gensound_leftright_funcion_get_value,0
+    },
+
+    {
+    "gensound_right","General Sound Right","GENSNRIGHT",
+    0,128,
+    80,-80,
+    9999,-9999,
+    sensor_gensound_leftright_funcion_get_value,1
+    },
+
 
     {
     "fps","Frames per second","FPS",
@@ -469,7 +633,8 @@ pues de una octava a la otra es el doble de valor
     },
 
     {
-    "total_avg_cpu","Total average cpu use","TotalCPU",
+    //media de uso de cpu desde que se inicio ZEsarUX
+    "total_avg_cpu","Session CPU usage","SessionCPU",
     0,100,
     84,-9999,
     9999,-9999,
@@ -530,6 +695,15 @@ pues de una octava a la otra es el doble de valor
     9999,-9999,
     10000,-9999,
     sensor_avg_menu_overlay_render_get_value,0
+    },
+
+    //En este el tiempo maximo y los porcentajes no tienen mucho sentido
+   {
+    "avg_zxdesktop_draw_icons","Average ZX Desktop render icons","AZXDIcnRnd",
+    0,20000,
+    9999,-9999,
+    10000,-9999,
+    sensor_avg_zxdesktop_draw_icons_get_value,0
     },
 
     //En este el tiempo maximo y los porcentajes no tienen mucho sentido

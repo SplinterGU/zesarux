@@ -498,7 +498,7 @@ void scrcurses_refresca_pantalla_zx81(void)
 
 
         //simulacion pantalla negra fast
-        if (hsync_generator_active.v==0) {
+        if (video_fast_mode_emulation.v) {
 
                 if (video_fast_mode_next_frame_black!=LIMIT_FAST_FRAME_BLACK) {
                         video_fast_mode_next_frame_black++;
@@ -1126,7 +1126,7 @@ void scrcurses_refresca_pantalla_cpc(void)
 	}
 
 
-scr_refresca_pantalla_cpc_text(scrcurses_refresca_pantalla_cpc_fun_color,scrcurses_refresca_pantalla_cpc_fun_caracter,scrcurses_refresca_pantalla_cpc_fun_saltolinea);
+scr_refresca_pantalla_cpc_text(scrcurses_refresca_pantalla_cpc_fun_color,scrcurses_refresca_pantalla_cpc_fun_caracter,scrcurses_refresca_pantalla_cpc_fun_saltolinea,0);
 }
 
 
@@ -1473,21 +1473,16 @@ void scrcurses_detectedchar_print(z80_byte caracter)
 //Estos valores no deben ser mayores de OVERLAY_SCREEN_MAX_WIDTH y OVERLAY_SCREEN_MAX_HEIGTH
 int scrcurses_get_menu_width(void)
 {
-        return 32;
+        return 32/screen_reduce_menu_ancho;
 }
 
 
 int scrcurses_get_menu_height(void)
 {
-        return 24;
+        return 24/screen_reduce_menu_alto;
 }
 
-/*
-int scrcurses_driver_can_ext_desktop (void)
-{
-        return 0;
-}
-*/
+
 
 int scrcurses_init (void) {
 
@@ -1563,6 +1558,8 @@ scr_set_fullscreen=scrcurses_set_fullscreen;
 scr_reset_fullscreen=scrcurses_reset_fullscreen;
 scr_z88_cpc_load_keymap=scrcurses_z88_cpc_load_keymap;
 scr_detectedchar_print=scrcurses_detectedchar_print;
+scr_update_window_title=NULL;
+scr_get_text_clipboard=NULL;
 
 //sprintf (curses_last_message_shown,"");
 curses_last_message_shown[0]=0x0;
@@ -1580,7 +1577,7 @@ return 0;
 }
 
 
-//Convierte coordenadas mouse curses a gunstick, kempston mouse
+//Convierte coordenadas mouse curses a lightgun, kempston mouse
 void scrcurses_convert_mouse_xy(int curses_x,int curses_y)
 {
 
@@ -1590,14 +1587,14 @@ void scrcurses_convert_mouse_xy(int curses_x,int curses_y)
 //y entre 0 y 295
 //0,0 esta arriba a la izquierda
 
-int gunstick_x,gunstick_y;
+int lightgun_x,lightgun_y;
 
 //Coordenadas x,y tal cual las retorna el driver de video, segun el tamanyo de ventana activo
 int mouse_x=0,mouse_y=0;
 
 //Coordenadas x,y de retorno a puerto kempston
 //Entre 0 y 255 las dos. Coordenada Y hacia abajo resta
-//se toma como base el mismo formato que gunstick x e y pero con modulo % 256
+//se toma como base el mismo formato que lightgun x e y pero con modulo % 256
 z80_byte kempston_mouse_x=0,kempston_mouse_y=0;
 
 */
@@ -1637,11 +1634,11 @@ z80_byte kempston_mouse_x=0,kempston_mouse_y=0;
 
 	}
 
-	gunstick_x=curses_x*8;
-	gunstick_y=curses_y*8;
+	lightgun_x=curses_x*8;
+	lightgun_y=curses_y*8;
 
-	kempston_mouse_x=(gunstick_x)%256;
-	kempston_mouse_y=255-(gunstick_y)%256;
+	kempston_mouse_x=(lightgun_x)%256;
+	kempston_mouse_y=255-(lightgun_y)%256;
 }
 
 
@@ -1820,7 +1817,6 @@ void scrcurses_actualiza_tablas_teclado(void)
 						//coordenadas (0,0) arriba a la izquierda
 						if (event.bstate & BUTTON1_PRESSED) {
 							util_set_reset_mouse(UTIL_MOUSE_LEFT_BUTTON,1);
-							//mouse_left=1;
 						}
 						if (event.bstate & BUTTON3_PRESSED) {
 							util_set_reset_mouse(UTIL_MOUSE_RIGHT_BUTTON,1);
@@ -1847,7 +1843,7 @@ void scrcurses_actualiza_tablas_teclado(void)
 						mouse_y=event.y;
 						scrcurses_convert_mouse_xy(mouse_x,mouse_y);
 
-						//printf ("gunstick x: %d y: %d kempst x: %d y: %d\n",gunstick_x,gunstick_y,kempston_mouse_x,kempston_mouse_y);
+						//printf ("lightgun x: %d y: %d kempst x: %d y: %d\n",lightgun_x,lightgun_y,kempston_mouse_x,kempston_mouse_y);
 
 					}
 				break;
@@ -1863,7 +1859,7 @@ void scrcurses_actualiza_tablas_teclado(void)
 
 }
 
-int scrcurses_return_gunstick_view_white(void)
+int scrcurses_return_lightgun_view_white(void)
 {
 
 	//printf ("view white\n");

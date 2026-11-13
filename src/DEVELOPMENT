@@ -9,6 +9,7 @@
 * activar capture segmentation fault en start.c
 * activar capture floating point exception en start.c
 * ZESARUX_EXTRAS_URL en cpu.h en principio no hay que tocarlo
+* ajustar estimated_size en menu_online_download_extras con el tamaño del zip de extras que se descargará
 
 * Ajustar juego editionnamegame.tap, si juego no permitido distribucion, eliminar. Ajustar EDITION_NAME_GAME en cpu.h sobretodo si cambia a tap o tzx o dsk. Crear editionnamegame.tap.config o editionnamegame.tzx.config si es necesario
 * En changelog, decir qué comandos nuevos de ZRCP, haciendo diff con version anterior
@@ -17,6 +18,7 @@ cat storage/esxdos_handler.c |grep ESXDOS_RST8_|grep -v ESXDOS_RST8_FA_|grep cas
 tener en cuenta de sacar de esta lista los casos que retornan hacia rst8 (con funcion esxdos_handler_run_normal_rst8), como DISK_READ
 
 * Actualizar features, segun lo agregado a Changelog
+* Revisar orden de las entradas en Changelog, que haya una agrupación mas o menos lógica
 * vigilar funciones F de pruebas en xwindows, desactivar las que sean de pruebas
 
 * generar README.md mediante ./generate_readme_md.sh > ../README.md
@@ -27,14 +29,15 @@ Si es beta, actualizar solo el archivo de snapshot
 
 
 Nombres ediciones disponibles:
-Exploding fist, Silent service, Three weeks in Paradise, Gauntlet, Death Wish 3, Match day,
-Star raiders 2, Sabre wulf, Saint Dragon, Dynamite Dan 2, Frank n stein, Bruce lee,
-Exolon, Koronis Rift, Fox Fights back, Pheenix, Rygar, Target renegade, Zorro, Ghostbusters
+Silent service, Death Wish 3, Match day, Frank n stein,
+Star raiders 2, Three weeks in Paradise, Exolon,
+Gauntlet, Mazogs, Sabre wulf, Saint Dragon, Dynamite Dan 2,
+Bruce lee, Koronis Rift, Pheenix, Rygar, Target renegade, Ghostbusters, Fox Fights back
 
 Usados:
 hysteria, rainbow islands, jetpac, hard drivin', lemmings, sir fred, rick, agent dan, id, rainbow, rainbow+, saint george,
 chase hq, Rescue on Fractalus, gunfright, xeno, Neula, world destruction, the great escape, turbo esprit, toi acid,
-cliff hanger, clive sinclair, carrier command, Abadia del Crimen, David, Bubble Bobble, Night Shift
+cliff hanger, clive sinclair, carrier command, Abadia del Crimen, David, Bubble Bobble, Night Shift, The Way of the Exploding Fist, Zorro
 
 
 
@@ -55,26 +58,61 @@ curl -s https://api.github.com/repos/chernandezba/zesarux/releases | egrep '"nam
 
 --------------
 
+Para compilar en Fiwix OS
+
+- Generar un comprimido con el código fuente
+
+- Convertir ese tar.gz en un archivo de disco virtual de virtualbox
+
+VBoxManage convertfromraw ZEsarUX_src-13.0.tar.gz discotar2.vdi --format VDI
+
+Tiene que ser múltiple de 512 por lo que hay que rellenarlo con 0 si hace falta.
+Aun así también es conveniente meterle bastantes 0 de mas (unos 2048 bytes) porque si no, suele dar error al descomprimir en el último archivo
+
+- Agregarlo como disco en la máquina virtual
+
+- Dentro de Fiwix, descomprimir con:
+
+cat /dev/hdb > ZEsarUX.tar.gz
+tar -xvzf ZEsarUX.tar.gz
+
+
+
+--------------
+
+Para testeo ssl en Mac, compilar con libssl de brew:
+
+export CFLAGS="-I/opt/homebrew/Cellar/openssl@3/3.6.0/include"
+export LDFLAGS="-L/opt/homebrew/Cellar/openssl@3/3.6.0/lib"
+
+--------------
+
 Para que el cpu_panic muestre backtrace si hay un error, compilar con -g -rdynamic (en Linux) o -g (en Mac)
+
+Para compilar con detección de indices fuera de array, uso de memoria liberada y otros errores, compilar en Mac con:
+export CFLAGS="-O3 -g -fsanitize=address,undefined,object-size"
+export LDFLAGS="-O3 -g -fsanitize=address,undefined,object-size"
+El O3 es opcional pero generará código mas rápido
+Se le puede agregar a CFLAGS "-Wno-deprecated-declarations" para que no avise de ciertas declaraciones deprecated, como sprintf
 
 
 Para mostrar todos los iconos lower meter en compileoptions.h:
 
-#define FORCE_VISIBLE_ALL_LOWER_ICONS
+#define FORCE_VISIBLE_ALL_LOWER_BUTTONS
 
 
 Para poner como disabled en todos los iconos lower meter en compileoptions.h:
 
-#define FORCE_DISABLED_ALL_LOWER_ICONS
+#define FORCE_DISABLED_ALL_LOWER_BUTTONS
 
 Para poner como enabled en todos los iconos lower meter en compileoptions.h:
 
-#define FORCE_ENABLED_ALL_LOWER_ICONS
+#define FORCE_ENABLED_ALL_LOWER_BUTTONS
 
 
 Para forzar ver todos los iconos posibles de botones upper meter en compileoptions.h:
 
-#define FORCE_VISIBLE_ALL_UPPER_ICONS
+#define FORCE_VISIBLE_ALL_UPPER_BUTTONS
 
 --------------
 
@@ -144,13 +182,64 @@ tiene este parametro. Por lo general, lo que son acciones (sin ventanas de confi
 * si disparar la accion, se cerraran todos los menus, agregarle menu_add_item_menu_se_cerrara
 * si solo visible con items avanzados, agregarle menu_add_item_menu_es_avanzado
 
+* si una funcion utiliza menus tabulados, y no es una ventana como tal (por ejemplo menu_ventana_scanf_numero), debe guardar estado al entrar de salir_todos_menus
+y restaurarlo al salir, porque el uso de menus tabulados cambia salir_todos_menus a 0
+* si es una ventana que usa funciones de menu pero no es un menu, usar funciones menu_dibuja_menu_dialogo_no_title_lang o menu_dibuja_menu_dialogo
+Ademas el menu que llama a esa ventana tiene que indicar al menos este flag: menu_add_item_menu_genera_ventana(
+
+-----------------------------------------
+
+Normas para menus:
+
+- menus: agrupar opciones habituales arriba:
+¿Es la primera opción que un usuario buscaría?
+¿Tiene un nombre evidente?
+¿Está al lado de las opciones relacionadas?
+¿Depende de otra opción? Si sí, ¿está inmediatamente debajo?
+
+
+- Uso de palabras:
+* Checkbox -> característica. sin verbos
+
+Welcome logo
+Quick exit
+Search indexing
+
+* Valor configurable -> sustantivo
+
+Language
+Emulator Speed
+Download Path
+Logo
+
+* Acción -> verbo + objeto
+
+Reset search index
+Rebuild search index
+Change language
+
+* Submenús: sustantivo.
+
+Colour settings...
+Emulated Display FX...
+Audio settings...
+
+* Secciones: sustantivo o categoría.
+
+Fullscreen
+Zoom
+Frameskip
+Footer
+Border
+
+
 -----------------------------------------
 Sobre indexado de menus
 
 
 Si se utiliza funcion de crear menu pero no es un menu estrictamente, llamar a:
 
-menu_dibuja_menu_dialogo_no_title_lang
+menu_dibuja_menu_dialogo_no_title_lang o menu_dibuja_menu_dialogo
 
 En vez de usar menu_dibuja_menu_no_title_lang o cualquier otra variante menu_dibuja_menu*
 
@@ -168,14 +257,14 @@ LEEME
 MD5SUM
 README
 ZEsarUX_extras-[version].zip
-ZEsarUX_freebsd-[version]-freebsd12_amd64.tar.gz
+ZEsarUX_freebsd-[version]-freebsd14_amd64.tar.gz
 ZEsarUX_haiku-[version]_x86_64.tar.gz
-ZEsarUX_linux-[version]-debian12_i686.tar.gz
-ZEsarUX_linux-[version]-debian12_x86_64.tar.gz
-ZEsarUX_linux-[version]-fedora38_x86_64.tar.gz
-ZEsarUX_linux-[version]-ubuntu22_x86_64.tar.gz
-ZEsarUX_macos-[version]-legacy.dmg
-ZEsarUX_macos-[version].dmg
+ZEsarUX_linux-[version]-debian13_i686.tar.gz
+ZEsarUX_linux-[version]-debian13_x86_64.tar.gz
+ZEsarUX_linux-[version]-fedora42_x86_64.tar.gz
+ZEsarUX_linux-[version]-ubuntu24_x86_64.tar.gz
+ZEsarUX_macos-intel-[version].dmg
+ZEsarUX_macos-silicon-[version].dmg
 ZEsarUX_raspberrypios-framebuffer-[version]_armv6l.tar.gz
 ZEsarUX_src-[version].tar.gz
 ZEsarUX_windows-[version]-legacy.zip
@@ -185,19 +274,19 @@ Donde [version] es el numero de version, por ejemplo 10.3
 
 Ejemplos de nombres de archivos de una distribución estable y sus tamaños:
 
- ZEsarUX_extras-11.0.zip                               152 MB
- ZEsarUX_freebsd-11.0-freebsd12_x64.tar.gz             35.9 MB
- ZEsarUX_haiku-11.0_x86_64.tar.gz                      35.9 MB
- ZEsarUX_linux-11.0-debian12_x32.tar.gz                36.1 MB
- ZEsarUX_linux-11.0-debian12_x64_64.tar.gz             36.1 MB
- ZEsarUX_linux-11.0-fedora38_x86_64.tar.gz             36.1 MB
- ZEsarUX_linux-11.0-ubuntu22_x86_64.tar.gz             36.1 MB
- ZEsarUX_macos-11.0-legacy.dmg                         34.3 MB
- ZEsarUX_macos-11.0.dmg                                34.5 MB
- ZEsarUX_raspberrypios-framebuffer-11.0_armv6l.tar.gz  35.7 MB
- ZEsarUX_src-11.0.tar.gz                               37.4 MB
- ZEsarUX_windows-11.0-legacy.zip                       37.5 MB
- ZEsarUX_windows-11.0.zip                              37.2 MB
+ZEsarUX_extras-13.0.zip                                232 MB
+ZEsarUX_freebsd-13.0-freebsd14_amd64.tar.gz             43 MB
+ZEsarUX_haiku-13.0_x86_64.tar.gz                        42 MB
+ZEsarUX_linux-13.0-debian13_i686.tar.gz                 43 MB
+ZEsarUX_linux-13.0-debian13_x86_64.tar.gz               43 MB
+ZEsarUX_linux-13.0-fedora42_x86_64.tar.gz               43 MB
+ZEsarUX_linux-13.0-ubuntu24_x86_64.tar.gz               43 MB
+ZEsarUX_macos-intel-13.0.dmg                            41 MB
+ZEsarUX_macos-silicon-13.0.dmg                          41 MB
+ZEsarUX_raspberrypios-framebuffer-13.0_armv6l.tar.gz    42 MB
+ZEsarUX_src-13.0.tar.gz                                 44 MB
+ZEsarUX_windows-13.0-legacy.zip                         44 MB
+ZEsarUX_windows-13.0.zip                                44 MB
 
 *generar también versión docker con: ./docker-zesarux.sh push
 Y editar info en descripción inicial resumida y Repository overview para hacer referencia las instrucciones al número de versión actual
@@ -219,8 +308,8 @@ Es el contenido del Changelog y el Cambios, solo del trozo de esta versión en c
 
 ** Linux
 Generar estos dos binarios de Linux (32 y 64 bits):
-ZEsarUX_linux-version-debian12_i686.tar.gz
-ZEsarUX_linux-version-debian12_x86_64.tar.gz
+ZEsarUX_linux-version-debian13_i686.tar.gz
+ZEsarUX_linux-version-debian13_x86_64.tar.gz
 Habilita drivers video: xwindows, sdl, fbdev, curses, stdout, simpletext y drivers audio: pulse, alsa, sdl, dsp, pcspeaker.
 
 con comandos:
@@ -255,7 +344,7 @@ make fedora
 
 ** FreeBSD
 Generar este binarios de FreeBSD:
-ZEsarUX_freebsd-version-freebsd12_amd64.tar.gz
+ZEsarUX_freebsd-version-freebsd14_amd64.tar.gz
 Habilita drivers video: xwindows, sdl, fbdev, curses, stdout, simpletext y drivers audio: pulse, alsa, sdl, dsp, pcspeaker.
 
 con comandos:
@@ -307,44 +396,42 @@ make
 make rpi
 
 
-** Mac
+** Mac Arm ("Silicon")
 
-Generar dos binarios de Mac:
-(-Quizá versión legacy de Mac ya no tiene sentido. Requiere Mac OS reciente y los cflags O2 estarán soportados en todos los recientes )
-ZEsarUX-version-macos-legacy.dmg.gz
-Habilita drivers video: cocoa, stdout, simpletext y drivers audio: coreaudio.
-
-con comandos:
-Versión sin optimizaciones, sin SSL:
-
-export CFLAGS="-mmacosx-version-min=10.13"
-export LDFLAGS="-mmacosx-version-min=10.13"
-
-./configure --disable-xwindows --disable-sdl --disable-fbdev --disable-caca --disable-aa --disable-curses --disable-sndfile
-make clean
-make
-make macapp
-
-Y
-
-
-ZEsarUX-version-macos.dmg.gz
+ZEsarUX-version-macos-silicon.dmg
 Habilita drivers video: cocoa, stdout, simpletext y drivers audio: coreaudio.
 con comandos:
 Versión con optimizaciones, sin SSL:
 
 
-export CFLAGS="-O3"
-export LDFLAGS="-O3"
+export CFLAGS="-mmacosx-version-min=11.0 -O3"
+export LDFLAGS="-mmacosx-version-min=11.0 -O3"
 
-#Al menos poner un 10.x dos versiones inferior al que yo tenga, suponiendo que funcione bien...
-#-Use otool -l /path/to/binary and inspect the LC_VERSION_MIN_MACOSX load command;
 
 ./configure --disable-xwindows --disable-sdl --disable-fbdev --disable-caca --disable-aa --disable-curses --disable-sndfile
 make clean
 make
 make macapp
 
+
+** Mac Intel compilado desde Mac Arm ("Silicon")
+
+
+Nota: Validado que ese binario generado desde Mac Silicon funciona en Mac Intel (en un macOS Catalina 10.15.7)
+
+ZEsarUX-version-macos-intel.dmg
+Habilita drivers video: cocoa, stdout, simpletext y drivers audio: coreaudio.
+con comandos:
+Versión con optimizaciones, sin SSL:
+
+export CFLAGS="-mmacosx-version-min=10.13 -O3 -arch x86_64"
+export LDFLAGS="-mmacosx-version-min=10.13 -O3 -arch x86_64"
+
+
+./configure --disable-xwindows --disable-sdl --disable-fbdev --disable-caca --disable-aa --disable-curses --disable-sndfile
+make clean
+make
+make macapplegacy
 
 
 
@@ -1226,3 +1313,12 @@ Nested peek_byte_no_time functions
 Element: 0x7fb4e275c9a0 (0) id: 0 name: Debug peek_byte_no_time pointer function: 0x10be7a900 previous: 0x0 next: 0x7fb4e24a2880
 Element: 0x7fb4e24a2880 (1) id: 1 name: Betadisk peek_byte_no_time pointer function: 0x10bfc7bc0 previous: 0x7fb4e275c9a0 next: 0x0
 
+
+
+-----
+
+
+-Notas sobre captura de audio en máquinas virtuales Linux:
+*en la de 64 bits, activando Audio Input en esa máquina virtual, se cuelga a los segundos. Y habilitando la tarjeta por USB, captura mal
+*en la de 32 bits, activando Audio Input en esa máquina virtual, no se suele colgar, lee bien, pero a veces se desconecta al cabo de pocos minutos. Y habilitando la tarjeta por USB, captura mal
+*en ambos linux, uso driver alsa. Para cambio a captura de tarjeta USB, uso parámetro --alsacapturedevice hw:1

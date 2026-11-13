@@ -13,7 +13,7 @@ Available releases for [download](https://github.com/chernandezba/zesarux/releas
 * GNU/Linux 32/64 Bits
 * FreeBSD 64 Bits
 * Haiku OS
-* Mac OS X
+* macOS Silicon/Intel
 * Windows
 * Raspberry pi (raspbian)
 
@@ -25,7 +25,16 @@ Other by 3rd party:
 * PocketCHIP
 * MorhpOS
 
-Also an experimental [Docker image](https://hub.docker.com/r/chernandezba/zesarux) 
+Also tested on:
+* AROS Research Operating System (Amiga Compatible)
+* FiwixOS
+* Minix3
+* Sortix
+
+Also a [Docker image](https://hub.docker.com/r/chernandezba/zesarux)
+
+If you have a Pebble watch, you may also try the ZEsarUX watchface, from [Rebble Store](https://apps.rebble.io/en_US/application/692644f5703cec0009a280fd) and [Repebble store](https://apps.repebble.com/cdfec388a4a74aa89c27e51b)
+
 
 ZEsarUX has won the "Best Emulator" award from Retrogaming Total blog on 2015 and 2017
 
@@ -163,6 +172,23 @@ Sega SG-1000
 Sega Master System
 
 ![alt text](${URLIMAGES_BASE}/screenshots/screenshot_sms.png "Sega Master System")
+
+
+ZEsarUX running on alternative Unix versions:
+
+
+ZEsarUX on AROS
+
+![alt text](${URLIMAGES_BASE}/screenshots/ZEsarUX_aros.png "ZEsarUX on AROS")
+
+ZEsarUX on FiwixOS
+
+![alt text](${URLIMAGES_BASE}/screenshots/ZEsarUX_fiwixos.png "ZEsarUX on FiwixOS")
+
+ZEsarUX on Sortix
+
+![alt text](${URLIMAGES_BASE}/screenshots/ZEsarUX_sortix.png "ZEsarUX on FiwixOS")
+
 
 
 Do you want to know how ZEsarUX looked like in the past? See this:

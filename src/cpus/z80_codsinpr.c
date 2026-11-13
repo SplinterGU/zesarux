@@ -36,6 +36,7 @@
 #include "compileoptions.h"
 #include "snap_rzx.h"
 #include "esxdos_handler.h"
+#include "zx8081.h"
 
 z80_int *registro_ixiy;
 
@@ -117,15 +118,8 @@ void instruccion_8()
 {
 
 //EX AF,AF'
-	z80_byte valor;
 
-	valor=reg_a;
-	reg_a=reg_a_shadow;
-	reg_a_shadow=valor;
-
-	valor=Z80_FLAGS;
-	Z80_FLAGS=Z80_FLAGS_SHADOW;
-	Z80_FLAGS_SHADOW=valor;
+    ex_af_af();
 
 }
 
@@ -1177,7 +1171,6 @@ void instruccion_118()
 
 	z80_halt_signal.v=1;
 
-	//reg_pc--;
 
 	/*
 	if (MACHINE_IS_Z88) {
@@ -1189,6 +1182,9 @@ void instruccion_118()
 
     //Indicar en que scanline se ha producido un halt
     if (debug_settings_show_fired_halt.v) core_spectrum_executed_halt_in_this_scanline=1;
+
+    //que el halt dure 1t estado
+    if (MACHINE_IS_ZX81_TYPE && nmi_generator_active.v /*&& interrupcion_non_maskable_generada.v*/) t_estados -=3;
 }
 
 void instruccion_119()
@@ -1647,6 +1643,7 @@ void instruccion_192()
 
         if (!(Z80_FLAGS & FLAG_Z)) {
 		reg_pc=pop_valor();
+		set_memptr(reg_pc);
 	}
 
 }
@@ -1735,6 +1732,7 @@ void instruccion_200()
 	contend_read_no_mreq( IR, 1 );
 	if (Z80_FLAGS & FLAG_Z) {
 		reg_pc=pop_valor();
+		set_memptr(reg_pc);
 	}
 }
 
@@ -1742,6 +1740,7 @@ void instruccion_201()
 {
 //RET
 	reg_pc=pop_valor();
+	set_memptr(reg_pc);
 }
 
 void instruccion_202()
@@ -1924,6 +1923,10 @@ void instruccion_207()
 //RST 8
 	contend_read_no_mreq( IR, 1 );
 
+    if (esxdos_debug.v && MACHINE_IS_SPECTRUM) {
+        esxdos_debug_run();
+    }
+
 	if (esxdos_handler_enabled.v && MACHINE_IS_SPECTRUM) {
 		esxdos_handler_run();
 	}
@@ -1938,6 +1941,7 @@ void instruccion_208()
 	contend_read_no_mreq( IR, 1 );
         if (!(Z80_FLAGS & FLAG_C)) {
 		reg_pc=pop_valor();
+		set_memptr(reg_pc);
 	}
 
 }
@@ -2034,6 +2038,7 @@ void instruccion_216()
 	contend_read_no_mreq( IR, 1 );
         if (Z80_FLAGS & FLAG_C) {
 		reg_pc=pop_valor();
+		set_memptr(reg_pc);
 	}
 
 }
@@ -2188,6 +2193,7 @@ void instruccion_224()
 	contend_read_no_mreq( IR, 1 );
 	if (!(Z80_FLAGS & FLAG_PV)) {
 		reg_pc=pop_valor();
+		set_memptr(reg_pc);
 	}
 
 }
@@ -2296,6 +2302,7 @@ void instruccion_232()
 	contend_read_no_mreq( IR, 1 );
         if (Z80_FLAGS & FLAG_PV) {
 		reg_pc=pop_valor();
+		set_memptr(reg_pc);
 	}
 
 }
@@ -2422,6 +2429,7 @@ void instruccion_240()
 	contend_read_no_mreq( IR, 1 );
 	if (!(Z80_FLAGS & FLAG_S)) {
 		reg_pc=pop_valor();
+		set_memptr(reg_pc);
 	}
 
 }
@@ -2526,6 +2534,7 @@ void instruccion_248()
 
         if (Z80_FLAGS & FLAG_S) {
 		reg_pc=pop_valor();
+		set_memptr(reg_pc);
 	}
 
 }

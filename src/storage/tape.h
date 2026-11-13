@@ -26,12 +26,21 @@
 #include "mem128.h"
 #include "zvfs.h"
 
+extern void tape_trap_load_spectrum(void);
 extern int tap_open(void);
 extern int tap_close(void);
 extern int tap_out_open(void);
 extern int tap_out_close(void);
 extern void tap_load(void);
 extern void tap_save(void);
+
+extern void tape_enable_core_supertapecopier(void);
+extern void tape_disable_core_supertapecopier(void);
+extern z80_bit supertapecopier_tape_traps;
+
+extern void tape_enable_core_laocopy(void);
+extern void tape_disable_core_laocopy(void);
+extern z80_bit laocopy_tape_traps;
 
 extern char *tapefile;
 extern char *tape_out_file;
@@ -127,7 +136,7 @@ extern char realtape_volumen;
 extern char realtape_wave_offset;
 
 //extern z80_bit autodetect_loaders;
-extern z80_bit accelerate_loaders;
+//extern z80_bit accelerate_realtape_loaders;
 extern z80_bit tape_auto_rewind;
 
 extern int tap_load_detect_ace(void);
@@ -172,7 +181,12 @@ extern int realtape_algorithm_new_noise_reduction;
 #define REALTAPE_VISUAL_MAX_SIZE 4096
 
 //almacenar los datos que se veran en la ventana de visual real tape. Valores maximo y minimo ([0] minimo, [1] maximo)
-extern z80_byte realtape_visual_data[REALTAPE_VISUAL_MAX_SIZE*2][2];
+extern z80_byte realtape_visual_data[REALTAPE_VISUAL_MAX_SIZE*2][3];
+
+extern z80_byte realtape_visual_data_max_global;
+extern z80_byte realtape_visual_data_min_global;
+extern z80_byte realtape_visual_data_max_media_global;
+extern z80_byte realtape_visual_data_min_media_global;
 
 extern int realtape_visual_total_used;
 

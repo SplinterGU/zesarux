@@ -24,15 +24,21 @@
 
 #include "cpu.h"
 
+#define BASECONF_DISPLAY_WIDTH 640
+#define BASECONF_DISPLAY_HEIGHT 400
 
-#define BASECONF_LEFT_BORDER_NO_ZOOM 0
-#define BASECONF_TOP_BORDER_NO_ZOOM 0
+
+
+#define BASECONF_LEFT_BORDER_NO_ZOOM 40
+#define BASECONF_RIGHT_BORDER_NO_ZOOM 40
+#define BASECONF_TOP_BORDER_NO_ZOOM 88
+#define BASECONF_BOTTOM_BORDER_NO_ZOOM 88
 
 #define BASECONF_LEFT_BORDER BASECONF_LEFT_BORDER_NO_ZOOM*zoom_x
+#define BASECONF_RIGHT_BORDER BASECONF_RIGHT_BORDER_NO_ZOOM*zoom_x
 #define BASECONF_TOP_BORDER BASECONF_TOP_BORDER_NO_ZOOM*zoom_y
+#define BASECONF_BOTTOM_BORDER BASECONF_BOTTOM_BORDER_NO_ZOOM*zoom_y
 
-#define BASECONF_DISPLAY_WIDTH 720
-#define BASECONF_DISPLAY_HEIGHT 576
 
 #define BASECONF_FMAPS_SIZE 1024
 #define BASECONF_ROM_PAGES 32
@@ -40,9 +46,29 @@
 
 //#define BASECONF_MAX_SPRITES 85
 
-//extern z80_byte baseconf_last_port_eff7;
+extern z80_byte baseconf_last_port_eff7;
+extern z80_byte baseconf_last_port_77;
+extern z80_byte baseconf_shadow_mode_port_77;
 //extern z80_byte baseconf_last_port_dff7;
 //extern z80_byte baseconf_nvram[];
+
+extern z80_byte baseconf_mmu_pages[];
+extern z80_byte baseconf_mmu_flags[];
+
+extern int baseconf_dos_signal;
+
+#define BASECONF_PALETTE_ENTRIES 16
+extern z80_int baseconf_palette[];
+
+extern void baseconf_set_cpu_speed(void);
+
+extern z80_byte baseconf_extended_dos_ports[];
+
+extern z80_byte baseconf_beta_drive_virtual;
+extern z80_byte baseconf_beta_drive_selected;
+extern int baseconf_trdos_emulation_active;
+
+extern z80_byte baseconf_border_colour;
 
 //extern void baseconf_write_af_port(z80_byte puerto_h,z80_byte value);
 //extern z80_byte baseconf_get_af_port(z80_byte index);
@@ -66,17 +92,66 @@ extern z80_byte baseconf_memory_segments[];
 extern z80_byte baseconf_memory_segments_type[];
 
 extern void baseconf_out_port(z80_int puerto,z80_byte valor);
+extern z80_byte baseconf_read_config_port(z80_byte puerto_h);
+extern z80_byte baseconf_read_beta_system_port(void);
+extern int baseconf_beta_fdc_access(z80_int puerto);
+extern z80_byte baseconf_read_extended_dos_port(z80_byte puerto_l);
+extern z80_byte baseconf_read_cmos(void);
+extern void baseconf_write_cmos(z80_byte valor);
+
+extern char *baseconf_get_video_mode_string(void);
 
 extern int baseconf_sd_enabled;
+extern z80_bit baseconf_sd_interface_enabled;
 
 extern int baseconf_sd_cs;
 
 extern z80_byte baseconf_last_port_bf;
 
+/* Ultimos valores escritos en los puertos propios de BaseConf. */
+extern z80_byte baseconf_last_port_bd;
+extern z80_byte baseconf_last_port_be;
+extern z80_byte baseconf_last_port_ff;
+extern z80_byte baseconf_last_port_57;
+extern z80_byte baseconf_last_port_sd_77;
+extern z80_byte baseconf_last_port_dff7;
+extern z80_byte baseconf_last_port_bff7;
+extern z80_byte baseconf_last_port_7ffd;
+extern z80_byte baseconf_last_port_extended_dos[4];
+extern z80_byte baseconf_last_port_ff7;
+extern z80_byte baseconf_last_port_7f7;
+extern z80_byte baseconf_last_port_bf7;
+extern z80_byte baseconf_avr_modes_register;
+extern void baseconf_update_timing(int force);
+
 extern int baseconf_shadow_ports_available(void);
+extern void baseconf_write_memory_aux(z80_int direccion,z80_byte valor);
+extern void baseconf_pre_opcode_fetch(z80_int direccion);
+extern void baseconf_post_opcode_fetch(z80_byte *opcode);
+extern void baseconf_handle_nmi(void);
+extern void baseconf_check_pending_nmi(void);
+extern void baseconf_ps2_cursor_event(int direction,int pressed);
+extern void baseconf_ps2_function_event(int function,int pressed);
+extern void baseconf_ps2_clear_fifo(void);
+extern void baseconf_ps2_scan_keyboard(void);
+extern void baseconf_ps2_reset(void);
+extern int baseconf_memory_write_allowed(z80_int direccion);
+extern int baseconf_text_mode_active(void);
+extern z80_byte baseconf_get_video_mode(void);
+extern z80_int baseconf_get_palette_entry(z80_byte indice);
+extern z80_byte baseconf_get_border_colour(void);
+extern void baseconf_set_border_colour(z80_int puerto,z80_byte value);
+extern void screen_baseconf_refresca_alco_mode(void);
+extern void screen_baseconf_refresca_ega_mode(void);
+extern void screen_baseconf_refresca_atm_multicolor_mode(void);
+extern void screen_baseconf_refresca_atm_text_mode(void);
+extern void screen_baseconf_refresca_hw_multicolor_mode(void);
+extern void screen_baseconf_refresca_text_mode(void);
+extern void baseconf_store_scanline_rainbow_border(void);
+extern void baseconf_store_scanline_rainbow_display(void);
 
 
-
+extern void baseconf_refresca_pantalla(void);
 
 
 

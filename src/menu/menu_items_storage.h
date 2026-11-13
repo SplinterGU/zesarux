@@ -42,6 +42,7 @@ extern void menu_kartusho(MENU_ITEM_PARAMETERS);
 extern void menu_superupgrade(MENU_ITEM_PARAMETERS);
 extern void menu_ifrom(MENU_ITEM_PARAMETERS);
 extern void menu_storage_hilow_insert(MENU_ITEM_PARAMETERS);
+extern void menu_storage_tape_expand(char *archivo,char *sufijo_carpeta);
 extern void menu_hilow(MENU_ITEM_PARAMETERS);
 extern void menu_samram(MENU_ITEM_PARAMETERS);
 extern void menu_timexcart(MENU_ITEM_PARAMETERS);
@@ -68,6 +69,11 @@ extern void menu_esxdos_traps(MENU_ITEM_PARAMETERS);
 extern void menu_visual_floppy(MENU_ITEM_PARAMETERS);
 extern void menu_zxmmcplus(MENU_ITEM_PARAMETERS);
 extern void menu_convert_audio_to_zx81(MENU_ITEM_PARAMETERS);
+extern void menu_storage_mmc_file(MENU_ITEM_PARAMETERS);
+extern void menu_storage_ide_emulation(MENU_ITEM_PARAMETERS);
+extern void menu_storage_ide_file(MENU_ITEM_PARAMETERS);
+extern void menu_storage_divide_ide_ports_emulation(MENU_ITEM_PARAMETERS);
+extern void menu_ql_mdv_flp(MENU_ITEM_PARAMETERS);
 
 extern int convert_audio_to_zx81_thread_running;
 extern char menu_convert_audio_to_zx81_get_last_sample(void);
@@ -81,6 +87,7 @@ extern void menu_convert_audio_to_zx81_get_audio_buffer(void);
 extern char *menu_convert_audio_to_zx81_get_string_destacar(void);
 extern int menu_convert_audio_to_zx81_que_destacamos_en_waveform;
 extern int menu_convert_audio_to_zx81_si_error_pos_actual(int posicion,int *pulsos);
+extern int menu_convert_audio_to_zx81_window_running;
 
 #endif
 

@@ -1090,7 +1090,7 @@ void load_zx_snapshot(char *archivo)
 	        z80_byte bits_estado2=zx_header[72];
 
         	nmi_generator_active.v=bits_estado2 &1;
-	        hsync_generator_active.v=(bits_estado2>>1)&1;
+	        //hsync_generator_active.v=(bits_estado2>>1)&1;
 
 
 		//Algun parametro por defecto que no esta en version anterior a la 4
@@ -1182,29 +1182,14 @@ void load_zx_snapshot(char *archivo)
 			z80_byte bits_estado3=zx_header[73];
 
 
-                        //Horizontal stabilization
+                        //Horizontal stabilization. Deprecated
                         if ( (bits_estado3 &1) ) {
-				//Al activar realvideo se activa siempre esto tambien. Por eso, por si acaso, lo hacemos despues
                                 debug_printf(VERBOSE_DEBUG,"Horizontal Stabilization enabled on zx snapshot");
-				video_zx8081_estabilizador_imagen.v=1;
                         }
 
                         else {
                                 debug_printf(VERBOSE_DEBUG,"Horizontal Stabilization disabled on zx snapshot");
-				video_zx8081_estabilizador_imagen.v=0;
                         }
-
-
-			//LNCTR video adjust
-                        //if ( (bits_estado3 &2) ) {
-                        //        debug_printf(VERBOSE_DEBUG,"LNCTR video adjust enabled on zx snapshot");
-                        //        video_zx8081_lnctr_adjust.v=1;
-                        //}
-
-                        //else {
-                        //        debug_printf(VERBOSE_DEBUG,"LNCTR video adjust disabled on zx snapshot");
-                        //        video_zx8081_lnctr_adjust.v=0;
-                        //}
 
 
 
@@ -1350,16 +1335,19 @@ void load_zx_snapshot(char *archivo)
                         }
 
 
-			//Gunstick type
+			//lightgun type. Esto ya no lo soportamos
+            /*
 			z80_byte g=zx_header[91];
-			if (g>GUNSTICK_TOTAL) {
+			if (g>=LIGHTGUN_TOTAL) {
 				debug_printf (VERBOSE_ERR,"Lightgun type out of range: %d",g);
 			}
 
 			else {
-				gunstick_emulation=g;
-				debug_printf(VERBOSE_DEBUG,"Setting Lightgun type to: %s",gunstick_texto[gunstick_emulation]);
+                lightgun_emulation_enabled.v=1;
+				lightgun_emulation_type=g;
+				debug_printf(VERBOSE_DEBUG,"Setting Lightgun type to: %s",lightgun_types_list[lightgun_emulation_type]);
 			}
+            */
 
 
 		}
@@ -3143,8 +3131,7 @@ void load_z80_snapshot_aux(char *archivo,z80_byte *buffer_lectura)
 
 					case 10:
 						//Scorpion 256k
-						current_machine_type=6;
-						debug_printf (VERBOSE_ERR,"Scorpion 256k is not emulated yet. Setting to Spectrum 128k");
+						current_machine_type=MACHINE_ID_SCORPION_ZS_256;
 					break;
 
 					case 11:
@@ -4027,8 +4014,8 @@ void save_zx_snapshot(char *filename)
 
 	//Si version inferior a 5
 	if (!(MACHINE_IS_SPECTRUM_16 || MACHINE_IS_SPECTRUM_48 || MACHINE_IS_SPECTRUM_128 || MACHINE_IS_SPECTRUM_P2 || MACHINE_IS_SPECTRUM_P2A ||
-         MACHINE_IS_INVES || MACHINE_IS_SPECTRUM_128_SPA || MACHINE_IS_MICRODIGITAL_TK90X || MACHINE_IS_MICRODIGITAL_TK90X_SPA ||
-         MACHINE_IS_MICRODIGITAL_TK95 || MACHINE_IS_ZX8081)
+         MACHINE_IS_INVES || MACHINE_IS_SPECTRUM_128_SPA || MACHINE_IS_MICRODIGITAL_TK90X ||
+         MACHINE_IS_MICRODIGITAL_TK95_POR || MACHINE_IS_ZX8081)
          && snap_zx_version_save<5) {
 		debug_printf (VERBOSE_ERR,"Machine %s not supported on ZX snapshot version %d",get_machine_name(current_machine_type),snap_zx_version_save);
             return;
@@ -4036,8 +4023,8 @@ void save_zx_snapshot(char *filename)
 
 	//Si version inferior a 6
 	if (!(MACHINE_IS_SPECTRUM_16 || MACHINE_IS_SPECTRUM_48 || MACHINE_IS_SPECTRUM_128 || MACHINE_IS_SPECTRUM_P2 || MACHINE_IS_SPECTRUM_P2A ||
-         MACHINE_IS_INVES || MACHINE_IS_SPECTRUM_128_SPA || MACHINE_IS_MICRODIGITAL_TK90X || MACHINE_IS_MICRODIGITAL_TK90X_SPA ||
-         MACHINE_IS_MICRODIGITAL_TK95 || MACHINE_IS_ZX8081 || MACHINE_IS_Z88)
+         MACHINE_IS_INVES || MACHINE_IS_SPECTRUM_128_SPA || MACHINE_IS_MICRODIGITAL_TK90X ||
+         MACHINE_IS_MICRODIGITAL_TK95_POR || MACHINE_IS_ZX8081 || MACHINE_IS_Z88)
          && snap_zx_version_save<6) {
 		debug_printf (VERBOSE_ERR,"Machine %s not supported on ZX snapshot version %d",get_machine_name(current_machine_type),snap_zx_version_save);
             return;
@@ -4121,10 +4108,10 @@ void save_zx_snapshot(char *filename)
         	//z80_byte bits_estado2=header[72];
 	        z80_byte bits_estado2=0;
 
-		//bits_estado2=(nmi_generator_active.v) + (2*hsync_generator_active.v) + (4*rainbow_enabled.v) + (8*wrx_present.v) + (16*ram_in_8192.v);
+
 
 		//z80_byte pruebas=(nmi_generator_active.v) + (2*hsync_generator_active.v) + (4*rainbow_enabled.v) + (8*wrx_present.v) + (16*ram_in_8192.v) + (32*ram_in_32768.v)+ (64*ram_in_49152.v) + (128*ay_chip_present.v);
-		bits_estado2=(nmi_generator_active.v) | (hsync_generator_active.v<<1) | (rainbow_enabled.v<<2) | (wrx_present.v<<3) | (ram_in_8192.v<<4) | (ram_in_32768.v<<5) | (ram_in_49152.v<<6) | (ay_chip_present.v<<7);
+		bits_estado2=(nmi_generator_active.v) /*| (hsync_generator_active.v<<1)*/ | (rainbow_enabled.v<<2) | (wrx_present.v<<3) | (ram_in_8192.v<<4) | (ram_in_32768.v<<5) | (ram_in_49152.v<<6) | (ay_chip_present.v<<7);
 
 
 		//printf ("bits_estado2: %d pruebas: %d\n",bits_estado2,pruebas);
@@ -4138,7 +4125,7 @@ void save_zx_snapshot(char *filename)
 		//keymap de momento solo 0 o 1
 		int bit_estado_keymap=(z88_cpc_keymap_type == 1 ? 128 : 0);
 
-		bits_estado3=(video_zx8081_estabilizador_imagen.v) | (zx8081_vsync_sound.v <<2) | (chardetect_printchar_enabled.v <<3) | (stdout_simpletext_automatic_redraw.v << 4) | (chardetect_second_trap_sum32.v << 5) | (kempston_mouse_emulation.v << 6) | bit_estado_keymap;
+		bits_estado3= (zx8081_vsync_sound.v <<2) | (chardetect_printchar_enabled.v <<3) | (stdout_simpletext_automatic_redraw.v << 4) | (chardetect_second_trap_sum32.v << 5) | (kempston_mouse_emulation.v << 6) | bit_estado_keymap;
 
 		header[73]=bits_estado3;
 
@@ -4191,8 +4178,8 @@ void save_zx_snapshot(char *filename)
 		//joystick type emulation
 		header[90]=joystick_emulation;
 
-		//gunstick type emulation
-		header[91]=gunstick_emulation;
+		//lightgun type emulation. esto ya no lo soportamos
+		//header[91]=lightgun_emulation_type;
 
 	}
 
@@ -5498,7 +5485,7 @@ void snap_dump_zsf_on_cpu_panic(void)
 
   snapshot_get_date_time_string(time_string);
 
-  sprintf (dump_snapshot_panic_name,"cpu_panic-%s.zsf",time_string);
+  sprintf (dump_snapshot_panic_name,"zesarux_panic-%s.zsf",time_string);
 
   snapshot_save(dump_snapshot_panic_name);
 

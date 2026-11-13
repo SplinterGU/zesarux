@@ -85,6 +85,30 @@ void z_atomic_reset(z_atomic_semaphore *s)
 
     #else
 
+        #ifdef OTHER_UNIX
+
+            //Otros Unix no POSIX, como AROS
+            //Operaciones arriesgadamente no atomicas
+            //Por otra parte, en esos otros sistemas no tienen soporte pthreads,
+            //por tanto no hay necesidad de operaciones atómicas
+
+            int z_atomic_test_and_set(z_atomic_semaphore *s)
+            {
+                    //Estaba a 1, no establecemos bloqueo
+                    if (*s) return 1;
+
+                    //Adquirimos bloqueo
+                    *s=1;
+                    return 0;
+            }
+
+            void z_atomic_reset(z_atomic_semaphore *s)
+            {
+                    *s=0;
+            }
+
+        #else
+
             //En Linux
             //Son builtins de Gcc
             //https://gcc.gnu.org/onlinedocs/gcc/_005f_005fatomic-Builtins.html#_005f_005fatomic-Builtins
@@ -99,8 +123,10 @@ void z_atomic_reset(z_atomic_semaphore *s)
 {
 	__atomic_clear(s,__ATOMIC_RELAXED);
 }
-
+        #endif
 
     #endif
+
+
 
 #endif

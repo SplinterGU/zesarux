@@ -30,6 +30,12 @@ if [ $? != 0 ]; then
         exit 1
 fi
 
+tests/didaktik_mmu.sh
+if [ $? != 0 ]; then
+        echo "Error didaktik gama mmu tests"
+        exit 1
+fi
+
 tests/printtrap_test.sh
 if [ $? != 0 ]; then
         echo "Error printtrap tests"
@@ -39,6 +45,18 @@ fi
 tests/load_test.sh
 if [ $? != 0 ]; then
         echo "Error load tests"
+        exit 1
+fi
+
+tests/autosnap_and_tape_test.sh --tape
+if [ $? != 0 ]; then
+        echo "Error autosnap and tape test"
+        exit 1
+fi
+
+tests/autosnap_and_tape_test.sh --realtape
+if [ $? != 0 ]; then
+        echo "Error autosnap and real tape test"
         exit 1
 fi
 

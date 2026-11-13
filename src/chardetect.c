@@ -30,6 +30,9 @@
 #include "disassemble.h"
 #include "settings.h"
 #include "utils_text_adventure.h"
+#include "m68k.h"
+#include "ql.h"
+#include "ql_qdos_handler.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -696,41 +699,8 @@ void chardetect_debug_char_table_routines_poke(z80_int dir)
 }
 
 
-//Para hacer debug de aventuras de texto, investigar desde donde se estan leyendo las tablas de caracteres
-//se llama aqui desde peek_byte
-void chardetect_debug_char_table_routines_peek(z80_int dir)
-{
 
-        //Para poder debugar rutina que imprima texto. Util para aventuras conversacionales del CAAD
-
-        //Para ver quien accede a tabla de caracteres que hay hacia la 0xF000
-
-        /*
-         *      if (dir>0xF000 && reg_pc!=65525) {
-         *              printf ("dir: %d reg_pc: %d\n",dir,reg_pc);
-}
-*/
-
-        /*
-         *      //pruebas hobbit
-         *      if (dir>0x7890 && dir<0x7A00) {
-         *              printf ("dir: %d reg_pc: %d\n",dir,reg_pc);
-}
-*/
-
-        /*
-         *      //Para saber quien accede a la tabla de caracteres de la ROM
-         *      if (dir>=0x3d00 && dir<=0x3fff) {
-         *              printf ("accessing rom char table dir: %d reg_pc: %d\n",dir,reg_pc);
-}
-*/
-
-
-        //Para que no se queje el compilador de no usado
-        dir++; dir--;
-
-}
-
+/*
 //Para poder debugar rutina que imprima texto. Util para aventuras conversacionales
 //se llama aqui desde core_spectrum
 void chardetect_debug_print_char_routine(void)
@@ -755,19 +725,17 @@ void chardetect_debug_print_char_routine(void)
         //if (reg_pc>=27490 && reg_pc<27520) {
 
         //Para mordons quest
-        /*if (reg_pc>=27850 && reg_pc<27999) {
-         *
-         *
-         *              if (reg_a=='A' || reg_a=='B') {
-         *                      printf ("reg_pc: %d reg_a: %d (%c)\n",reg_pc,reg_a,reg_a);
-         *
-         *                      //Y debugamos un trozo
-         *                      chardetect_disassemble_trozo(reg_pc-4);
-         *
-}
+        //if (reg_pc>=27850 && reg_pc<27999) {
+         //
+         //
+         //             if (reg_a=='A' || reg_a=='B') {
+         //                      printf ("reg_pc: %d reg_a: %d (%c)\n",reg_pc,reg_a,reg_a);
+         //
+         //                     //Y debugamos un trozo
+        //                      chardetect_disassemble_trozo(reg_pc-4);
+         //
 }
 */
-}
 
 
 
@@ -1090,6 +1058,35 @@ void chardetect_printchar_caracter(z80_byte c)
 //Imprime caracter si es que estamos en trap de rst16 (o oz rom), second trap o third trap
 void chardetect_printchar(void)
 {
+	if (MACHINE_IS_QL) {
+		if (get_pc_register()==0x0032A) {
+			unsigned int ql_trap_function=m68k_get_reg(NULL,M68K_REG_D0);
+			unsigned int ql_channel=m68k_get_reg(NULL,M68K_REG_A0);
+
+			//Do not mirror output sent to files handled by the QDOS host filesystem layer
+			if (ql_channel>=QLTRAPS_START_FILE_NUMBER &&
+				ql_channel<QLTRAPS_START_FILE_NUMBER+QLTRAPS_MAX_OPEN_FILES) return;
+
+			if (ql_trap_function==0x05) {
+				z80_byte c=m68k_get_reg(NULL,M68K_REG_D1);
+				chardetect_printchar_caracter(c==10 ? 13 : c);
+			}
+
+			if (ql_trap_function==0x07) {
+				unsigned int address=m68k_get_reg(NULL,M68K_REG_A1);
+				unsigned int length=m68k_get_reg(NULL,M68K_REG_D2) & 0xFFFF;
+
+				if (ql_previous_trap_was_4) address +=m68k_get_reg(NULL,M68K_REG_A6);
+
+				while (length--) {
+					z80_byte c=ql_readbyte(address++);
+					chardetect_printchar_caracter(c==10 ? 13 : c);
+				}
+			}
+		}
+
+		return;
+	}
 
 
 
@@ -1137,4 +1134,3 @@ void chardetect_printchar(void)
 	}
 
 }
-

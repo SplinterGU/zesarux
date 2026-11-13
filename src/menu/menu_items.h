@@ -24,6 +24,7 @@
 
 #include "cpu.h"
 #include "sensors.h"
+#include "menu_debug_cpu.h"
 
 
 extern void menu_poke(MENU_ITEM_PARAMETERS);
@@ -39,6 +40,7 @@ extern void menu_debug_poke(MENU_ITEM_PARAMETERS);
 extern void menu_debug_cpu_resumen_stats(MENU_ITEM_PARAMETERS);
 extern void menu_about_core_statistics(MENU_ITEM_PARAMETERS);
 extern void menu_about_changelog_common(int show_err_if_big);
+extern void menu_about_running_info(MENU_ITEM_PARAMETERS);
 extern void menu_ay_registers(MENU_ITEM_PARAMETERS);
 extern void menu_debug_tsconf_tbblue_msx_videoregisters(MENU_ITEM_PARAMETERS);
 extern void menu_debug_tsconf_tbblue_msx_spritenav(MENU_ITEM_PARAMETERS);
@@ -51,6 +53,7 @@ extern void menu_debug_hexdump(MENU_ITEM_PARAMETERS);
 extern void menu_osd_adventure_keyboard(MENU_ITEM_PARAMETERS);
 extern void menu_osd_adventure_keyboard_next(void);
 extern void menu_display_total_palette(MENU_ITEM_PARAMETERS);
+extern void menu_snapshot_in_ram_browse(MENU_ITEM_PARAMETERS);
 
 extern int menu_sound_wave_llena;
 
@@ -59,11 +62,22 @@ extern int ayplayer_force_refresh;
 extern void menu_debug_disassemble(MENU_ITEM_PARAMETERS);
 extern void menu_debug_assemble(MENU_ITEM_PARAMETERS);
 
+extern int ventana_video_output_esta_activa(void);
+extern int ventana_video_output_esta_abierta(void);
+
+extern int ventana_video_output_abierta;
+extern int ventana_video_output_activa;
+
+
 
 extern void menu_zxdesktop_trash_empty(MENU_ITEM_PARAMETERS);
 
 extern void menu_toy_follow_mouse(MENU_ITEM_PARAMETERS);
 extern void menu_toys_zxlife(MENU_ITEM_PARAMETERS);
+extern void menu_clive_game(MENU_ITEM_PARAMETERS);
+extern void menu_clock(MENU_ITEM_PARAMETERS);
+extern void menu_calculator(MENU_ITEM_PARAMETERS);
+extern void menu_simon(MENU_ITEM_PARAMETERS);
 extern void process_switcher_sync_immutable_setting(void);
 extern void process_switcher_sync_always_visible_setting(void);
 extern void process_switcher_sync_always_left_bottom_setting(void);
@@ -84,11 +98,16 @@ extern void menu_cpu_transaction_log(MENU_ITEM_PARAMETERS);
 
 extern void menu_debug_view_sprites(MENU_ITEM_PARAMETERS);
 
+extern void menu_send_text_keystrokes_status(MENU_ITEM_PARAMETERS);
+
 extern void menu_realtape_record_input(MENU_ITEM_PARAMETERS);
 extern void menu_realtape_record_input_write_byte(char valor);
 extern void menu_input_spectrum_analyzer(MENU_ITEM_PARAMETERS);
 
+extern void menu_midi_output_status(MENU_ITEM_PARAMETERS);
+
 extern char *menu_debug_sprites_change_ptr_historial[];
+
 
 
 extern char *menu_debug_poke_address_historial[];
@@ -106,6 +125,7 @@ extern void menu_ay_mixer(MENU_ITEM_PARAMETERS);
 extern void menu_i8049_mixer(MENU_ITEM_PARAMETERS);
 extern void menu_uartbridge(MENU_ITEM_PARAMETERS);
 extern void menu_network(MENU_ITEM_PARAMETERS);
+extern void menu_debug_cpu_info(MENU_ITEM_PARAMETERS);
 
 
 extern void menu_debug_change_memory_zone_splash(void);
@@ -183,7 +203,6 @@ extern void menu_audio_chip_info(MENU_ITEM_PARAMETERS);
 
 
 
-extern void menu_ql_mdv_flp(MENU_ITEM_PARAMETERS);
 
 extern void menu_debug_unnamed_console(MENU_ITEM_PARAMETERS);
 
@@ -199,11 +218,13 @@ extern void menu_debug_load_source_code(MENU_ITEM_PARAMETERS);
 
 extern void menu_debug_unload_source_code(MENU_ITEM_PARAMETERS);
 
-extern void menu_snapshot_rewind(MENU_ITEM_PARAMETERS);
+extern void menu_snapshots_in_ram(MENU_ITEM_PARAMETERS);
 
 extern menu_z80_moto_int menu_debug_hexdump_direccion;
 
-extern void menu_debug_hexdump_with_ascii(char *dumpmemoria,menu_z80_moto_int dir_leida,int bytes_por_linea,z80_byte valor_xor);
+
+
+extern int menu_debug_hexdump_with_ascii(char *dumpmemoria,menu_z80_moto_int dir_leida,int bytes_por_linea,z80_byte valor_xor,menu_debug_hexdump_store_differences *diferencias);
 
 extern char *menu_debug_hexdump_change_ptr_historial[];
 
@@ -239,7 +260,7 @@ extern void menu_debug_file_utils(MENU_ITEM_PARAMETERS);
 
 extern void menu_in_memoriam_david_about(MENU_ITEM_PARAMETERS);
 
-extern void menu_process_f_functions_by_action_name(int id_funcion,int si_pulsado_icono_zxdesktop,int id_tecla_f_pulsada,int si_pulsado_boton_redefinido,int numero_boton);
+extern void menu_process_f_functions_by_action_name(int id_funcion,int si_pulsado_icono_zxdesktop,int id_tecla_f_pulsada,int si_pulsado_boton_redefinido,int numero_boton,int si_pulsado_accion_joystick, int indice_accion_joystick);
 
 
 
@@ -259,7 +280,10 @@ extern int menu_debug_hexdump_follow_expression_defined(void);
 extern void menu_debug_hexdump_get_follow_expression_string(char *string_texto);
 
 extern void menu_view_basic_listing(MENU_ITEM_PARAMETERS);
+extern void menu_view_gosub_stack(MENU_ITEM_PARAMETERS);
+extern void menu_view_basic_variables(MENU_ITEM_PARAMETERS);
 
+extern int menu_inicio_mostrar_main_menu(int salir_menu);
 
 struct s_menu_debug_view_sensors_list {
     char short_name[SENSORS_MAX_SHORT_NAME];
@@ -302,11 +326,22 @@ extern int zxdesktop_icon_mdv2_inverse;
 extern int zxdesktop_icon_mdv3_inverse;
 extern int zxdesktop_icon_mdv4_inverse;
 extern int zxdesktop_icon_flp1_inverse;
+extern int zxdesktop_icon_flp2_inverse;
 extern int zxdesktop_icon_dandanator_inverse;
 extern int zxdesktop_icon_zxunoflash_inverse;
 extern int zxdesktop_icon_zxmmcplusflash_inverse;
+extern int zxdesktop_icon_esxdoshandler_inverse;
+extern int zxdesktop_icon_kartusho_inverse;
+extern int zxdesktop_icon_ifrom_inverse;
+extern int zxdesktop_icon_ql_external_rom_inverse;
+extern int zxdesktop_icon_lec_memory_inverse;
+extern int zxdesktop_icon_superupgrade_inverse;
+extern int zxdesktop_icon_samram_inverse;
 extern int zxdesktop_icon_hilow_inverse;
 
+extern int menu_ay_registers_ql_selected_ay;
+
+extern void gamelife_timer_counter_event(void);
 
 #define GENERIC_VISUALTAPE_COLOR_FONDO AMIGAOS_COLOUR_blue
 #define VISUALTAPE_COLOR_MARCO 7
@@ -350,6 +385,11 @@ extern void menu_generic_visualtape(zxvision_window *w,
     int antes_porcentaje_cinta_izquierdo,int antes_porcentaje_cinta_derecha,
     int grados_rodillos,int antes_grados_rodillos,int redibujar_rollos,int redibujar_parte_estatica,int redibujar_rodillos_arrastre,
     int temblor,int semaforos_hilow,int pestanyas_escritura);
+
+
+
+
+extern char *menu_inicio_retorna_tooltip(enum tooltips_menus_inicio_storage id_tooltip);
 
 
 #endif

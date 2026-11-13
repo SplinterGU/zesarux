@@ -44,6 +44,8 @@ extern int screen_gray_mode;
 
 extern z80_bit inverse_video;
 
+extern int screen_rgb_8bit;
+
 
 extern void scr_refresca_border(void);
 
@@ -54,6 +56,8 @@ extern void (*scr_refresca_pantalla_solo_driver) (void);
 extern void (*scr_set_fullscreen) (void);
 extern void (*scr_reset_fullscreen) (void);
 extern int ventana_fullscreen;
+extern void change_variable_ventana_fullscreen(int valor);
+
 extern int (*scr_init_pantalla) (void);
 extern void (*scr_end_pantalla) (void);
 extern z80_byte (*scr_lee_puerto) (z80_byte puerto_h,z80_byte puerto_l);
@@ -68,10 +72,17 @@ extern void (*scr_putpixel_final) (int x,int y,unsigned int color);
 extern int (*scr_get_menu_width) (void);
 extern int (*scr_get_menu_height) (void);
 
+extern void (*scr_update_window_title) (void);
+
+extern char *(*scr_get_text_clipboard) (int *p_longitud);
+
 //extern int (*scr_driver_can_ext_desktop) (void);
+
+
 extern int scr_driver_can_ext_desktop (void);
 
 extern int screen_este_driver_permite_ext_desktop;
+extern int screen_forbid_zxdesktop;
 
 extern int zxdesktop_width;
 extern int zxdesktop_height;
@@ -121,6 +132,7 @@ extern void scr_refresca_pantalla_y_border_mk14(void);
 extern z80_int *putpixel_cache;
 
 extern void scr_refresca_pantalla_rainbow_comun(void);
+extern void scr_refresca_pantalla_rainbow_comun_spectrum(void);
 
 extern void (*scr_putchar_zx8081) (int x,int y, z80_byte caracter);
 extern void scr_refresca_pantalla_zx8081(void);
@@ -136,7 +148,7 @@ extern int umbral_simulate_screen_zx8081;
 extern int scr_get_4pixel(int x,int y);
 extern int scr_get_4pixel_rainbow(int x,int y);
 
-extern int if_store_scanline_interlace(int y);
+//extern int if_store_scanline_interlace(int y);
 
 extern void convertir_color_spectrum_paleta_to_rgb(z80_int valor,int *r,int *g,int *b);
 
@@ -210,6 +222,9 @@ extern z80_byte interlaced_numero_frame;
 extern z80_bit video_interlaced_mode;
 
 extern z80_bit video_interlaced_scanlines;
+extern z80_bit video_interlaced_scanlines_aggressive;
+
+extern z80_bit video_dither_mode;
 
 extern z80_bit gigascreen_enabled;
 
@@ -289,14 +304,15 @@ extern void disable_16c_mode(void);
 extern z80_bit rainbow_enabled;
 extern z80_bit autodetect_rainbow;
 
-extern z80_int *new_scalled_rainbow_buffer;
 
-extern void screen_scale_075_function(int ancho,int alto);
 
-extern z80_bit screen_reduce_075_antialias;
+
+extern z80_bit screen_reduce_antialias;
 
 extern z80_bit screen_keep_both_zoom_equals;
 
+extern int screen_reduce_menu_ancho;
+extern int screen_reduce_menu_alto;
 
 //normalmente a 8
 extern int screen_invisible_borde_superior;
@@ -387,8 +403,9 @@ extern void clear_putpixel_cache(void);
 
 extern void init_cache_putpixel(void);
 
-//extern void screen_store_scanline_char_zx8081(int x,int y,z80_byte byte_leido);
-extern void screen_store_scanline_char_zx8081(int x,int y,z80_byte byte_leido,z80_byte caracter,int inverse);
+extern void cache_putpixel_end_lock_semaphore(void);
+
+
 extern void screen_store_scanline_char_zx8081_border_scanline(int x,int y,z80_byte byte_leido);
 
 extern void siguiente_frame_pantalla(void);
@@ -399,6 +416,8 @@ extern int frames_total;
 extern int framescreen_saltar;
 extern int next_frame_skip_render_scanlines;
 extern int ultimo_fps;
+
+extern unsigned int frames_video_total_infinito;
 
 //vofile
 extern char *vofilename;
@@ -450,9 +469,12 @@ extern int get_total_alto_rainbow_cached;
 #define get_total_ancho_rainbow(x) (get_total_ancho_rainbow_cached)
 #define get_total_alto_rainbow(x) (get_total_alto_rainbow_cached)
 
+extern int rainbow_buffer_current_width;
+extern int rainbow_buffer_current_height;
 
 extern void set_t_scanline_draw_zero(void);
 extern void t_scanline_next_line(void);
+extern void t_scanline_next_fullborder(void);
 
 extern void screen_z88_refresca_pantalla(void);
 
@@ -461,6 +483,7 @@ extern void screen_z88_refresca_pantalla_comun(void);
 extern void screen_z88_draw_lower_screen(void);
 
 extern void scr_refresca_pantalla_y_border_ace(void);
+extern void screen_store_scanline_rainbow_ace(void);
 
 extern void screen_text_repinta_pantalla_ace(void);
 
@@ -470,29 +493,31 @@ extern void screen_text_repinta_pantalla_chloe(void);
 
 extern void screen_tbblue_refresca_pantalla(void);
 
+extern void scr_simular_video_zx8081(void);
+
 //extern void z88_return_character_atributes(z80_byte *sbr,int *ascii_caracter,int *ancho,int *inverse,int *subrallado,int *parpadeo,int *gris,int *null_caracter);
 
 
 //Estructura usada para funcion de conversion de caracter z88, y para funcion de bucle de refresco de pantalla de z88 en ascii
 struct s_z88_return_character_atributes
 {
-	//z80_byte *sbr;
-	z88_dir sbr;
-	int ascii_caracter;
-	int ancho;
-	int inverse;
-	int subrallado;
-	int parpadeo;
-	int gris;
-	int null_caracter;
+    //z80_byte *sbr;
+    z88_dir sbr;
+    int ascii_caracter;
+    int ancho;
+    int inverse;
+    int subrallado;
+    int parpadeo;
+    int gris;
+    int null_caracter;
 
-	//Estos siguientes solo usados en funcion de bucle de refresco de pantalla
-	int x,y;
-	void (*f_print_char)(struct s_z88_return_character_atributes *s);
-	void (*f_new_line)(struct s_z88_return_character_atributes *s);
+    //Estos siguientes solo usados en funcion de bucle de refresco de pantalla
+    int x,y;
+    void (*f_print_char)(struct s_z88_return_character_atributes *s);
+    void (*f_new_line)(struct s_z88_return_character_atributes *s);
 
 
-	//int temp_orig;
+    //int temp_orig;
 };
 
 extern void z88_return_character_atributes(struct s_z88_return_character_atributes *z88_caracter);
@@ -540,13 +565,13 @@ extern void screen_switch_rainbow_buffer(void);
 #define SPECCY_GREY_SCANLINE_TOTAL_PALETTE_COLOURS 16
 
 
-
+#define GIGASCREEN_INDEX_FIRST_COLOR (SPECCY_TOTAL_PALETTE_COLOURS+SPECCY_GREY_SCANLINE_TOTAL_PALETTE_COLOURS)
 #define GIGASCREEN_TOTAL_PALETTE_COLOURS 256
 
-#define Z88_PXCOLON (SPECCY_TOTAL_PALETTE_COLOURS+SPECCY_GREY_SCANLINE_TOTAL_PALETTE_COLOURS+GIGASCREEN_TOTAL_PALETTE_COLOURS+0)
-#define Z88_PXCOLGREY (SPECCY_TOTAL_PALETTE_COLOURS+SPECCY_GREY_SCANLINE_TOTAL_PALETTE_COLOURS+GIGASCREEN_TOTAL_PALETTE_COLOURS+1)
-#define Z88_PXCOLOFF (SPECCY_TOTAL_PALETTE_COLOURS+SPECCY_GREY_SCANLINE_TOTAL_PALETTE_COLOURS+GIGASCREEN_TOTAL_PALETTE_COLOURS+2)
-#define Z88_PXCOLSCROFF (SPECCY_TOTAL_PALETTE_COLOURS+SPECCY_GREY_SCANLINE_TOTAL_PALETTE_COLOURS+GIGASCREEN_TOTAL_PALETTE_COLOURS+3)
+#define Z88_PXCOLON (GIGASCREEN_INDEX_FIRST_COLOR+GIGASCREEN_TOTAL_PALETTE_COLOURS+0)
+#define Z88_PXCOLGREY (GIGASCREEN_INDEX_FIRST_COLOR+GIGASCREEN_TOTAL_PALETTE_COLOURS+1)
+#define Z88_PXCOLOFF (GIGASCREEN_INDEX_FIRST_COLOR+GIGASCREEN_TOTAL_PALETTE_COLOURS+2)
+#define Z88_PXCOLSCROFF (GIGASCREEN_INDEX_FIRST_COLOR+GIGASCREEN_TOTAL_PALETTE_COLOURS+3)
 
 #define Z88_TOTAL_PALETTE_COLOURS 4
 
@@ -612,8 +637,12 @@ extern void screen_switch_rainbow_buffer(void);
 #define BMP_SECOND_INDEX_FIRST_COLOR (BMP_INDEX_FIRST_COLOR+BMP_TOTAL_PALETTE_COLOURS)
 #define BMP_SECOND_TOTAL_PALETTE_COLOURS 256
 
+//Tecera Paleta para carga de bmp indexado desde FX effects de pantalla
+#define BMP_THIRD_INDEX_FIRST_COLOR (BMP_SECOND_INDEX_FIRST_COLOR+BMP_SECOND_TOTAL_PALETTE_COLOURS)
+#define BMP_THIRD_TOTAL_PALETTE_COLOURS 256
+
 //Paleta para chip vdp de MSX
-#define VDP_9918_INDEX_FIRST_COLOR (BMP_SECOND_INDEX_FIRST_COLOR+BMP_SECOND_TOTAL_PALETTE_COLOURS)
+#define VDP_9918_INDEX_FIRST_COLOR (BMP_THIRD_INDEX_FIRST_COLOR+BMP_THIRD_TOTAL_PALETTE_COLOURS)
 #define VDP_9918_TOTAL_PALETTE_COLOURS 16
 
 //Paleta para QL
@@ -637,7 +666,7 @@ extern void screen_switch_rainbow_buffer(void);
 #define SMS_TOTAL_PALETTE_COLOURS 64
 
 #define BEOS_INDEX_FIRST_COLOR (SMS_INDEX_FIRST_COLOR+SMS_TOTAL_PALETTE_COLOURS)
-#define BEOS_TOTAL_PALETTE_COLOURS 6
+#define BEOS_TOTAL_PALETTE_COLOURS 7
 
 #define BEOS_COLOUR_yellow (BEOS_INDEX_FIRST_COLOR+0)
 #define BEOS_COLOUR_grey_box (BEOS_INDEX_FIRST_COLOR+1)
@@ -645,16 +674,18 @@ extern void screen_switch_rainbow_buffer(void);
 #define BEOS_COLOUR_grey_selection (BEOS_INDEX_FIRST_COLOR+3)
 #define BEOS_COLOUR_grey_inactive_title (BEOS_INDEX_FIRST_COLOR+4)
 #define BEOS_COLOUR_blue_hotkey (BEOS_INDEX_FIRST_COLOR+5)
+#define BEOS_COLOUR_grey_box_inactive (BEOS_INDEX_FIRST_COLOR+6)
 
 
 #define RETROMAC_INDEX_FIRST_COLOR (BEOS_INDEX_FIRST_COLOR+BEOS_TOTAL_PALETTE_COLOURS)
-#define RETROMAC_TOTAL_PALETTE_COLOURS 5
+#define RETROMAC_TOTAL_PALETTE_COLOURS 6
 
 #define RETROMAC_COLOUR_active_title (RETROMAC_INDEX_FIRST_COLOR+0)
 #define RETROMAC_COLOUR_paper (RETROMAC_INDEX_FIRST_COLOR+1)
 #define RETROMAC_COLOUR_selected_paper (RETROMAC_INDEX_FIRST_COLOR+2)
 #define RETROMAC_COLOUR_unavailable_ink (RETROMAC_INDEX_FIRST_COLOR+3)
 #define RETROMAC_COLOUR_window_box (RETROMAC_INDEX_FIRST_COLOR+4)
+#define RETROMAC_COLOUR_window_box_inactive (RETROMAC_INDEX_FIRST_COLOR+5)
 
 
 #define AMIGAOS_INDEX_FIRST_COLOR (RETROMAC_INDEX_FIRST_COLOR+RETROMAC_TOTAL_PALETTE_COLOURS)
@@ -701,13 +732,14 @@ extern void screen_switch_rainbow_buffer(void);
 
 
 #define QNX_INDEX_FIRST_COLOR (RISCOS_INDEX_FIRST_COLOR+RISCOS_TOTAL_PALETTE_COLOURS)
-#define QNX_TOTAL_PALETTE_COLOURS 5
+#define QNX_TOTAL_PALETTE_COLOURS 6
 
 #define QNX_COLOUR_GREEN (QNX_INDEX_FIRST_COLOR+0)
 #define QNX_COLOUR_BLUE (QNX_INDEX_FIRST_COLOR+1)
 #define QNX_COLOUR_BLUE_DARK (QNX_INDEX_FIRST_COLOR+2)
 #define QNX_COLOUR_GRAY (QNX_INDEX_FIRST_COLOR+3)
 #define QNX_COLOUR_GRAY_INACTIVE (QNX_INDEX_FIRST_COLOR+4)
+#define QNX_COLOUR_GRAY_FRAME_INACTIVE (QNX_INDEX_FIRST_COLOR+5)
 
 #define FLASH_COLOR_FIRST_COLOR (QNX_INDEX_FIRST_COLOR+QNX_TOTAL_PALETTE_COLOURS)
 #define FLASH_COLOR_PALETTE_COLOURS 128
@@ -718,22 +750,84 @@ extern void screen_switch_rainbow_buffer(void);
 #define PCW_RGB8_FIRST_COLOR (INVES_BLACK_BRIGHT+INVES_BLACK_BRIGHT_PALETTE_COLOURS)
 #define PCW_RGB8_PALETTE_COLOURS 256
 
+#define PICO8_FIRST_COLOR (PCW_RGB8_FIRST_COLOR+PCW_RGB8_PALETTE_COLOURS)
+#define PICO8_PALETTE_COLOURS 34
+/*
+pico-8
+0		#000000	0, 0, 0	black
+1		#1D2B53	29, 43, 83	dark-blue
+2		#7E2553	126, 37, 83	dark-purple
+3		#008751	0, 135, 81	dark-green
+4		#AB5236	171, 82, 54	brown
+5		#5F574F	95, 87, 79	dark-grey
+6		#C2C3C7	194, 195, 199	light-grey
+7		#FFF1E8	255, 241, 232	white
+8		#FF004D	255, 0, 77	red
+9		#FFA300	255, 163, 0	orange
+10		#FFEC27	255, 236, 39	yellow
+11		#00E436	0, 228, 54	green
+12		#29ADFF	41, 173, 255	blue
+13		#83769C	131, 118, 156	lavender
+14		#FF77A8	255, 119, 168	pink
+15		#FFCCAA	255, 204, 170	light-peach
+
+picotron:
+16		#2463B0	36,99,176	true-blue
+17		#00A5A1	0,165,161	teal
+18		#654688	101,70,136	purple
+19		#125359	18,83,89	dark-teal
+20		#742F29	116,47,41	dark-brown
+21		#452D32	69,45,50	darker-grey
+22		#A28879	162,136,121	medium-grey
+23		#FFACC5	255,172,197	light-pink
+24		#B9003E	185,0,62	dark-red
+25		#E26B02	226,107,2	dark-orange
+26		#95F042	149,240,66	lime-green
+27		#00B251	0,178,81	medium-green
+28		#64DFF6	100,223,246	light-blue
+29		#BD9ADF	189,154,223	mauve
+30		#E40DAB	228,13,171	magenta
+31		#FF8557	255,133,87	peach
+
+32 #fef1e8
+33 #111D35	17,29,53	darker-blue
+*/
+#define PICO8_COLOR_BLACK (PICO8_FIRST_COLOR+0)
+#define PICO8_COLOR_DARK_BLUE (PICO8_FIRST_COLOR+1)
+#define PICO8_COLOR_DARK_GREY (PICO8_FIRST_COLOR+5)
+#define PICO8_COLOR_LIGHT_GREY (PICO8_FIRST_COLOR+6)
+#define PICO8_COLOR_WHITE (PICO8_FIRST_COLOR+7)
+#define PICO8_COLOR_RED (PICO8_FIRST_COLOR+8)
+#define PICO8_COLOR_GREEN (PICO8_FIRST_COLOR+11)
+#define PICO8_COLOR_LAVENDER (PICO8_FIRST_COLOR+13)
+#define PICO8_COLOR_PINK (PICO8_FIRST_COLOR+14)
+#define PICO8_LIGHT_PEACH (PICO8_FIRST_COLOR+15)
+#define PICO8_COLOR_PURPLE (PICO8_FIRST_COLOR+18)
+#define PICO8_COLOR_DARK_BROWN (PICO8_FIRST_COLOR+20)
+#define PICO8_COLOR_LIGHT_PINK (PICO8_FIRST_COLOR+23)
+#define PICO8_COLOR_DARK_RED (PICO8_FIRST_COLOR+24)
+#define PICO8_COLOR_LIME_GREEN (PICO8_FIRST_COLOR+26)
+#define PICO8_COLOR_MEDIUM_GREEN (PICO8_FIRST_COLOR+27)
+#define PICO8_COLOR_MAUVE (PICO8_FIRST_COLOR+29)
+#define PICO8_COLOR_MAGENTA (PICO8_FIRST_COLOR+30)
+#define PICO8_COLOR_DARKER_BLUE (PICO8_FIRST_COLOR+33)
+
 //16 colores normales spectrum, 16 grises de modo scanline, 256 de gigascreen, 4 de z88, 16 de spectrum 17/48/+ real, 256 de ulaplus, 64 de spectra, 32 de CPC, 4096 de Prism, 128 de SAM, 256 de RGB8, 32768 de TSCONF, 16 de solarized
 //actualizar aqui y tambien estructura de total_palette_colours_array y #define TOTAL_PALETAS_COLORES
-#define EMULATOR_TOTAL_PALETTE_COLOURS (SPECCY_TOTAL_PALETTE_COLOURS+SPECCY_GREY_SCANLINE_TOTAL_PALETTE_COLOURS+GIGASCREEN_TOTAL_PALETTE_COLOURS+Z88_TOTAL_PALETTE_COLOURS+ULAPLUS_TOTAL_PALETTE_COLOURS+SPECTRA_TOTAL_PALETTE_COLOURS+CPC_TOTAL_PALETTE_COLOURS+PRISM_TOTAL_PALETTE_COLOURS+SAM_TOTAL_PALETTE_COLOURS+RGB9_TOTAL_PALETTE_COLOURS+TSCONF_TOTAL_PALETTE_COLOURS+HEATMAP_TOTAL_PALETTE_COLOURS+SOLARIZED_TOTAL_PALETTE_COLOURS+BMP_TOTAL_PALETTE_COLOURS+BMP_SECOND_TOTAL_PALETTE_COLOURS+VDP_9918_TOTAL_PALETTE_COLOURS+QL_TOTAL_PALETTE_COLOURS+TURBOVISION_TOTAL_PALETTE_COLOURS+SMS_TOTAL_PALETTE_COLOURS+BEOS_TOTAL_PALETTE_COLOURS+RETROMAC_TOTAL_PALETTE_COLOURS+AMIGAOS_TOTAL_PALETTE_COLOURS+ATARITOS_TOTAL_PALETTE_COLOURS+OSDOS_TOTAL_PALETTE_COLOURS+ZESARUX_PLUS_TOTAL_PALETTE_COLOURS+RISCOS_TOTAL_PALETTE_COLOURS+QNX_TOTAL_PALETTE_COLOURS+FLASH_COLOR_PALETTE_COLOURS+INVES_BLACK_BRIGHT_PALETTE_COLOURS+PCW_RGB8_PALETTE_COLOURS)
+#define EMULATOR_TOTAL_PALETTE_COLOURS (SPECCY_TOTAL_PALETTE_COLOURS+SPECCY_GREY_SCANLINE_TOTAL_PALETTE_COLOURS+GIGASCREEN_TOTAL_PALETTE_COLOURS+Z88_TOTAL_PALETTE_COLOURS+ULAPLUS_TOTAL_PALETTE_COLOURS+SPECTRA_TOTAL_PALETTE_COLOURS+CPC_TOTAL_PALETTE_COLOURS+PRISM_TOTAL_PALETTE_COLOURS+SAM_TOTAL_PALETTE_COLOURS+RGB9_TOTAL_PALETTE_COLOURS+TSCONF_TOTAL_PALETTE_COLOURS+HEATMAP_TOTAL_PALETTE_COLOURS+SOLARIZED_TOTAL_PALETTE_COLOURS+BMP_TOTAL_PALETTE_COLOURS+BMP_SECOND_TOTAL_PALETTE_COLOURS+BMP_THIRD_TOTAL_PALETTE_COLOURS+VDP_9918_TOTAL_PALETTE_COLOURS+QL_TOTAL_PALETTE_COLOURS+TURBOVISION_TOTAL_PALETTE_COLOURS+SMS_TOTAL_PALETTE_COLOURS+BEOS_TOTAL_PALETTE_COLOURS+RETROMAC_TOTAL_PALETTE_COLOURS+AMIGAOS_TOTAL_PALETTE_COLOURS+ATARITOS_TOTAL_PALETTE_COLOURS+OSDOS_TOTAL_PALETTE_COLOURS+ZESARUX_PLUS_TOTAL_PALETTE_COLOURS+RISCOS_TOTAL_PALETTE_COLOURS+QNX_TOTAL_PALETTE_COLOURS+FLASH_COLOR_PALETTE_COLOURS+INVES_BLACK_BRIGHT_PALETTE_COLOURS+PCW_RGB8_PALETTE_COLOURS+PICO8_PALETTE_COLOURS)
 
 
 struct s_total_palette_colours {
         char nombre_paleta[32];
-				char descripcion_paleta[32];
-				int indice_inicial;
-				int total_colores;
+                char descripcion_paleta[32];
+                int indice_inicial;
+                int total_colores;
 };
 
 typedef struct s_total_palette_colours total_palette_colours;
 
 //Esto usado en menu display->ver paleta total
-#define TOTAL_PALETAS_COLORES 15
+#define TOTAL_PALETAS_COLORES 17
 
 extern total_palette_colours total_palette_colours_array[];
 
@@ -741,10 +835,10 @@ extern total_palette_colours total_palette_colours_array[];
 #define VALOR_GRIS_A_R_G_B \
                                 if (screen_gray_mode & 1) b=valorgris; \
                                 else b=0; \
-				\
+                \
                                 if (screen_gray_mode & 2) g=valorgris; \
                                 else g=0; \
-				\
+                \
                                 if (screen_gray_mode & 4) r=valorgris; \
                                 else r=0; \
 
@@ -818,6 +912,7 @@ extern void enable_timex_video(void);
 extern void scr_refresca_pantalla_cpc(void);
 
 extern void scr_refresca_pantalla_y_border_sam(void);
+extern void screen_store_scanline_rainbow_sam(void);
 
 extern z80_byte sam_retorna_byte_pantalla_mode1(z80_byte *s,z80_int *o,z80_byte *at);
 
@@ -835,13 +930,17 @@ extern void screen_text_repinta_pantalla_sam(void);
 
 extern char scr_artistic_retorna_artistic_char(z80_byte *origen, int incremento_origen);
 
-extern void scr_refresca_pantalla_cpc_text(void (*fun_color) (z80_byte color,int *brillo, int *parpadeo), void (*fun_caracter) (int x,int y,int brillo, unsigned char inv,z80_byte caracter ) , void (*fun_saltolinea) (void) );
+extern void scr_refresca_pantalla_cpc_text(void (*fun_color) (z80_byte color,int *brillo, int *parpadeo), void (*fun_caracter) (int x,int y,int brillo, unsigned char inv,z80_byte caracter ) , void (*fun_saltolinea) (void) , int solo_texto);
 
 extern void screen_text_repinta_pantalla_cpc(void);
 
 extern z80_bit scr_refresca_sin_colores;
 
-extern void scr_refresca_pantalla_y_border_ql(void);
+extern z80_bit scr_refresca_show_attribute_grid;
+
+extern int get_frequency_refresh_video(void);
+
+extern void switch_machine_frequency_refresh_video(void);
 
 extern z80_bit no_fadeout_exit;
 
@@ -917,6 +1016,8 @@ agregando duplicidad de funciones sin verdadera necesidad...
 
 
 
+extern void store_value_rainbow_debug(z80_int **p, z80_int valor);
+
 
 //Funcion normal
 #define store_value_rainbow(p,x) *p++=x;
@@ -925,9 +1026,10 @@ agregando duplicidad de funciones sin verdadera necesidad...
 //#define store_value_rainbow(p,x) store_value_rainbow_debug(&p,x);
 
 
+
 extern z80_bit spectrum_1648_use_real_palette;
 
-extern int scr_ver_si_refrescar_por_menu_activo(int x,int fila);
+
 
 extern void tsconf_fast_tilesprite_render(void);
 
@@ -939,10 +1041,7 @@ extern void scr_refresca_pantalla_tsconf_text(void (*fun_color) (z80_byte color,
 
 extern void scr_refresca_pantalla_tsconf_text_textmode (void (*fun_color) (z80_byte color,int *brillo, int *parpadeo), void (*fun_caracter) (int x,int y,int brillo, unsigned char inv,z80_byte caracter ) , void (*fun_saltolinea) (void) , int factor_division);
 
-extern z80_bit screen_reduce_075;
 
-extern int screen_reduce_offset_x;
-extern int screen_reduce_offset_y;
 
 extern int screen_watermark_position;
 
@@ -952,9 +1051,12 @@ extern z80_bit screen_watermark_enabled;
 extern z80_bit screen_watermark_enabled_only_when_device_activity;
 extern z80_bit screen_watermark_rotate_colors_device_activity;
 
-extern void screen_put_watermark_generic(z80_int *destino,int x,int y,int ancho, void (*putpixel) (z80_int *destino,int x,int y,int ancho,int color) );
-extern void screen_put_asciibitmap_generic(char **origen,z80_int *destino,int x,int y,int ancho_orig, int alto_orig, int ancho_destino, void (*putpixel) (z80_int *destino,int x,int y,int ancho_destino,int color),int zoom,int inverso );
-extern void screen_put_asciibitmap_generic_offset_inicio(char **origen,z80_int *destino,int x,int y,int ancho_orig, int alto_orig, int ancho_destino, void (*putpixel) (z80_int *destino,int x,int y,int ancho_destino,int color),int zoom,int inverso,int offset_inicio_agregar );
+extern void screen_put_watermark_generic(z80_int *destino,int x,int y,int ancho, int alto, void (*putpixel) (z80_int *destino,int x,int y,int ancho,int alto,int color) );
+extern void screen_put_asciibitmap_generic(char **origen,z80_int *destino,int x,int y,int ancho_orig, int alto_orig,
+    int ancho_destino, int alto_destino, void (*putpixel) (z80_int *destino,int x,int y,int ancho_destino,int alto_destino, int color),
+    int zoom,int inverso,int permitir_envoltura );
+extern void screen_put_asciibitmap_generic_offset_inicio(char **origen,z80_int *destino,int x,int y,int ancho_orig, int alto_orig, int ancho_destino, int alto_destino,
+    void (*putpixel) (z80_int *destino,int x,int y,int ancho_destino,int alto_destino,int color),int zoom,int inverso,int offset_inicio_agregar,int permitir_envoltura );
 //extern void screen_put_mask_asciibitmap_generic_offset_inicio(char **origen,z80_int *destino,int x,int y,int ancho_orig, int alto_orig, int ancho_destino,   void (*putpixel) (z80_int *destino,int x,int y,int ancho_destino,int color), int zoom,int offset_inicio_agregar,int color_pixel);
 
 
@@ -964,6 +1066,8 @@ extern void timer_device_activity_change_watermark_colors(void);
 extern void timer_watermark_device_activity_decrement_counter(void);
 
 extern void watermark_tell_device_activity(void);
+
+extern void screen_add_watermark_rainbow(void);
 
 extern int screen_colores_rainbow[];
 extern int screen_colores_rainbow_nobrillo[];
@@ -981,9 +1085,9 @@ extern void screen_text_set_ansi_color_bg(z80_byte paper);
 
 extern void screen_text_set_ansi_color_fg(z80_byte ink);
 
-extern void screen_generic_putpixel_indexcolour(z80_int *destino,int x,int y,int ancho,int color);
+extern void screen_generic_putpixel_indexcolour(z80_int *destino,int x,int y,int ancho,int alto,int color);
 
-extern int screen_generic_getpixel_indexcolour(z80_int *destino,int x,int y,int ancho);
+extern int screen_generic_getpixel_indexcolour(z80_int *destino,int x,int y,int ancho,int alto);
 
 extern int screen_force_refresh;
 
@@ -1038,5 +1142,15 @@ extern void scr_driver_redraw_desktop_windows(void);
 extern void scr_set_pending_redraw_desktop_windows(void);
 
 extern void scr_adjust_zoom_equals(int *p_zx,int *p_zy);
+
+#define ZESARUX_MAX_WINDOW_TITLE 100
+
+extern void set_window_title(char *texto);
+extern char *get_window_title(void);
+extern void set_default_window_title(void);
+
+extern void update_window_title(void);
+extern void set_window_title_and_update(char *texto);
+extern void set_default_window_title_and_update(void);
 
 #endif

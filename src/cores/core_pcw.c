@@ -150,7 +150,10 @@ void core_pcw_end_scanline_stuff(void)
     audio_valor_enviar_sonido_izquierdo +=da_output_ay_izquierdo();
     audio_valor_enviar_sonido_derecho +=da_output_ay_derecho();
 
-
+    if (audio_nagra_effect.v) {
+        audio_apply_nagra_effect();
+        audio_apply_nagra_effect_next();
+    }
 
     //TODO real beeper
     if (beeper_enabled.v) {
@@ -192,12 +195,9 @@ void core_pcw_end_scanline_stuff(void)
     //final de linea
     //copiamos contenido linea y border a buffer rainbow
 
-    /*
     if (rainbow_enabled.v==1) {
-        //printf ("render core scanline draw: %d\n",t_scanline_draw);
         screen_store_scanline_rainbow_pcw_border_and_display();
     }
-    */
 
     t_scanline_next_line();
 
@@ -424,7 +424,7 @@ void cpu_core_loop_pcw(void)
 #endif
 
         //Si la cpu está detenida por señal HALT, reemplazar opcode por NOP
-        if (z80_halt_signal.v) {
+        if (z80_halt_signal.v || paused_cpu_emulation.v) {
             byte_leido_core_pcw=0;
         }
         else {

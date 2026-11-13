@@ -32,12 +32,125 @@
 #include "ula.h"
 #include "operaciones.h"
 #include "zxevo.h"
+#include "baseconf.h"
+#include "scorpion.h"
+#include "mmc.h"
+#include "betadisk.h"
+#include "ide.h"
+
+z80_byte tsconf_sd_read_buffer=0xff;
+z80_bit tsconf_dos_signal={0};
+static z80_bit tsconf_powerup_pending={0};
+
+static z80_byte tsconf_beta_status;
+static z80_byte tsconf_beta_track;
+static z80_byte tsconf_beta_sector;
+static z80_byte tsconf_beta_data;
+static z80_byte tsconf_beta_drive;
+static z80_bit tsconf_vdos_active={0};
+static z80_bit tsconf_vdos_pending={0};
+
+int tsconf_vdos_is_active(void)
+{
+    return tsconf_vdos_active.v;
+}
+
+int tsconf_vdos_interrupt_blocked(void)
+{
+    return tsconf_vdos_active.v || tsconf_vdos_pending.v;
+}
+
+static int tsconf_beta_virtual_drive(void)
+{
+    return (tsconf_af_ports[0x29] & (1<<tsconf_beta_drive))!=0;
+}
+
+static void tsconf_set_vdos(int enabled)
+{
+    if (tsconf_vdos_active.v==enabled) return;
+    tsconf_vdos_active.v=enabled;
+    tsconf_set_memory_pages();
+}
+
+int tsconf_beta_read_port(z80_byte port)
+{
+    if ((port&0x9f)!=0x1f && port!=0xff) return -1;
+    if (!tsconf_dos_signal.v && !tsconf_vdos_active.v && !(tsconf_af_ports[0x29]&0x80)) return -1;
+
+    if (tsconf_vdos_active.v) {
+        tsconf_set_vdos(0);
+        return 0xff;
+    }
+    if (tsconf_dos_signal.v && tsconf_beta_virtual_drive()) {
+        tsconf_vdos_pending.v=1;
+        return 0xff;
+    }
+    if (!trd_enabled.v) return -1;
+
+    // Señales mínimas para que la ROM detecte el TRD insertado desde el menú.
+    switch (port) {
+        case 0xff: return 0xc0;
+        case 0x1f:
+            tsconf_beta_status ^=2;
+            return tsconf_beta_status;
+        case 0x3f: return tsconf_beta_track;
+        case 0x5f: return tsconf_beta_sector;
+        case 0x7f: return tsconf_beta_data;
+    }
+    return -1;
+}
+
+void tsconf_beta_write_port(z80_byte port,z80_byte value)
+{
+    if ((port&0x1f)!=0x1f) return;
+    if (!tsconf_dos_signal.v && !tsconf_vdos_active.v && !(tsconf_af_ports[0x29]&0x80)) return;
+
+    if (tsconf_vdos_active.v) {
+        if (port==0xff) tsconf_beta_drive=value&3;
+        else tsconf_set_vdos(0);
+        return;
+    }
+    if (tsconf_dos_signal.v && tsconf_beta_virtual_drive()) {
+        tsconf_set_vdos(1);
+        return;
+    }
+    if (port==0xff) tsconf_beta_drive=value&3;
+    if (!trd_enabled.v) return;
+
+    switch (port) {
+        case 0x1f:
+            if (value==0xc0) tsconf_beta_data=tsconf_beta_track;
+            break;
+        case 0x3f: tsconf_beta_track=value; break;
+        case 0x5f: tsconf_beta_sector=value; break;
+        case 0x7f: tsconf_beta_data=value; break;
+    }
+}
+
+// Deselecciona la tarjeta al desactivar el Z-Controller de TSConf.
+void tsconf_zcontroller_enabled_changed(void)
+{
+    if (zcontroller_enabled.v) return;
+    baseconf_sd_cs=1;
+    tsconf_sd_read_buffer=0xff;
+    mmc_cs(0xff);
+}
+
+// Lee el byte recibido en el ciclo SPI anterior y prepara el siguiente.
+z80_byte tsconf_sd_read_byte(void)
+{
+    if (!zcontroller_enabled.v || !baseconf_sd_enabled || baseconf_sd_cs) return 0xff;
+    z80_byte recibido=tsconf_sd_read_buffer;
+    tsconf_sd_read_buffer=mmc_read();
+    return recibido;
+}
 
 //temporal para printf debug que mira contador_segundo
 //#include "timer.h"
 
 #include "chardevice.h"
 #include "uartbridge.h"
+#include "video_chips_common.h"
 
 
 void tsconf_generate_im1_im2(z80_byte vector);
@@ -47,6 +160,18 @@ void tsconf_generate_im1_im2(z80_byte vector);
 //z80_byte tsconf_nvram[256];
 
 z80_byte tsconf_af_ports[256];
+
+static int tsconf_ula_y_counter;
+static int tsconf_ula_y_last_scanline=-1;
+static int tsconf_ula_y_reload;
+static int tsconf_ula_y_reload_next;
+static int tsconf_ula_y_reload_value;
+
+// VConfig y VPage escritos por la CPU se aplican a partir de la línea siguiente.
+static z80_byte tsconf_video_next_vconfig;
+static z80_byte tsconf_video_next_vpage;
+static z80_byte tsconf_video_render_vconfig;
+static z80_byte tsconf_video_render_vpage;
 
 //Si se usa vdac con full 15 bits, o con pwm: en ese caso, cada componente de 5 bits son diferentes hasta valor 24, a partir de ahi son iguales a 255:
 /*
@@ -84,21 +209,21 @@ Offset  A[11:8] RAM	  Description
 
 
 void tsconf_write_fmaps(int tsconf_fmaps_offset,z80_byte valor) {
-				if (tsconf_fmaps_offset<0x200) {
-					//printf ("Zona tsconf cram\n");
-					tsconf_fmaps[tsconf_fmaps_offset]=valor;
-				}
+                if (tsconf_fmaps_offset<0x200) {
+                    //printf ("Zona tsconf cram\n");
+                    tsconf_fmaps[tsconf_fmaps_offset]=valor;
+                }
 
-				if (tsconf_fmaps_offset>=0x200 && tsconf_fmaps_offset<0x400) {
-					//printf ("Zona tsconf sprites\n");
-					tsconf_fmaps[tsconf_fmaps_offset]=valor;
-				}
+                if (tsconf_fmaps_offset>=0x200 && tsconf_fmaps_offset<0x400) {
+                    //printf ("Zona tsconf sprites\n");
+                    tsconf_fmaps[tsconf_fmaps_offset]=valor;
+                }
 
-				if (tsconf_fmaps_offset>=0x400 && tsconf_fmaps_offset<0x500) {
-					//printf ("Zona tsconf registers\n");
-					//Solo escribe en regustro tsconf. no en ram fmaps
-					tsconf_write_af_port(tsconf_fmaps_offset-0x400,valor);
-				}
+                if (tsconf_fmaps_offset>=0x400 && tsconf_fmaps_offset<0x500) {
+                    //printf ("Zona tsconf registers\n");
+                    //Solo escribe en regustro tsconf. no en ram fmaps
+                    tsconf_write_af_port(tsconf_fmaps_offset-0x400,valor);
+                }
 }
 
 //Retorna valor entre 0...32767, segun color de entrada entre 0..255
@@ -129,9 +254,129 @@ z80_byte *tsconf_ram_mem_table[256];
 //Direcciones actuales mapeadas, bloques de 16 kb
 z80_byte *tsconf_memory_paged[4];
 
-//En teoria esto se activa cuando hay traps tr-dos
-z80_bit tsconf_dos_signal={0};
+/* Caché de RAM de TSConf: 512 bytes de correspondencia directa. Solo actúa
+   a 14 MHz y en las ventanas habilitadas por CacheConfig (#2BAF). Cada fallo
+   carga dos bytes contiguos y añade la espera de acceso a DRAM; una lectura
+   posterior de esos bytes evita esa espera. Las escrituras de CPU invalidan
+   el par afectado. La ROM y los modos de 3,5/7 MHz no usan la caché. */
+static z80_byte *tsconf_cache_tags[512];
+static z80_byte tsconf_cache_data[512];
+static unsigned long long tsconf_cache_hits[4];
+static unsigned long long tsconf_cache_misses[4];
+static unsigned long long tsconf_cache_total_hits;
+static unsigned long long tsconf_cache_total_misses;
 
+/* Invalida las 512 entradas y reinicia los contadores de hit/miss.
+   No recibe parámetros ni devuelve valor; se llama al reiniciar o cambiar
+   la configuración de caché o velocidad. */
+static void tsconf_cache_clear(void)
+{
+    int i;
+    for (i=0;i<512;i++) tsconf_cache_tags[i]=NULL;
+    for (i=0;i<4;i++) {
+        tsconf_cache_hits[i]=0;
+        tsconf_cache_misses[i]=0;
+    }
+    tsconf_cache_total_hits=0;
+    tsconf_cache_total_misses=0;
+}
+
+/* Indica si la dirección de CPU 'address' apunta a RAM según el mapa actual.
+   Devuelve 1 para RAM y 0 para ROM; la caché no actúa sobre la ROM. */
+static int tsconf_cache_is_ram(z80_int address)
+{
+    return address>=0x4000 || (tsconf_get_memconfig()&8) || tsconf_vdos_active.v;
+}
+
+/* Copia el estado actual de la ventana 'window' (0-3) en 'info'. Devuelve
+   página mapeada, tipo de memoria, habilitación efectiva y contadores de
+   lecturas de CPU desde el último cambio de página o configuración. */
+void tsconf_get_cache_debug_info(int window,struct tsconf_cache_debug_info *info)
+{
+    int address=window<<14;
+    info->is_ram=tsconf_cache_is_ram(address);
+    info->enabled=info->is_ram && cpu_turbo_speed==4 &&
+                  (tsconf_af_ports[0x2b]&(1<<window));
+    info->page=debug_paginas_memoria_mapeadas[window]&DEBUG_PAGINA_MAP_MASK;
+    info->hits=tsconf_cache_hits[window];
+    info->misses=tsconf_cache_misses[window];
+}
+
+/* Devuelve en 'hits' y 'misses' los accesos de todas las ventanas desde el
+   último reinicio o cambio de caché/velocidad. Estos totales no se reinician
+   al cambiar una página mapeada. */
+void tsconf_get_cache_debug_totals(unsigned long long *hits,unsigned long long *misses)
+{
+    *hits=tsconf_cache_total_hits;
+    *misses=tsconf_cache_total_misses;
+}
+
+/* Consulta o rellena la entrada asociada a la dirección de CPU 'address'.
+   Devuelve 0 si ya estaba en caché y 1 si hubo que leer la RAM física.
+   El relleno carga el par de bytes que comparte el acceso de DRAM. */
+static int tsconf_cache_fetch(z80_int address)
+{
+    int window=address>>14;
+    int index=address&511;
+    z80_byte *block=tsconf_memory_paged[window]+(address&0x3e00);
+    // CacheConfig (#2BAF): cada bit 0-3 habilita la caché en una ventana de 16 KiB.
+    // La caché solo interviene cuando la CPU funciona a 14 MHz.
+    int enabled=(cpu_turbo_speed==4) && (tsconf_af_ports[0x2b]&(1<<window));
+    if (enabled && tsconf_cache_tags[index]==block) return 0;
+
+    // Cada fallo carga dos bytes consecutivos de la RAM física.
+    int pair=index&~1;
+    int offset=(address&0x3fff)&~1;
+    tsconf_cache_data[pair]=tsconf_memory_paged[window][offset];
+    tsconf_cache_data[pair+1]=tsconf_memory_paged[window][offset+1];
+    tsconf_cache_tags[pair]=tsconf_cache_tags[pair+1]=enabled ? block : NULL;
+    return 1;
+}
+
+/* Calcula la espera adicional de una lectura de RAM en 'address'. 'm1' vale
+   1 para la lectura de opcode y 0 para una lectura de datos. Devuelve ciclos
+   de CPU adicionales; solo los fallos de caché a 14 MHz introducen espera. */
+int tsconf_cache_read_wait(z80_int address,int m1)
+{
+    if (!tsconf_cache_is_ram(address)) return 0;
+    int miss=tsconf_cache_fetch(address);
+    int window=address>>14;
+    if (cpu_turbo_speed!=4) return 0;
+    if (tsconf_af_ports[0x2b]&(1<<window)) {
+        if (miss) {
+            tsconf_cache_misses[window]++;
+            tsconf_cache_total_misses++;
+        }
+        else {
+            tsconf_cache_hits[window]++;
+            tsconf_cache_total_hits++;
+        }
+    }
+    if (!miss) return 0;
+    // A 14 MHz, el fallo espera al siguiente ciclo de la DRAM de 7 MHz.
+    if (m1) return (t_estados&1) ? 3 : 4;
+    return (t_estados&1) ? 3 : 2;
+}
+
+/* Lee la dirección de CPU 'address' a través de la caché de TSConf.
+   Devuelve el byte leído. El tiempo del acceso se cuenta por separado. */
+z80_byte tsconf_cache_read(z80_int address)
+{
+    if (!tsconf_cache_is_ram(address) || cpu_turbo_speed!=4) {
+        return tsconf_memory_paged[address>>14][address&0x3fff];
+    }
+    tsconf_cache_fetch(address);
+    return tsconf_cache_data[address&511];
+}
+
+/* Invalida el par de bytes de caché correspondiente a una escritura en la
+   dirección de CPU 'address'. No devuelve valor. */
+void tsconf_cache_invalidate(z80_int address)
+{
+    int pair=address&510;
+    tsconf_cache_tags[pair]=tsconf_cache_tags[pair+1]=NULL;
+}
+static int tsconf_7ffd_locked;
 
 //Almacena tamanyo pantalla y border para modo actual
 //Los inicializamos con algo por si acaso
@@ -201,36 +446,36 @@ z80_bit tsconf_reveal_layer_tiles_one={0};
 
 void tsconf_reveal_layer_draw(z80_int *layer)
 {
-	int i;
+    int i;
 
-	for (i=0;i<TSCONF_MAX_WIDTH_LAYER;i++) {
-		z80_int color=*layer;
+    for (i=0;i<TSCONF_MAX_WIDTH_LAYER;i++) {
+        z80_int color=*layer;
 
-		if (color!=TSCONF_SCANLINE_TRANSPARENT_COLOR) {
+        if (color!=TSCONF_SCANLINE_TRANSPARENT_COLOR) {
 
-			//Color de revelado es blanco o negro segun cuadricula:
-			// Negro Blanco Negro ...
-			// Blanco Negro Blanco ...
-			// Negro Blanco Negro ....
-			// .....
+            //Color de revelado es blanco o negro segun cuadricula:
+            // Negro Blanco Negro ...
+            // Blanco Negro Blanco ...
+            // Negro Blanco Negro ....
+            // .....
 
-			//Por tanto tener en cuenta posicion x e y
-			int posx=i&1;
-			int posy=t_scanline_draw&1;
+            //Por tanto tener en cuenta posicion x e y
+            int posx=i&1;
+            int posy=t_scanline_draw&1;
 
-			//0,0: 0
-			//0,1: 1
-			//1,0: 1
-			//1,0: 0
-			//Es un xor
+            //0,0: 0
+            //0,1: 1
+            //1,0: 1
+            //1,0: 0
+            //Es un xor
 
-			int si_blanco_negro=posx ^ posy;
+            int si_blanco_negro=posx ^ posy;
 
-			*layer=32767*si_blanco_negro; //ultimo de los colores en paleta rgb9 de tbblue -> blanco, negro es 0
-		}
+            *layer=32767*si_blanco_negro; //ultimo de los colores en paleta rgb9 de tbblue -> blanco, negro es 0
+        }
 
-		layer++;
-	}
+        layer++;
+    }
 }
 
 
@@ -276,9 +521,9 @@ z80_byte tsconf_get_video_size_display(void)
 
 //Actualiza valores de variables de tamanyo pantalla segun modo de video actual
 //Modo de video ZX Spectrum solo tiene sentido con resolucion 256x192
-void tsconf_set_sizes_display(void)
+static void tsconf_set_sizes_display_vconfig(z80_byte vconfig)
 {
-  z80_byte videosize=tsconf_get_video_size_display();
+  z80_byte videosize=(vconfig>>6)&3;
 
 /*
   00 - 256x192: border size: 104x96
@@ -319,13 +564,18 @@ void tsconf_set_sizes_display(void)
 
 }
 
+void tsconf_set_sizes_display(void)
+{
+    tsconf_set_sizes_display_vconfig(tsconf_af_ports[0]);
+}
+
 
 void tsconf_get_current_video_mode(char *s)
 {
-	  sprintf (s,"%s, %s",
-		tsconf_video_sizes_array[tsconf_get_video_size_display()],
-		tsconf_video_modes_array[tsconf_get_video_mode_display()]
-	  );
+      sprintf (s,"%s, %s",
+        tsconf_video_sizes_array[tsconf_get_video_size_display()],
+        tsconf_video_modes_array[tsconf_get_video_mode_display()]
+      );
 }
 
 void tsconf_splash_video_size_mode_change(void)
@@ -355,10 +605,13 @@ void tsconf_set_emulator_setting_turbo(void)
 
 
                                 */
+        int velocidad_anterior=cpu_turbo_speed;
         z80_byte t=tsconf_af_ports[32] & 3;
         if (t==0) cpu_turbo_speed=1;
         else if (t==1) cpu_turbo_speed=2;
         else cpu_turbo_speed=4;
+
+        if (cpu_turbo_speed!=velocidad_anterior) tsconf_cache_clear();
 
 
         //printf ("Setting turbo: %d\n",cpu_turbo_speed);
@@ -369,14 +622,14 @@ void tsconf_set_emulator_setting_turbo(void)
 
 void tsconf_fire_dma_interrupt(void)
 {
-	//Depende de DI???
-	if (iff1.v==0) return;
+    //Depende de DI???
+    if (iff1.v==0) return;
 
-	//registro intmask 2aH bit 2
-	if ((tsconf_af_ports[0x2a]&4)==0) return;
+    //registro intmask 2aH bit 2
+    if ((tsconf_af_ports[0x2a]&4)==0) return;
 
 
-	tsconf_generate_im1_im2(0xFB);
+    tsconf_generate_im1_im2(0xFB);
 
 
 
@@ -388,76 +641,60 @@ int tsconf_return_dma_addr_reg_to_linear(z80_byte bajo,z80_byte medio,z80_byte a
 
 //printf ("%d %d %d\n",bajo,medio,alto);
 
-	int f_bajo=bajo&254; //Descartar bit bajo
-	int f_medio=medio&63; //Descartar los dos bits altos
-	int f_alto=alto;
+    int f_bajo=bajo&254; //Descartar bit bajo
+    int f_medio=medio&63; //Descartar los dos bits altos
+    int f_alto=alto;
 
-	f_medio=f_medio<<8;
-	f_alto=f_alto<<14;
+    f_medio=f_medio<<8;
+    f_alto=f_alto<<14;
 
-	int final=f_bajo | f_medio | f_alto;
+    int final=f_bajo | f_medio | f_alto;
 
-	//printf ("%d\n",final);
+    //printf ("%d\n",final);
 
-	return final;
+    return final;
 }
 
 //Funcion contraria a la anterior, para una direccion lineal dma dada, retorna los 3 registros por separado
 void tsconf_return_dma_addr_linear_to_reg(int addr,z80_byte *bajo,z80_byte *medio,z80_byte *alto)
 {
-	*bajo=addr & 254;
+    *bajo=addr & 254;
 
-	addr >>=8;
-	*medio=addr & 63;
+    addr >>=8;
+    *medio=addr & 63;
 
-	addr >>=6;
-	*alto=addr;
+    addr >>=6;
+    *alto=addr;
 }
 
-int tsconf_align_address(int orig_destination,int destination,int addr_align_size)
+int tsconf_align_address(int orig_destination,int addr_align_size)
 {
-
-			int lower;
-
-				if (addr_align_size) { //1 alinear a 512
-				//printf ("alinear a 512\n");
-				lower=orig_destination&0x1FF;
-				destination=destination&0xFFFE00;
-				destination |=lower;
-				destination +=512;
-			}
-			else { //0 alinear a 256
-				//printf ("alinear a 256\n");
-				lower=orig_destination&0xFF;
-				destination=destination&0xFFFF00;
-				destination |=lower;
-				destination +=256;
-			}
-
-	return destination;
+    // La siguiente ráfaga comienza a una distancia fija del inicio de esta.
+    // Alinear desde el final puede saltarse una fila si acaba justo en su límite.
+    return (orig_destination+(addr_align_size ? 512 : 256))&0x3fffff;
 }
 
 /*int tsconf_align_address_prueba(int orig_destination,int destination,int addr_align_size)
 {
 
-			int lower;
+            int lower;
 
-			if (addr_align_size) { //1 alinear a 512
-				//printf ("alinear a 512\n");
-				//lower=orig_destination&0x1FF;
-				destination=destination&0xFFFE00;
-				//destination |=lower;
-				destination +=512;
-			}
-			else { //0 alinear a 256
-				//printf ("alinear a 256\n");
-				//lower=orig_destination&0xFF;
-				destination=destination&0xFFFF00;
-				//destination |=lower;
-				destination +=256;
-			}
+            if (addr_align_size) { //1 alinear a 512
+                //printf ("alinear a 512\n");
+                //lower=orig_destination&0x1FF;
+                destination=destination&0xFFFE00;
+                //destination |=lower;
+                destination +=512;
+            }
+            else { //0 alinear a 256
+                //printf ("alinear a 256\n");
+                //lower=orig_destination&0xFF;
+                destination=destination&0xFFFF00;
+                //destination |=lower;
+                destination +=256;
+            }
 
-	return destination;
+    return destination;
 }*/
 
 int debug_tsconf_dma_source=0;
@@ -473,312 +710,429 @@ z80_byte debug_tsconf_dma_rw=0;
 
 z80_bit tsconf_dma_disabled={0};
 
+typedef struct {
+    int active, source, destination, burst_source, burst_destination;
+    int words_left, bursts_left, burst_length, cycles;
+    z80_byte s_align, d_align, align_size, device, direction, option;
+} tsconf_dma_state_t;
+
+static tsconf_dma_state_t tsconf_dma_state;
+static int tsconf_dma_recent_seconds;
+void tsconf_dma_operation(int source,int destination,int burst_length,int burst_number,z80_byte s_align,z80_byte d_align,z80_byte addr_align_size,z80_byte dma_ddev,z80_byte dma_rw,z80_byte dma_opt);
+
+// Reduce cada segundo el tiempo durante el que se muestra actividad reciente de la DMA.
+void tsconf_dma_decrease_info_timer(void)
+{
+    if (tsconf_dma_recent_seconds>0) tsconf_dma_recent_seconds--;
+}
+
+// Devuelve el progreso actual de la DMA para la ventana de depuración.
+void tsconf_dma_get_debug_state(tsconf_dma_debug_state_t *state)
+{
+    state->active=tsconf_dma_state.active;
+    state->source=tsconf_dma_state.source;
+    state->destination=tsconf_dma_state.destination;
+    state->words_left=tsconf_dma_state.words_left;
+    state->bursts_left=tsconf_dma_state.bursts_left;
+    state->smuc_selected=ide_smuc_dma_selected && ide_smuc_enabled.v;
+    if (tsconf_dma_recent_seconds>0) state->used_recently=1;
+    else state->used_recently=0;
+}
+
+// Avanza la DMA con los ciclos de memoria transcurridos desde la última instrucción.
+// La transferencia se hace por palabras y sus registros cambian al terminar cada ráfaga.
+void tsconf_dma_advance(int cycles)
+{
+    tsconf_dma_state_t *dma=&tsconf_dma_state;
+    if (!dma->active || tsconf_dma_disabled.v) return;
+
+    dma->cycles+=cycles;
+    while (dma->active && dma->cycles>=2) {
+        dma->cycles-=2;
+        int source_before=dma->source;
+        int destination_before=dma->destination;
+        tsconf_dma_operation(dma->source,dma->destination,1,1,0,0,dma->align_size,
+            dma->device,dma->direction,dma->option);
+        tsconf_dma_recent_seconds=5;
+        dma->source=tsconf_return_dma_addr_reg_to_linear(tsconf_af_ports[0x1a],tsconf_af_ports[0x1b],tsconf_af_ports[0x1c]);
+        dma->destination=tsconf_return_dma_addr_reg_to_linear(tsconf_af_ports[0x1d],tsconf_af_ports[0x1e],tsconf_af_ports[0x1f]);
+        int mask=dma->align_size ? 0x1ff : 0xff;
+        if (dma->s_align) dma->source=(source_before & ~mask) | (dma->source & mask);
+        if (dma->d_align) dma->destination=(destination_before & ~mask) | (dma->destination & mask);
+        tsconf_return_dma_addr_linear_to_reg(dma->source,&tsconf_af_ports[0x1a],&tsconf_af_ports[0x1b],&tsconf_af_ports[0x1c]);
+        tsconf_return_dma_addr_linear_to_reg(dma->destination,&tsconf_af_ports[0x1d],&tsconf_af_ports[0x1e],&tsconf_af_ports[0x1f]);
+        dma->words_left--;
+        if (dma->words_left) continue;
+
+        dma->bursts_left--;
+        if (!dma->bursts_left) {
+            if (dma->s_align) dma->source=tsconf_align_address(dma->burst_source,dma->align_size);
+            if (dma->d_align) dma->destination=tsconf_align_address(dma->burst_destination,dma->align_size);
+            tsconf_return_dma_addr_linear_to_reg(dma->source,&tsconf_af_ports[0x1a],&tsconf_af_ports[0x1b],&tsconf_af_ports[0x1c]);
+            tsconf_return_dma_addr_linear_to_reg(dma->destination,&tsconf_af_ports[0x1d],&tsconf_af_ports[0x1e],&tsconf_af_ports[0x1f]);
+            dma->active=0;
+            tsconf_fire_dma_interrupt();
+            break;
+        }
+
+        if (dma->s_align) dma->source=tsconf_align_address(dma->burst_source,dma->align_size);
+        if (dma->d_align) dma->destination=tsconf_align_address(dma->burst_destination,dma->align_size);
+        dma->burst_source=dma->source;
+        dma->burst_destination=dma->destination;
+        dma->words_left=dma->burst_length;
+        tsconf_return_dma_addr_linear_to_reg(dma->source,&tsconf_af_ports[0x1a],&tsconf_af_ports[0x1b],&tsconf_af_ports[0x1c]);
+        tsconf_return_dma_addr_linear_to_reg(dma->destination,&tsconf_af_ports[0x1d],&tsconf_af_ports[0x1e],&tsconf_af_ports[0x1f]);
+    }
+}
+
 void tsconf_dma_put_pixel_blit2(z80_byte *destination, z80_byte byte_source, z80_byte addr_align_size,z80_byte dma_opt)
 {
-	//addr_align_size: 0 4bpp. 1 8bb
-	z80_byte byte_destino=*destination;
+    //addr_align_size: 0 4bpp. 1 8bb
+    z80_byte byte_destino=*destination;
 
 
-	if (addr_align_size) {
-		//8 bpp
+    if (addr_align_size) {
+        //8 bpp
           //blit.b0 = (((d0.b0 + d1.b0) > 0xFF) && sat) ? 0xFF : (d0.b0 + d1.b0);
         byte_destino=(((byte_destino + byte_source) > 0xFF) && dma_opt) ? 0xFF : (byte_destino + byte_source);
-	}
+    }
 
-	else {
-		//4 bpp
-		z80_byte nibble_destino_alto,nibble_destino_bajo;
-		z80_byte nibble_source_alto,nibble_source_bajo;
+    else {
+        //4 bpp
+        z80_byte nibble_destino_alto,nibble_destino_bajo;
+        z80_byte nibble_source_alto,nibble_source_bajo;
 
-		nibble_destino_alto=(byte_destino>>4)&0xF;
-		nibble_destino_bajo=(byte_destino)&0xF;
+        nibble_destino_alto=(byte_destino>>4)&0xF;
+        nibble_destino_bajo=(byte_destino)&0xF;
 
-		nibble_source_alto=(byte_source>>4)&0xF;
-		nibble_source_bajo=(byte_source)&0xF;
+        nibble_source_alto=(byte_source>>4)&0xF;
+        nibble_source_bajo=(byte_source)&0xF;
 
-		nibble_destino_alto = (((nibble_destino_alto + nibble_source_alto) > 0xF) && dma_opt) ? 0xF : (nibble_destino_alto + nibble_source_alto);
-		nibble_destino_bajo = (((nibble_destino_bajo + nibble_source_bajo) > 0xF) && dma_opt) ? 0xF : (nibble_destino_bajo + nibble_source_bajo);
+        nibble_destino_alto = (((nibble_destino_alto + nibble_source_alto) > 0xF) && dma_opt) ? 0xF : (nibble_destino_alto + nibble_source_alto);
+        nibble_destino_bajo = (((nibble_destino_bajo + nibble_source_bajo) > 0xF) && dma_opt) ? 0xF : (nibble_destino_bajo + nibble_source_bajo);
 
-		byte_destino=(nibble_destino_alto<<4)|nibble_destino_bajo;
+        byte_destino=(nibble_destino_alto<<4)|nibble_destino_bajo;
 
 
-	}
+    }
 
-	*destination=byte_destino;
+    *destination=byte_destino;
 }
 
 
 void tsconf_dma_put_pixel_ifnotzero(z80_byte *destination, z80_byte source, z80_byte addr_align_size)
 {
-	//addr_align_size: 0 4bpp. 1 8bb
+    //addr_align_size: 0 4bpp. 1 8bb
 
-	//8 bpp
-	if (addr_align_size) {
-		if (source) *destination=source;
-	}
+    //8 bpp
+    if (addr_align_size) {
+        if (source) *destination=source;
+    }
 
-	else {
-		z80_byte byte_destino=*destination;
-		//4 bpp
-		z80_byte nibble=source & 0xF0;
-		if (nibble) {
-			byte_destino &=0x0F;
-			byte_destino |=nibble;
-		}
+    else {
+        z80_byte byte_destino=*destination;
+        //4 bpp
+        z80_byte nibble=source & 0xF0;
+        if (nibble) {
+            byte_destino &=0x0F;
+            byte_destino |=nibble;
+        }
 
-		nibble=source & 0x0F;
-		if (nibble) {
-			byte_destino &=0xF0;
-			byte_destino |=nibble;
-		}
+        nibble=source & 0x0F;
+        if (nibble) {
+            byte_destino &=0xF0;
+            byte_destino |=nibble;
+        }
 
-		*destination=byte_destino;
+        *destination=byte_destino;
 
-	}
+    }
 }
 
 //burst_length esta en words
 void tsconf_dma_operation(int source,int destination,int burst_length,int burst_number,z80_byte s_align,z80_byte d_align,z80_byte addr_align_size,z80_byte dma_ddev,z80_byte dma_rw,z80_byte dma_opt)
 {
-	int orig_source;
-	int orig_destination;
+    int orig_source;
+    int orig_destination;
 
 
-	int source_mask,destination_mask;
+    int source_mask,destination_mask;
 
-	z80_byte *source_pointer;
-	z80_byte *destination_pointer;
+    z80_byte *source_pointer;
+    z80_byte *destination_pointer;
 
-	//Guardamos estos valores en variable de debug para mostrarlos en menu debug, solo a titulo informativo
-	debug_tsconf_dma_source=source;
-	debug_tsconf_dma_destination=destination;
-	debug_tsconf_dma_burst_length=burst_length;
-	debug_tsconf_dma_burst_number=burst_number;
-	debug_tsconf_dma_s_align=s_align;
-	debug_tsconf_dma_d_align=d_align;
-	debug_tsconf_dma_addr_align_size=addr_align_size;
-	debug_tsconf_dma_ddev=dma_ddev;
-	debug_tsconf_dma_rw=dma_rw;
+    z80_byte dma_operation=dma_ddev*2+dma_rw;
 
-	z80_byte dma_operation=dma_ddev*2+dma_rw;
-
-		//debug_printf (VERBOSE_DEBUG,"DMA operation type: %s",tsconf_dma_types[dma_operation]);
+        //debug_printf (VERBOSE_DEBUG,"DMA operation type: %s",tsconf_dma_types[dma_operation]);
 
 
 
 
-		//switch (dma_ddev) {
-		switch (dma_operation) {
+        //switch (dma_ddev) {
+        switch (dma_operation) {
 
-			case 2:
-					//printf ("RAM (Src) is copied to RAM (Dst)\n");
+            case 2:
+                    //printf ("RAM (Src) is copied to RAM (Dst)\n");
 
-					source_pointer=tsconf_ram_mem_table[0];
-					destination_pointer=tsconf_ram_mem_table[0];
+                    source_pointer=tsconf_ram_mem_table[0];
+                    destination_pointer=tsconf_ram_mem_table[0];
 
-					source_mask=destination_mask=0x3FFFFF; //4 mb
+                    source_mask=destination_mask=0x3FFFFF; //4 mb
 
-			break;
+            break;
 
-			case 3:
-					//printf ("Pixels from RAM (Src) are copied to RAM (Dst) if they non zero. addr_align_size: %d\n",addr_align_size);
+            case 3:
+                    //printf ("Pixels from RAM (Src) are copied to RAM (Dst) if they non zero. addr_align_size: %d\n",addr_align_size);
 
-					source_pointer=tsconf_ram_mem_table[0];
-					destination_pointer=tsconf_ram_mem_table[0];
+                    source_pointer=tsconf_ram_mem_table[0];
+                    destination_pointer=tsconf_ram_mem_table[0];
 
-					source_mask=destination_mask=0x3FFFFF; //4 mb
+                    source_mask=destination_mask=0x3FFFFF; //4 mb
 
-			break;
+            break;
 
-			case 8:
+            case 4:
+                    // La DMA lee del mismo flujo SPI que el puerto 57H.
+                    source_pointer=tsconf_ram_mem_table[0];
+                    destination_pointer=tsconf_ram_mem_table[0];
+                    source_mask=destination_mask=0x3FFFFF;
+            break;
 
-					//printf ("RAM (Dst) is filled with word from RAM (Src)\n");
+            case 6:
+            case 7:
+                    // La DMA transfiere palabras entre IDE y RAM.
+                    source_pointer=tsconf_ram_mem_table[0];
+                    destination_pointer=tsconf_ram_mem_table[0];
+                    source_mask=destination_mask=0x3FFFFF;
+            break;
 
-					source_pointer=tsconf_ram_mem_table[0];
-					destination_pointer=tsconf_ram_mem_table[0];
+            case 8:
 
-					source_mask=destination_mask=0x3FFFFF; //4 mb
+                    //printf ("RAM (Dst) is filled with word from RAM (Src)\n");
 
-			break;
+                    source_pointer=tsconf_ram_mem_table[0];
+                    destination_pointer=tsconf_ram_mem_table[0];
 
-			case 9:
-					//printf ("RAM (Src) is copied to CRAM (Dst)\n");
+                    source_mask=destination_mask=0x3FFFFF; //4 mb
 
-					source_pointer=tsconf_ram_mem_table[0];
-					destination_pointer=tsconf_fmaps;
+            break;
 
-					source_mask=0x3FFFFF; //4 mb
+            case 9:
+                    //printf ("RAM (Src) is copied to CRAM (Dst)\n");
 
-					destination_mask=0x1FF; //512 bytes
+                    source_pointer=tsconf_ram_mem_table[0];
+                    destination_pointer=tsconf_fmaps;
 
-			break;
+                    source_mask=0x3FFFFF; //4 mb
 
+                    destination_mask=0x1FF; //512 bytes
 
-			case 11:
-					//printf ("RAM (Src) is copied to SFILE (Dst)\n"); //Digger usa esto
-					source_pointer=tsconf_ram_mem_table[0];
-					destination_pointer=&tsconf_fmaps[0x200];
-
-					source_mask=0x3FFFFF; //4 mb
-
-					destination_mask=0x1FF; //512 bytes
-
-			break;
+            break;
 
 
-			case 12:
-			//ldd.spg usa Unemulated dma type: rw: 0 ddev: 06H
-					//Pixels from RAM (Src) are blitted to RAM (Dst) with adder. De momento hacemos copia tal cual
-					//printf ("Pixels from RAM (Src) are blitted to RAM (Dst) with adder\n");
-					source_pointer=tsconf_ram_mem_table[0];
-					destination_pointer=tsconf_ram_mem_table[0];
+            case 11:
+                    //printf ("RAM (Src) is copied to SFILE (Dst)\n"); //Digger usa esto
+                    source_pointer=tsconf_ram_mem_table[0];
+                    destination_pointer=&tsconf_fmaps[0x200];
 
-					source_mask=destination_mask=0x3FFFFF; //4 mb
+                    source_mask=0x3FFFFF; //4 mb
 
-			break;
+                    destination_mask=0x1FF; //512 bytes
 
-			default:
+            break;
+
+
+            case 12:
+            //ldd.spg usa Unemulated dma type: rw: 0 ddev: 06H
+                    //Pixels from RAM (Src) are blitted to RAM (Dst) with adder. De momento hacemos copia tal cual
+                    //printf ("Pixels from RAM (Src) are blitted to RAM (Dst) with adder\n");
+                    source_pointer=tsconf_ram_mem_table[0];
+                    destination_pointer=tsconf_ram_mem_table[0];
+
+                    source_mask=destination_mask=0x3FFFFF; //4 mb
+
+            break;
+
+            default:
                 //cargando zifi-2.spg genera error: "Unemulated dma type: rw: 0 ddev: 02H" continuamente
                 //acaba colgando ZEsarUX si el mensaje es con VERBOSE_ERR
-				debug_printf (VERBOSE_DEBUG,"Unemulated dma type: rw: %d ddev: %02XH",dma_rw,dma_ddev);
-				return;
-			break;
-		}
+                debug_printf (VERBOSE_DEBUG,"Unemulated dma type: rw: %d ddev: %02XH",dma_rw,dma_ddev);
+                return;
+            break;
+        }
 
 
-	//Si desactivada la dma, volver
-	if (tsconf_dma_disabled.v) return;
+    //Si desactivada la dma, volver
+    if (tsconf_dma_disabled.v) return;
 
-	//Esto creo que no tiene ningún tipo de sentido. El mapeo de fmaps es solo cuando se accede a memoria normalmente entre zona de 64kb
-	/*if ((tsconf_af_ports[0x15]&16)!=0) {
-			printf ("----------Posible operacion dma con fmaps activo\n");
-			//ashot, hny2k16  usan esto
-	}*/
-
-
-	for (;burst_number>0;burst_number--){
-		int i;
+    //Esto creo que no tiene ningún tipo de sentido. El mapeo de fmaps es solo cuando se accede a memoria normalmente entre zona de 64kb
+    /*if ((tsconf_af_ports[0x15]&16)!=0) {
+            printf ("----------Posible operacion dma con fmaps activo\n");
+            //ashot, hny2k16  usan esto
+    }*/
 
 
-	orig_source=source;
-	orig_destination=destination;
+    int burst_address_mask=addr_align_size ? 0x1ff : 0xff;
 
-		for (i=0;i<burst_length;i++) {
-
-			destination &=destination_mask;
-			source &=source_mask;
-
-		int incremento_destino=0;
-		int incremento_origen=0;
-
-		switch (dma_operation) {
-
-			case 2:
-					//printf ("RAM (Src) is copied to RAM (Dst)\n");
-					destination_pointer[destination]=source_pointer[source];
-					destination_pointer[destination+1]=source_pointer[source+1];
-					//destination +=2;
-					//source +=2;
-
-					incremento_destino=incremento_origen=2;
-			break;
-
-			case 3:
-					//printf ("Pixels from RAM (Src) are copied to RAM (Dst) if they non zero. addr_align_size: %d\n",addr_align_size);
-					//edge_grinder usa esto
-					tsconf_dma_put_pixel_ifnotzero(&destination_pointer[destination],source_pointer[source],addr_align_size);
-					tsconf_dma_put_pixel_ifnotzero(&destination_pointer[destination+1],source_pointer[source+1],addr_align_size);
-					//destination +=2;
-					//source +=2;
-					incremento_destino=incremento_origen=2;
-
-			break;
-
-			case 8:
-					//printf ("RAM (Dst) is filled with word from RAM (Src)\n");
-					destination_pointer[destination]=source_pointer[source];
-					destination_pointer[destination+1]=source_pointer[source+1];
-					//destination +=2;
-
-					incremento_destino=2;
-
-			break;
-
-			case 9:
-					//printf ("RAM (Src) is copied to CRAM (Dst) source %06XH dest %06XH\n",source,destination);
-					destination_pointer[destination]=source_pointer[source];
-					destination_pointer[destination+1]=source_pointer[source+1];
-					//destination +=2;
-					//source +=2;
-
-					incremento_destino=incremento_origen=2;
-
-			break;
+    for (;burst_number>0;burst_number--){
+        int i;
 
 
-			case 11:
-					//printf ("RAM (Src) is copied to SFILE (Dst)\n"); //Digger usa esto
-					destination_pointer[destination]=source_pointer[source];
-					destination_pointer[destination+1]=source_pointer[source+1];
-					//destination +=2;
-					//source +=2;
+    orig_source=source;
+    orig_destination=destination;
 
-					incremento_destino=incremento_origen=2;
+        for (i=0;i<burst_length;i++) {
 
-			break;
+            destination &=destination_mask;
+            source &=source_mask;
+
+        int incremento_destino=0;
+        int incremento_origen=0;
+
+        switch (dma_operation) {
+
+            case 2:
+                    //printf ("RAM (Src) is copied to RAM (Dst)\n");
+                    destination_pointer[destination]=source_pointer[source];
+                    destination_pointer[destination+1]=source_pointer[source+1];
+                    //destination +=2;
+                    //source +=2;
+
+                    incremento_destino=incremento_origen=2;
+            break;
+
+            case 3:
+                    //printf ("Pixels from RAM (Src) are copied to RAM (Dst) if they non zero. addr_align_size: %d\n",addr_align_size);
+                    //edge_grinder usa esto
+                    tsconf_dma_put_pixel_ifnotzero(&destination_pointer[destination],source_pointer[source],addr_align_size);
+                    tsconf_dma_put_pixel_ifnotzero(&destination_pointer[destination+1],source_pointer[source+1],addr_align_size);
+                    //destination +=2;
+                    //source +=2;
+                    incremento_destino=incremento_origen=2;
+
+            break;
+
+            case 4:
+                    destination_pointer[destination]=tsconf_sd_read_byte();
+                    destination_pointer[(destination+1)&destination_mask]=tsconf_sd_read_byte();
+                    incremento_destino=2;
+            break;
+
+            // La DMA IDE con SMUC, en ambos sentidos, no se ha probado con demos ni juegos.
+            case 6:
+                    if (ide_smuc_dma_selected && ide_smuc_enabled.v) {
+                        // SMUC y DMA comparten el registro de datos ATA de 16 bits.
+                        destination_pointer[destination]=ide_read_command_block_register(0);
+                        destination_pointer[(destination+1)&destination_mask]=ide_read_command_block_register(0);
+                    }
+                    else {
+                        destination_pointer[destination]=zxevo_nemo_ide_enabled.v ? zxevo_nemo_ide_read(0x10) : 0xff;
+                        destination_pointer[(destination+1)&destination_mask]=zxevo_nemo_ide_enabled.v ? zxevo_nemo_ide_read(0x10) : 0xff;
+                    }
+                    incremento_destino=2;
+            break;
+
+            case 7:
+                    if (ide_smuc_dma_selected && ide_smuc_enabled.v) {
+                        ide_write_command_block_register(0,source_pointer[source]);
+                        ide_write_command_block_register(0,source_pointer[(source+1)&source_mask]);
+                    }
+                    else if (zxevo_nemo_ide_enabled.v) {
+                        zxevo_nemo_ide_write(0x11,source_pointer[(source+1)&source_mask]);
+                        zxevo_nemo_ide_write(0x10,source_pointer[source]);
+                    }
+                    incremento_origen=2;
+            break;
+
+            case 8:
+                    //printf ("RAM (Dst) is filled with word from RAM (Src)\n");
+                    destination_pointer[destination]=source_pointer[source];
+                    destination_pointer[destination+1]=source_pointer[source+1];
+                    //destination +=2;
+
+                    incremento_destino=2;
+
+            break;
+
+            case 9:
+                    //printf ("RAM (Src) is copied to CRAM (Dst) source %06XH dest %06XH\n",source,destination);
+                    destination_pointer[destination]=source_pointer[source];
+                    destination_pointer[destination+1]=source_pointer[source+1];
+                    //destination +=2;
+                    //source +=2;
+
+                    incremento_destino=incremento_origen=2;
+
+            break;
 
 
-			case 12:
-			//ldd.spg usa Unemulated dma type: rw: 0 ddev: 06H
-					//Pixels from RAM (Src) are blitted to RAM (Dst) with adder.
-					//printf ("Pixels from RAM (Src) are blitted to RAM (Dst) with adder\n");
-					tsconf_dma_put_pixel_blit2(&destination_pointer[destination],source_pointer[source],addr_align_size,dma_opt);
-					tsconf_dma_put_pixel_blit2(&destination_pointer[destination+1],source_pointer[source+1],addr_align_size,dma_opt);
-					//destination +=2;
-					//source +=2;
+            case 11:
+                    //printf ("RAM (Src) is copied to SFILE (Dst)\n"); //Digger usa esto
+                    destination_pointer[destination]=source_pointer[source];
+                    destination_pointer[destination+1]=source_pointer[source+1];
+                    //destination +=2;
+                    //source +=2;
 
-					incremento_destino=incremento_origen=2;
+                    incremento_destino=incremento_origen=2;
 
-			break;
+            break;
 
 
-		}
+            case 12:
+            //ldd.spg usa Unemulated dma type: rw: 0 ddev: 06H
+                    //Pixels from RAM (Src) are blitted to RAM (Dst) with adder.
+                    //printf ("Pixels from RAM (Src) are blitted to RAM (Dst) with adder\n");
+                    tsconf_dma_put_pixel_blit2(&destination_pointer[destination],source_pointer[source],addr_align_size,dma_opt);
+                    tsconf_dma_put_pixel_blit2(&destination_pointer[destination+1],source_pointer[source+1],addr_align_size,dma_opt);
+                    //destination +=2;
+                    //source +=2;
 
-		//if (i!=burst_length-1) {
-		destination +=incremento_destino;
-		source +=incremento_origen;
-		//}
+                    incremento_destino=incremento_origen=2;
 
-
-
-		}
-
-		if (d_align) {
-			destination=tsconf_align_address(orig_destination,destination,addr_align_size);
-		}
-
-		if (s_align) {
-			source=tsconf_align_address(orig_source,source,addr_align_size);
-		}
+            break;
 
 
+        }
 
-	}
+        //if (i!=burst_length-1) {
+        // Con alineación, el avance dentro de la ráfaga vuelve al inicio del bloque.
+        // Solo al terminar la ráfaga se pasa al siguiente bloque de 256 o 512 bytes.
+        if (d_align) destination=(destination & ~burst_address_mask) | ((destination+incremento_destino) & burst_address_mask);
+        else destination +=incremento_destino;
+        if (s_align) source=(source & ~burst_address_mask) | ((source+incremento_origen) & burst_address_mask);
+        else source +=incremento_origen;
+        //}
 
-	//Guardar los registros resultantes source, destination
-	//debug_printf (VERBOSE_DEBUG,"DMA pointers after DMA operation: source: %06XH destination: %06XH",source,destination);
 
-	tsconf_return_dma_addr_linear_to_reg(source,&tsconf_af_ports[0x1a],&tsconf_af_ports[0x1b],&tsconf_af_ports[0x1c]);
-	tsconf_return_dma_addr_linear_to_reg(destination,&tsconf_af_ports[0x1d],&tsconf_af_ports[0x1e],&tsconf_af_ports[0x1f]);
 
-	//Sacar valores solo para debug
+        }
+
+        if (d_align) {
+            destination=tsconf_align_address(orig_destination,addr_align_size);
+        }
+
+        if (s_align) {
+            source=tsconf_align_address(orig_source,addr_align_size);
+        }
+
+
+
+    }
+
+    //Guardar los registros resultantes source, destination
+    //debug_printf (VERBOSE_DEBUG,"DMA pointers after DMA operation: source: %06XH destination: %06XH",source,destination);
+
+    tsconf_return_dma_addr_linear_to_reg(source,&tsconf_af_ports[0x1a],&tsconf_af_ports[0x1b],&tsconf_af_ports[0x1c]);
+    tsconf_return_dma_addr_linear_to_reg(destination,&tsconf_af_ports[0x1d],&tsconf_af_ports[0x1e],&tsconf_af_ports[0x1f]);
+
+    //Sacar valores solo para debug
 
           //printf ("Writing DMA CTRL. value: %02XH\n",tsconf_af_ports[0x27]);
 
                 //int finaldmasource=tsconf_return_dma_addr_reg_to_linear(tsconf_af_ports[0x1a],tsconf_af_ports[0x1b],tsconf_af_ports[0x1c]);
                 //int finaldmadest=tsconf_return_dma_addr_reg_to_linear(tsconf_af_ports[0x1d],tsconf_af_ports[0x1e],tsconf_af_ports[0x1f]);
 
-	//debug_printf (VERBOSE_DEBUG,"DMA pointers after DMA operation and read from registers: source: %06XH destination: %06XH",finaldmasource,finaldmadest);
+    //debug_printf (VERBOSE_DEBUG,"DMA pointers after DMA operation and read from registers: source: %06XH destination: %06XH",finaldmasource,finaldmadest);
 
 }
 
@@ -786,29 +1140,40 @@ void tsconf_dma_operation(int source,int destination,int burst_length,int burst_
 //Max 18
 char *tsconf_dma_types[]={
 //   01234567890123456789
-	"(Reserved)",   //0
-	"(Reserved)",
-	"RAM to RAM",
-	"Pixels to RAM",
-	"SPI to RAM",
-	"RAM to SPI	",
-	"IDE to RAM",
-	"RAM to IDE",
-	"RAM fill from RAM",
-	"RAM to CRAM",
-	"FDD dump into RAM", //10
-	"RAM to SFILE",
+    "(Reserved)",   //0
+    "(Reserved)",
+    "RAM to RAM",
+    "Pixels to RAM",
+    "SPI to RAM",
+    "RAM to SPI	",
+    "IDE to RAM",
+    "RAM to IDE",
+    "RAM fill from RAM",
+    "RAM to CRAM",
+    "FDD dump into RAM", //10
+    "RAM to SFILE",
 //   01234567890123456789
-	"Pixels to RAM blit", //12
-	"(Reserved)",
-	"(Reserved)",
-	"(Reserved)" //15
+    "Pixels to RAM blit", //12
+    "(Reserved)",
+    "(Reserved)",
+    "(Reserved)" //15
 };
 
 void tsconf_write_af_port(z80_byte puerto_h,z80_byte value)
 {
+  z80_byte cache_anterior=tsconf_af_ports[0x2b];
 
   tsconf_af_ports[puerto_h]=value;
+
+  if (puerto_h==4 || puerto_h==5) tsconf_ula_y_reload=1;
+
+  if (puerto_h==0x29) tsconf_af_ports[puerto_h] &=0x8f;
+
+  // Al escribir MemConfig termina el estado de arranque impuesto por RESET.
+  if (puerto_h==0x21) {
+    temp_tsconf_in_system_rom_flag=0;
+    if (value&4) tsconf_dos_signal.v=0;
+  }
 
   if (puerto_h==0) {
     tsconf_splash_video_size_mode_change();
@@ -833,11 +1198,6 @@ void tsconf_write_af_port(z80_byte puerto_h,z80_byte value)
     puerto_32765 &=(255-16); //Reset bit 4
     //Si bit 0 de 21af, poner bit 4
     if (value&1) puerto_32765|=16;
-  }
-
-  //Port 0x7FFD is an alias of Page3, page3=tsconf_af_ports[0x13];
-  if (puerto_h==0x13) {
-    puerto_32765=value;
   }
 
   //Gestion fmaps
@@ -869,47 +1229,77 @@ ZXPAL      dw  #0000,#0010,#4000,#4010,#0200,#0210,#4200,#4210
   }
 
   if (puerto_h==32) {
+    tsconf_af_ports[0x2b]=(tsconf_af_ports[0x2b]&0xf0) | ((value&4) ? 15 : 0);
     tsconf_set_emulator_setting_turbo();
   }
+
+  if (puerto_h==0x2b) tsconf_af_ports[0x2b]&=15;
+  if (tsconf_af_ports[0x2b]!=cache_anterior) tsconf_cache_clear();
 
   //if (puerto_h>=0x1A && puerto_h<=0x1F) debug_printf (VERBOSE_DEBUG,"Writing DMA source/dest register %02XH",puerto_h);
 
   if (puerto_h==0x27) {
-	  //Dmactrl
-	  //printf ("Writing DMA CTRL. value: %02XH\n",tsconf_af_ports[0x27]);
-		int dmasource=tsconf_return_dma_addr_reg_to_linear(tsconf_af_ports[0x1a],tsconf_af_ports[0x1b],tsconf_af_ports[0x1c]);
-		int dmadest=tsconf_return_dma_addr_reg_to_linear(tsconf_af_ports[0x1d],tsconf_af_ports[0x1e],tsconf_af_ports[0x1f]);
+      //Dmactrl
+      //printf ("Writing DMA CTRL. value: %02XH\n",tsconf_af_ports[0x27]);
+        int dmasource=tsconf_return_dma_addr_reg_to_linear(tsconf_af_ports[0x1a],tsconf_af_ports[0x1b],tsconf_af_ports[0x1c]);
+        int dmadest=tsconf_return_dma_addr_reg_to_linear(tsconf_af_ports[0x1d],tsconf_af_ports[0x1e],tsconf_af_ports[0x1f]);
 
-		//int dma_burst_length=(tsconf_af_ports[0x26]+1)*2;
-		int dma_burst_length=tsconf_af_ports[0x26];
-		dma_burst_length++;
-		//dma_burst_length*=2; funciona con words
-
-
-		//int dma_num=tsconf_af_ports[0x28]+1;
-		int dma_num=tsconf_af_ports[0x28];
-		dma_num++;
-		//int dma_length=dma_burst_length*dma_num;
-		//printf ("DMA length: %d x %d = %d\n",dma_burst_length,dma_num,dma_length);
-
-		z80_byte dma_ddev=tsconf_af_ports[0x27]&7;
+        //int dma_burst_length=(tsconf_af_ports[0x26]+1)*2;
+        int dma_burst_length=tsconf_af_ports[0x26];
+        dma_burst_length++;
+        //dma_burst_length*=2; funciona con words
 
 
-		z80_byte dma_a_sz=((tsconf_af_ports[0x27])>>3)&1;
-		z80_byte dma_d_algn=((tsconf_af_ports[0x27])>>4)&1;
-		z80_byte dma_s_algn=((tsconf_af_ports[0x27])>>5)&1;
-		z80_byte dma_opt=((tsconf_af_ports[0x27])>>6)&1;
-		z80_byte dma_rw=((tsconf_af_ports[0x27])>>7)&1;
+        //int dma_num=tsconf_af_ports[0x28]+1;
+        int dma_num=tsconf_af_ports[0x28];
+        dma_num++;
+        //int dma_length=dma_burst_length*dma_num;
+        //printf ("DMA length: %d x %d = %d\n",dma_burst_length,dma_num,dma_length);
 
-		//printf ("DMA movement type: ");
-		//debug_printf (VERBOSE_DEBUG,"Writing DMA DMA source: %06XH dest: %06XH DMALen: %02XH A_SZ: %d D_ALGN: %d S_ALGN: %d DMACtrl: %02XH DMANum: %02XH",
-		//	dmasource,dmadest,tsconf_af_ports[0x26],dma_a_sz,dma_d_algn,dma_s_algn,tsconf_af_ports[0x27],tsconf_af_ports[0x28]);
+        z80_byte dma_ddev=tsconf_af_ports[0x27]&7;
 
-		tsconf_dma_operation(dmasource,dmadest,dma_burst_length,dma_num,dma_s_algn,dma_d_algn,dma_a_sz,dma_ddev,dma_rw,dma_opt);
 
-		//void tsconf_dma_operation(int source,int destination,int burst_length,int burst_number,z80_byte s_align,z80_byte d_align,z80_byte addr_align_size,z80_byte dma_ddev,z80_byte dma_rw)
+        z80_byte dma_a_sz=((tsconf_af_ports[0x27])>>3)&1;
+        z80_byte dma_d_algn=((tsconf_af_ports[0x27])>>4)&1;
+        z80_byte dma_s_algn=((tsconf_af_ports[0x27])>>5)&1;
+        z80_byte dma_opt=((tsconf_af_ports[0x27])>>6)&1;
+        z80_byte dma_rw=((tsconf_af_ports[0x27])>>7)&1;
 
-		if (tsconf_dma_disabled.v==0) tsconf_fire_dma_interrupt();
+        //printf ("DMA movement type: ");
+        //debug_printf (VERBOSE_DEBUG,"Writing DMA DMA source: %06XH dest: %06XH DMALen: %02XH A_SZ: %d D_ALGN: %d S_ALGN: %d DMACtrl: %02XH DMANum: %02XH",
+        //	dmasource,dmadest,tsconf_af_ports[0x26],dma_a_sz,dma_d_algn,dma_s_algn,tsconf_af_ports[0x27],tsconf_af_ports[0x28]);
+
+        // Un controlador DMA admite una sola transacción simultánea.
+        int dma_mode=dma_ddev*2+dma_rw;
+        // TODO: implementar RAM a SPI (modo 5) cuando haya un programa conocido que lo use
+        // para poder comprobar el envío de bytes al Z-Controller.
+        int supported=(dma_mode==2 || dma_mode==3 || dma_mode==4 ||
+            dma_mode==6 || dma_mode==7 || dma_mode==8 || dma_mode==9 ||
+            dma_mode==11 || dma_mode==12);
+        if (!tsconf_dma_state.active && !tsconf_dma_disabled.v && supported) {
+            debug_tsconf_dma_source=dmasource;
+            debug_tsconf_dma_destination=dmadest;
+            debug_tsconf_dma_burst_length=dma_burst_length;
+            debug_tsconf_dma_burst_number=dma_num;
+            debug_tsconf_dma_s_align=dma_s_algn;
+            debug_tsconf_dma_d_align=dma_d_algn;
+            debug_tsconf_dma_addr_align_size=dma_a_sz;
+            debug_tsconf_dma_ddev=dma_ddev;
+            debug_tsconf_dma_rw=dma_rw;
+            tsconf_dma_state.active=1;
+            tsconf_dma_state.source=tsconf_dma_state.burst_source=dmasource;
+            tsconf_dma_state.destination=tsconf_dma_state.burst_destination=dmadest;
+            tsconf_dma_state.words_left=tsconf_dma_state.burst_length=dma_burst_length;
+            tsconf_dma_state.bursts_left=dma_num;
+            tsconf_dma_state.cycles=0;
+            tsconf_dma_state.s_align=dma_s_algn;
+            tsconf_dma_state.d_align=dma_d_algn;
+            tsconf_dma_state.align_size=dma_a_sz;
+            tsconf_dma_state.device=dma_ddev;
+            tsconf_dma_state.direction=dma_rw;
+            tsconf_dma_state.option=dma_opt;
+        }
+        else if (!supported) debug_printf(VERBOSE_DEBUG,"Unemulated dma type: rw: %d ddev: %02XH",dma_rw,dma_ddev);
 
 
   }
@@ -944,19 +1334,23 @@ mis opciones:
 
         */
 
-        if (tsconf_vdac_with_pwm.v==0) return 7;
-        else return 0;
+        {
+          z80_byte status=tsconf_vdac_with_pwm.v==0 ? 7 : 0;
+          if (tsconf_powerup_pending.v) status|=0x40;
+          tsconf_powerup_pending.v=0;
+          return status;
+        }
 
       break;
 
 
-	  //Decimos que la dma siempre ha finalizado operación
-	  case 0x27:
-	  	//return tsconf_af_ports[index] & 0x7f; //Quitar bit 7
+      //Decimos que la dma siempre ha finalizado operación
+      case 0x27:
+          //return tsconf_af_ports[index] & 0x7f; //Quitar bit 7
 
-		  //Solo se usa bit 7, quitarlos todos
-		  return 0;
-	  break;
+          //Solo se usa bit 7, quitarlos todos
+          return tsconf_dma_state.active ? 0x80 : 0;
+      break;
 
   }
 
@@ -965,46 +1359,68 @@ mis opciones:
 
 void tsconf_reset_cpu(void)
 {
+    tsconf_dma_state.active=0;
+    tsconf_dma_recent_seconds=0;
+    tsconf_cache_clear();
+    tsconf_ula_y_last_scanline=-1;
+    tsconf_ula_y_reload=0;
+    tsconf_ula_y_reload_next=0;
+    tsconf_7ffd_locked=0;
+    tsconf_vdos_active.v=0;
+    tsconf_vdos_pending.v=0;
+    tsconf_beta_drive=0;
+    tsconf_af_ports[0x29]=0;
+    baseconf_sd_enabled=1;
+    baseconf_sd_cs=1;
+    tsconf_sd_read_buffer=0xff;
+
   tsconf_af_ports[0]=0;
 
-  //Bit 4 de 32765 es bit 0 de #21AF. Por tanto poner ese bit 0 a 0
-    tsconf_af_ports[0x21] &=(255-1);
-	//puerto_32765 &=(255-16);
-
-    //TODO. Que otros puertos de tsconf se ponen a 0 en el reset?
-
-
-    //De momento hacemos que cuando se haga un reset, no se vuelve a la system rom
-    temp_tsconf_in_system_rom_flag=0;
+  // RESET arranca siempre TS-BIOS desde la ROM de sistema. La BIOS lee
+  // la NVRAM y aplica Reset to o CS Reset to según el teclado.
+  tsconf_af_ports[0x10]=0;
+  tsconf_af_ports[0x11]=5;
+  tsconf_af_ports[0x12]=2;
+  tsconf_af_ports[0x13]=0;
+  tsconf_af_ports[0x21]=4;
+  puerto_32765=0;
+  temp_tsconf_in_system_rom_flag=1;
+  tsconf_dos_signal.v=0;
+  tsconf_beta_status=0;
+  tsconf_beta_track=0;
+  tsconf_beta_sector=0;
+  tsconf_beta_data=0;
 
 
     tsconf_set_memory_pages();
+    tsconf_video_next_vconfig=tsconf_video_render_vconfig=tsconf_af_ports[0];
+    tsconf_video_next_vpage=tsconf_video_render_vpage=tsconf_af_ports[1];
     tsconf_set_sizes_display();
 }
 
 void tsconf_init_memory_tables(void)
 {
-	debug_printf (VERBOSE_DEBUG,"Initializing TSConf memory pages");
+    debug_printf (VERBOSE_DEBUG,"Initializing TSConf memory pages");
 
-	z80_byte *puntero;
-	puntero=memoria_spectrum;
+    z80_byte *puntero;
+    puntero=memoria_spectrum;
 
-	int i;
-	for (i=0;i<TSCONF_ROM_PAGES;i++) {
-		tsconf_rom_mem_table[i]=puntero;
-		puntero +=16384;
-	}
+    int i;
+    for (i=0;i<TSCONF_ROM_PAGES;i++) {
+        tsconf_rom_mem_table[i]=puntero;
+        puntero +=16384;
+    }
 
-	for (i=0;i<TSCONF_RAM_PAGES;i++) {
-		tsconf_ram_mem_table[i]=puntero;
-		puntero +=16384;
-	}
+    for (i=0;i<TSCONF_RAM_PAGES;i++) {
+        tsconf_ram_mem_table[i]=puntero;
+        puntero +=16384;
+    }
 
-	//Tablas contend
-	/*contend_pages_actual[0]=0;
-	contend_pages_actual[1]=contend_pages_tsconf[5];
-	contend_pages_actual[2]=contend_pages_tsconf[2];
-	contend_pages_actual[3]=contend_pages_tsconf[0];*/
+    //Tablas contend
+    /*contend_pages_actual[0]=0;
+    contend_pages_actual[1]=contend_pages_tsconf[5];
+    contend_pages_actual[2]=contend_pages_tsconf[2];
+    contend_pages_actual[3]=contend_pages_tsconf[0];*/
 
 
 }
@@ -1047,6 +1463,25 @@ z80_byte tsconf_get_memconfig_lck(void)
   return (tsconf_get_memconfig()>>6)&3;
 }
 
+void tsconf_write_7ffd_port(z80_byte value,int short_addressing)
+{
+    if (tsconf_7ffd_locked) return;
+
+    int modo=tsconf_get_memconfig_lck();
+    if (modo==2) modo=short_addressing ? 1 : 0;
+
+    z80_byte pagina=value&7;
+    if (modo!=1) pagina |= (value>>3)&0x18;
+    if (modo==3) pagina |= value&0x20;
+
+    puerto_32765=value;
+    tsconf_af_ports[0x13]=pagina;
+    tsconf_af_ports[1]=(value&8) ? 7 : 5;
+    tsconf_af_ports[0x21]=(tsconf_af_ports[0x21]&~1) | ((value>>4)&1);
+    if (modo!=3 && (value&0x20)) tsconf_7ffd_locked=1;
+    tsconf_set_memory_pages();
+}
+
 
 
 int temp_tsconf_in_system_rom_flag=1;
@@ -1058,6 +1493,32 @@ int tsconf_in_system_rom(void)
   return 0;
   //TODO. No entiendo bien cuando entra aqui: 00 - after reset, only in "no map" mode, System ROM, suponemos que solo al encender la maquina,
             //cosa que no es cierta
+}
+
+void tsconf_update_dos_signal(z80_int address)
+{
+  if (tsconf_vdos_pending.v) {
+    tsconf_vdos_pending.v=0;
+    tsconf_set_vdos(1);
+  }
+  // VDOS puede ejecutar codigo en RAM alta y volver a la ROM de TR-DOS.
+  if ((address>=0x4000 || (tsconf_get_memconfig()&8)) && !tsconf_vdos_active.v) {
+    if (tsconf_dos_signal.v) {
+      tsconf_dos_signal.v=0;
+      tsconf_set_memory_pages();
+    }
+  }
+  else if (address>=0x3d00 && address<=0x3dff &&
+           !(tsconf_get_memconfig()&12) &&
+           tsconf_get_rom_bank()%4==3 && !tsconf_dos_signal.v) {
+    // La lectura de una instrucción en #3Dxx activa TR-DOS.
+    tsconf_dos_signal.v=1;
+    tsconf_set_memory_pages();
+  }
+
+  // El trap solo atiende el disco físico emulado, nunca un VDOS montado.
+  if (tsconf_dos_signal.v && !tsconf_vdos_active.v && !tsconf_beta_virtual_drive())
+      betadisk_handle_trdos_traps();
 }
 
 z80_byte tsconf_get_rom_bank(void)
@@ -1095,15 +1556,16 @@ bit1/0
           //bit3 selects what is in #0000..#3FFF (0 - ROM, 1 - RAM).
 
           z80_byte banco=tsconf_af_ports[0x10];
-          return banco;
+          return (memconfig&8) ? banco : (banco&31);
         }
         else {
           z80_byte banco;
           //Modo map
-		  //printf ("paginacion modo map\n");
+          //printf ("paginacion modo map\n");
           z80_byte page0=tsconf_af_ports[0x10];
 
-		  page0=page0&(4+8+16); //In "map" mode Page0 selects ROM page bits 4..2
+          // En modo map, PAGE0 conserva los bits altos de la pagina RAM o ROM.
+          page0 &= (memconfig & 8) ? 0xfc : 0x1c;
 
           //TODO. No entiendo bien cuando entra aqui: 00 - after reset, only in "no map" mode, System ROM, suponemos que solo al encender la maquina,
           //cosa que no es cierta
@@ -1111,15 +1573,13 @@ bit1/0
 
 
           else {
-            //if (tsconf_dos_signal.v) banco=1;
-			if (0) banco=1; //mejor no miramos dos_signal y gestionamos el salto de rom mediante el core_nested de betadisk,
-			//de tal manera que alli se comprueba si salta a tr-dos cuando esta en rom 3 llamando a esta funcion
+            if (tsconf_dos_signal.v) banco=1;
             else {
-				//printf ("32765 %d memconfig %d\n",puerto_32765&16,tsconf_af_ports[0x21] &1);
-				banco=((puerto_32765>>4)&1) | 2;
-			}
+                //printf ("32765 %d memconfig %d\n",puerto_32765&16,tsconf_af_ports[0x21] &1);
+                banco=((puerto_32765>>4)&1) | 2;
+            }
           }
-			//printf ("page0 %d banco %d\n",page0,banco);
+            //printf ("page0 %d banco %d\n",page0,banco);
 
           return page0 | banco;
 
@@ -1129,50 +1589,6 @@ bit1/0
 
 
 }
-
-z80_byte tsconf_get_ram_bank_c0(void)
-{
-    //De momento mapear como un 128k
-    z80_byte tsconf_lck=tsconf_get_memconfig_lck();
-
-    /*
-    00 512 kb  7ffd[7:6]=page3[4:3]
-    01 128 kb  7ffd[7:6]=00
-    10 auto    !a[13] ???????
-    11 1024kb   #7FFD[7:6] = Page3[4:3], #7FFD[5] = Page3[5]
-
-
-    Port 0x7FFD is an alias of Page3, thus selects page in 0xC000-0xFFFF window. Its behaviour depends on MemConfig LCK128 bits.
-    00 - 512k: #7FFD[7:6] -> Page3[4:3], #7FFD[2:0] -> Page3[2:0], Page3[7:5] = 0,
-    01 - 128k: #7FFD[2:0] -> Page3[2:0], Page3[7:3] = 0,
-    10 - Auto: OUT (#FD) works as mode 01, OUT (C), r works as mode 00,
-    11 - 1024k: #7FFD[7:6] -> Page3[4:3], #7FFD[2:0] -> Page3[2:0], #7FFD[5] -> Page3[5], Page3[7:6] = 0.
-
-
-    Port 0x7FFD is an alias of Page3, page3=tsconf_af_ports[0x13];
-    */
-
-    z80_byte banco=0;
-
-    switch (tsconf_lck) {
-
-        case 0:
-          banco=(puerto_32765&7)| ((puerto_32765>>3)&24);
-        break;
-
-        case 1:
-      	 banco=puerto_32765&7;
-        break;
-
-        default:
-          cpu_panic("TODO invalid value for tsconf_lck");
-        break;
-    }
-
-    return banco;
-
-}
-
 
 z80_byte tsconf_get_text_font_page(void)
 {
@@ -1191,7 +1607,11 @@ z80_byte tsconf_get_vram_page(void)
 
 void tsconf_set_memory_pages(void)
 {
-	z80_byte rom_page=tsconf_get_rom_bank();
+    z80_byte *pagina_anterior[4];
+    int ventana;
+    for (ventana=0;ventana<4;ventana++) pagina_anterior[ventana]=tsconf_memory_paged[ventana];
+
+    z80_byte rom_page=tsconf_get_rom_bank();
 
 
 
@@ -1200,36 +1620,49 @@ void tsconf_set_memory_pages(void)
   z80_byte ram_page_c0=tsconf_af_ports[19];
 
 
-	/*
+    /*
   TODO
-	Port 1FFDh (read/write)
-	Bit 0 If 1 maps banks 8 or 9 at 0000h (switch off rom).
-	Bit 1 High bit of ROM selection and bank 8 (0) or 9 (1) if bit0 = 1.
-	*/
+    Port 1FFDh (read/write)
+    Bit 0 If 1 maps banks 8 or 9 at 0000h (switch off rom).
+    Bit 1 High bit of ROM selection and bank 8 (0) or 9 (1) if bit0 = 1.
+    */
 
-	//memconfig
-	//bit3 selects what is in #0000..#3FFF (0 - ROM, 1 - RAM).
+    //memconfig
+    //bit3 selects what is in #0000..#3FFF (0 - ROM, 1 - RAM).
 
-	if (tsconf_get_memconfig()&8) {
+    if (tsconf_vdos_active.v) {
+      debug_paginas_memoria_mapeadas[0]=0xff;
+      tsconf_memory_paged[0]=tsconf_ram_mem_table[0xff];
+    }
+    else if (tsconf_get_memconfig()&8) {
     debug_paginas_memoria_mapeadas[0]=rom_page;
     tsconf_memory_paged[0]=tsconf_ram_mem_table[rom_page];
   }
 
-	else {
+    else {
     debug_paginas_memoria_mapeadas[0]=DEBUG_PAGINA_MAP_ES_ROM+rom_page;
     tsconf_memory_paged[0]=tsconf_rom_mem_table[rom_page];
   }
 
 
 
-	tsconf_memory_paged[1]=tsconf_ram_mem_table[ram_page_40];
-	tsconf_memory_paged[2]=tsconf_ram_mem_table[ram_page_80];
-	tsconf_memory_paged[3]=tsconf_ram_mem_table[ram_page_c0];
+    tsconf_memory_paged[1]=tsconf_ram_mem_table[ram_page_40];
+    tsconf_memory_paged[2]=tsconf_ram_mem_table[ram_page_80];
+    tsconf_memory_paged[3]=tsconf_ram_mem_table[ram_page_c0];
 
 
-	debug_paginas_memoria_mapeadas[1]=ram_page_40;
-	debug_paginas_memoria_mapeadas[2]=ram_page_80;
-	debug_paginas_memoria_mapeadas[3]=ram_page_c0;
+    debug_paginas_memoria_mapeadas[1]=ram_page_40;
+    debug_paginas_memoria_mapeadas[2]=ram_page_80;
+    debug_paginas_memoria_mapeadas[3]=ram_page_c0;
+
+    // Las estadísticas de cada ventana corresponden solo a su página actual.
+    // El cambio de página no invalida la caché física: solo reinicia sus contadores.
+    for (ventana=0;ventana<4;ventana++) {
+        if (pagina_anterior[ventana]!=tsconf_memory_paged[ventana]) {
+            tsconf_cache_hits[ventana]=0;
+            tsconf_cache_misses[ventana]=0;
+        }
+    }
 
   //printf ("32765: %02XH rom %d ram1 %d ram2 %d ram3 %d\n",puerto_32765,rom_page,ram_page_40,ram_page_80,ram_page_c0);
 
@@ -1238,18 +1671,30 @@ void tsconf_set_memory_pages(void)
 
 void tsconf_hard_reset(void)
 {
+  tsconf_cache_clear();
+
+  ide_smuc_reset();
+  tsconf_ula_y_last_scanline=-1;
+  tsconf_ula_y_reload=0;
+  tsconf_ula_y_reload_next=0;
 
   debug_printf(VERBOSE_DEBUG,"TSconf Hard reset cpu");
 
+  baseconf_ps2_reset();
+
   reset_cpu();
+  // El primer acceso a STATUS tras el arranque en frío anuncia el reinicio completo.
+  tsconf_powerup_pending.v=1;
 
 
-	int i;
-	//por que borramos fmaps??? for (i=0;i<TSCONF_FMAPS_SIZE;i++) tsconf_fmaps[i]=0;
-	//Borro sprites. dejo paleta sin tocar pues hay alguna demo que usa la paleta por defecto (pixeldemo)
-	for (i=0x200;i<0x400;i++) tsconf_fmaps[i]=0;
+    int i;
+    //por que borramos fmaps??? for (i=0;i<TSCONF_FMAPS_SIZE;i++) tsconf_fmaps[i]=0;
+    //Borro sprites. dejo paleta sin tocar pues hay alguna demo que usa la paleta por defecto (pixeldemo)
+    for (i=0x200;i<0x400;i++) tsconf_fmaps[i]=0;
 
-       //Borrar toda memoria ram
+       // El hard reset no necesita borrar la RAM. Se conserva este código comentado
+       // por si en el futuro se decide volver a inicializarla aquí.
+       /*
         int d;
         z80_byte *puntero;
 
@@ -1259,6 +1704,7 @@ void tsconf_hard_reset(void)
                         *puntero=0;
                 }
         }
+       */
 
 
   //Valores por defecto
@@ -1295,8 +1741,8 @@ void tsconf_hard_reset(void)
 
   tsconf_af_ports[0x2B] &=(255-1-2-4-8);
 
-	//Los registros de scroll, del 40h al 47h, en la documentacion dice que no se toca,
-	//pero yo lo cambio porque sino , hay demos que se ven mal pues conservan valores anteriores
+    //Los registros de scroll, del 40h al 47h, en la documentacion dice que no se toca,
+    //pero yo lo cambio porque sino , hay demos que se ven mal pues conservan valores anteriores
   tsconf_af_ports[0x40]=0;
   tsconf_af_ports[0x41]=0;
   tsconf_af_ports[0x42]=0;
@@ -1315,6 +1761,8 @@ void tsconf_hard_reset(void)
   tsconf_af_ports[0x1F]=0;
 
   tsconf_set_memory_pages();
+  tsconf_video_next_vconfig=tsconf_video_render_vconfig=tsconf_af_ports[0];
+  tsconf_video_next_vpage=tsconf_video_render_vpage=tsconf_af_ports[1];
   tsconf_set_sizes_display();
   tsconf_set_emulator_setting_turbo();
 }
@@ -1326,17 +1774,17 @@ void tsconf_hard_reset(void)
 z80_byte tsconf_rgb_5_to_8(z80_byte color)
 {
 
-	//Si tsconf usa paletas inferiores de 2,3 o 4 bits, quitar bits
-	//tsconf_palette_depth (default 5)
-	if (tsconf_palette_depth==2) color=color&(255-1-2-4); //quitamos los 3 bits inferiores
-	if (tsconf_palette_depth==3) color=color&(255-1-2);   //quitamos los 2 bits inferiores
-	if (tsconf_palette_depth==4) color=color&(255-1);     //quitamos el 1 bit inferior
+    //Si tsconf usa paletas inferiores de 2,3 o 4 bits, quitar bits
+    //tsconf_palette_depth (default 5)
+    if (tsconf_palette_depth==2) color=color&(255-1-2-4); //quitamos los 3 bits inferiores
+    if (tsconf_palette_depth==3) color=color&(255-1-2);   //quitamos los 2 bits inferiores
+    if (tsconf_palette_depth==4) color=color&(255-1);     //quitamos el 1 bit inferior
 
-	//Con pwm
-	if (tsconf_vdac_with_pwm.v==0) return color*8;  //5 bits: 0..31. max valor 31*8=248
+    //Con pwm
+    if (tsconf_vdac_with_pwm.v==0) return color*8;  //5 bits: 0..31. max valor 31*8=248
 
 
-	//con pwm cada componente de 5 bits son diferentes hasta valor 24, a partir de ahi son iguales a 255:
+    //con pwm cada componente de 5 bits son diferentes hasta valor 24, a partir de ahi son iguales a 255:
 /*
 0  1   2    3   4  5   6   7   8   9   10   11    12  13   14   15   16   17   18   19   20   21   22   23   24
 0, 10, 21, 31, 42, 53, 63, 74, 85, 95, 106, 117, 127, 138, 149, 159, 170, 181, 191, 202, 213, 223, 234, 245, 255,
@@ -1344,14 +1792,14 @@ z80_byte tsconf_rgb_5_to_8(z80_byte color)
 Y a partir de 24 todos son 255
 */
 
-	if (color>=24) return 255;
+    if (color>=24) return 255;
 
 
-	//entre 0 y 23
-				 //0  1   2    3   4  5   6   7   8   9   10   11    12  13   14   15   16   17   18   19   20   21   22   23   24
-	z80_byte without_vdac[24]={0, 10, 21, 31, 42, 53, 63, 74, 85, 95, 106, 117, 127, 138, 149, 159, 170, 181, 191, 202, 213, 223, 234, 245};
+    //entre 0 y 23
+                 //0  1   2    3   4  5   6   7   8   9   10   11    12  13   14   15   16   17   18   19   20   21   22   23   24
+    z80_byte without_vdac[24]={0, 10, 21, 31, 42, 53, 63, 74, 85, 95, 106, 117, 127, 138, 149, 159, 170, 181, 191, 202, 213, 223, 234, 245};
 
-	return without_vdac[color];
+    return without_vdac[color];
 
 
 }
@@ -1360,50 +1808,39 @@ Y a partir de 24 todos son 255
 //Hace putpixel tsconf pero teniendo en cuenta desplazamiento de border, que en el caso de tsconf es variable
 void scr_tsconf_putpixel_sum_border(int x,int y,unsigned color)
 {
-	//tsconf_current_border_width almacena el ancho de una franja, la izquierda por ejemplo
-	//Dado que el border (y la zona de pixeles) son pixeles de tamanyo 2x2, multiplicar en ancho y alto
+    //tsconf_current_border_width almacena el ancho de una franja, la izquierda por ejemplo
+    //Dado que el border (y la zona de pixeles) son pixeles de tamanyo 2x2, multiplicar en ancho y alto
 
-	scr_putpixel_zoom(x+tsconf_current_border_width*2,y+tsconf_current_border_height*2,color);
+    scr_putpixel_zoom(x+tsconf_current_border_width*2,y+tsconf_current_border_height*2,color);
 }
 
 
 //Hace putpixel pero teniendo en cuenta tamanyo de 1x2
 void scr_tsconf_putpixel_text_mode(int x,int y,unsigned color)
 {
-	y*=2;
+    y*=2;
 
-	int border_x=tsconf_current_border_width*2;
-	int border_y=tsconf_current_border_height*2;
 
-	int menu_x=(x+border_x)/8;
-	int menu_y=(y+border_y)/8;
 
-	//Suponemos que y e y+1 van a estar dentro de una cuadricula igual los dos, por tanto la comprobacion siguiente solo la hacemos una vez
-	if (scr_ver_si_refrescar_por_menu_activo(menu_x,menu_y)) {
-		scr_tsconf_putpixel_sum_border(x,y,color);
-		scr_tsconf_putpixel_sum_border(x,y+1,color);
-	}
+        scr_tsconf_putpixel_sum_border(x,y,color);
+        scr_tsconf_putpixel_sum_border(x,y+1,color);
+
 }
 
 //Hace putpixel pero teniendo en cuenta tamanyo de 2x2
 void scr_tsconf_putpixel_zx_mode(int x,int y,unsigned color)
 {
-	y*=2;
-	x*=2;
+    y*=2;
+    x*=2;
 
-	int border_x=tsconf_current_border_width*2;
-	int border_y=tsconf_current_border_height*2;
 
-	int menu_x=(x+border_x)/8;
-	int menu_y=(y+border_y)/8;
 
-	//Suponemos que x, x+1 e y e y+1 van a estar dentro de una cuadricula igual los dos, por tanto la comprobacion siguiente solo la hacemos una vez
-	if (scr_ver_si_refrescar_por_menu_activo(menu_x,menu_y)){
+
         scr_tsconf_putpixel_sum_border(x,y,color);
         scr_tsconf_putpixel_sum_border(x,y+1,color);
         scr_tsconf_putpixel_sum_border(x+1,y,color);
         scr_tsconf_putpixel_sum_border(x+1,y+1,color);
-    }
+
 
 
 }
@@ -1414,13 +1851,13 @@ void scr_tsconf_putpixel_zoom_rainbow_text_mode(unsigned color,z80_int *puntero_
 
 
 
-	//puntero_rainbow +=margeny_arr*ancho_linea;
-	//puntero_rainbow +=margenx_izq;
+    //puntero_rainbow +=margeny_arr*ancho_linea;
+    //puntero_rainbow +=margenx_izq;
 
-	*puntero_rainbow=color;
+    *puntero_rainbow=color;
 
-	puntero_rainbow +=ancho_linea;
-	*puntero_rainbow=color;
+    puntero_rainbow +=ancho_linea;
+    *puntero_rainbow=color;
 
 }
 
@@ -1442,55 +1879,55 @@ void scr_tsconf_putsprite_comun(z80_byte *puntero,int alto,int x,int y,z80_bit i
 
         for (line=0;line<alto;line++,y++) {
 
-          	byte_leido=*puntero++;
-          	if (inverse.v==1) byte_leido = byte_leido ^255;
+              byte_leido=*puntero++;
+              if (inverse.v==1) byte_leido = byte_leido ^255;
 
-          	for (bit=0;bit<8;bit++) {
+              for (bit=0;bit<8;bit++) {
                 if (byte_leido & 128 ) color=tinta;
                 else color=papel;
 
                 byte_leido=(byte_leido&127)<<1;
 
 
-								if (puntero_layer!=NULL) {
-									//Lo mete en buffer rainbow
+                                if (puntero_layer!=NULL) {
+                                    //Lo mete en buffer rainbow
 
-											color=tsconf_return_cram_color(tsconf_return_cram_palette_offset()+color);
+                                            color=tsconf_return_cram_color(tsconf_return_cram_palette_offset()+color);
 
-											//scr_tsconf_putpixel_zoom_rainbow_text_mode(color,puntero_rainbow,ancho_rainbow);
-											*puntero_layer=color;
-											puntero_layer++;
+                                            //scr_tsconf_putpixel_zoom_rainbow_text_mode(color,puntero_rainbow,ancho_rainbow);
+                                            *puntero_layer=color;
+                                            puntero_layer++;
 
-								}
+                                }
 
 
-								else {
-									color=tsconf_return_cram_color(tsconf_return_cram_palette_offset()+color);
+                                else {
+                                    color=tsconf_return_cram_color(tsconf_return_cram_palette_offset()+color);
 
-									//if (scr_ver_si_refrescar_por_menu_activo((x+bit)/8,y/8)) {
 
-										scr_tsconf_putpixel_text_mode(x+bit,y,TSCONF_INDEX_FIRST_COLOR+color);
-									//}
-								}
+
+                                        scr_tsconf_putpixel_text_mode(x+bit,y,TSCONF_INDEX_FIRST_COLOR+color);
+
+                                }
 
            }
 
-			//puntero_rainbow=puntero_rainbow_orig;
-			//puntero_rainbow +=ancho_rainbow;
+            //puntero_rainbow=puntero_rainbow_orig;
+            //puntero_rainbow +=ancho_rainbow;
         }
 }
 
 
 int tsconf_get_current_visible_scanline(void)
 {
-	return t_scanline_draw-screen_invisible_borde_superior;
+    return t_scanline_draw-screen_invisible_borde_superior;
 }
 
 int temp_conta_nogfx;
 
 z80_byte tsconf_get_border_colour(void)
 {
-	return tsconf_af_ports[0xF];
+    return tsconf_af_ports[0xF];
 }
 
 //tipo: 0 arriba, abajo. 1 izquierda derecha
@@ -1508,7 +1945,7 @@ void tsconf_store_scanline_border_supinf_izqder(int tipo)
 
   if (visible_scanline<0) return;
 
-	int ancho_linea;
+    int ancho_linea;
 
         ancho_linea=get_total_ancho_rainbow();
         //alto=get_total_alto_rainbow();
@@ -1516,12 +1953,12 @@ void tsconf_store_scanline_border_supinf_izqder(int tipo)
   z80_int *destino;
   destino=&rainbow_buffer[visible_scanline*2*ancho_linea]; //doble pixel en altura
 
-	int color; //TODO. solo pillamos un color por scanline
+    int color; //TODO. solo pillamos un color por scanline
 
-	color=tsconf_get_border_colour();
+    color=tsconf_get_border_colour();
 
-	//color=TSCONF_INDEX_FIRST_COLOR+tsconf_return_cram_color  (tsconf_return_cram_palette_offset()+color);
-	color=TSCONF_INDEX_FIRST_COLOR+tsconf_return_cram_color(color);
+    //color=TSCONF_INDEX_FIRST_COLOR+tsconf_return_cram_color  (tsconf_return_cram_palette_offset()+color);
+    color=TSCONF_INDEX_FIRST_COLOR+tsconf_return_cram_color(color);
 
 
 
@@ -1531,34 +1968,39 @@ void tsconf_store_scanline_border_supinf_izqder(int tipo)
 
         //parte superior e inferior
 
-	   	if (tipo==0) {
+           if (tipo==0) {
                 for (x=0;x<ancho_linea;x++) {
-					*destino=color;
-					destino[ancho_linea]=color; //doble pixel en altura
 
-					destino++;
+                    *destino=color;
+                    destino[ancho_linea]=color; //doble pixel en altura
+
+                    destino++;
 
                 }
-		}
+        }
 
-	  	//laterales
+          //laterales
 
-	  	if (tipo==1) {
-			  	int ancho_border=tsconf_current_border_width*2;
+          if (tipo==1) {
+                  int ancho_border=tsconf_current_border_width*2;
                 for (x=0;x<ancho_border;x++) {
 
-					//izq
-					*destino=color;
-					destino[ancho_linea]=color; //doble pixel en altura
+                    //izq
+                    *destino=color;
 
-					//der
-					destino[ancho_border+tsconf_current_pixel_width*2]=color;
-					destino[ancho_border+tsconf_current_pixel_width*2+ancho_linea]=color;    //doble pixel en altura
+                    //doble pixel en altura
+                    destino[ancho_linea]=color;
 
-					destino++;
+                    //der
+                    destino[ancho_border+tsconf_current_pixel_width*2]=color;
+
+                    //doble pixel en altura
+                    destino[ancho_border+tsconf_current_pixel_width*2+ancho_linea]=color;
+
+                    destino++;
 
                 }
-		}
+        }
 
 
 
@@ -1567,31 +2009,40 @@ void tsconf_store_scanline_border_supinf_izqder(int tipo)
 
 
 
+static void tsconf_advance_ula_y_counter(int scanline_copia)
+{
+    int y_offset=tsconf_af_ports[4]+256*(tsconf_af_ports[5]&1);
+
+    // El desplazamiento escrito se carga al comenzar la siguiente línea.
+    // El contador avanza también durante las líneas ocultas por NOGFX.
+    if (scanline_copia!=tsconf_ula_y_last_scanline) {
+        if (scanline_copia<tsconf_ula_y_last_scanline || tsconf_ula_y_last_scanline<0) {
+            tsconf_ula_y_counter=y_offset;
+        }
+        else if (tsconf_ula_y_reload_next) {
+            tsconf_ula_y_counter=tsconf_ula_y_reload_value;
+        }
+        else {
+            tsconf_ula_y_counter=(tsconf_ula_y_counter+scanline_copia-tsconf_ula_y_last_scanline)&511;
+        }
+        tsconf_ula_y_last_scanline=scanline_copia;
+        tsconf_ula_y_reload_next=tsconf_ula_y_reload;
+        tsconf_ula_y_reload_value=y_offset;
+        tsconf_ula_y_reload=0;
+    }
+}
+
 void tsconf_store_scanline_ula(void)
 {
-
-
-	int scanline_copia=tsconf_get_current_visible_scanline();
-
-    //linea que se debe leer
-    scanline_copia -=tsconf_current_border_height;
-
-	int y_origen_pixeles=scanline_copia;
-
-	//sumar offset
-	int y_offset=tsconf_af_ports[4]+256*(tsconf_af_ports[5]&1);
-
-
-	y_origen_pixeles +=y_offset;
-
-	//controlar si sale de rango
-	y_origen_pixeles=y_origen_pixeles % 512;
+    int scanline_copia=tsconf_get_current_visible_scanline()-tsconf_current_border_height;
+    if (scanline_copia<0 || scanline_copia>=tsconf_current_pixel_height) return;
+    int y_origen_pixeles=tsconf_ula_y_counter;
 
 
 
     int x,bit;
     z80_int direccion;
-	z80_int dir_atributo;
+    z80_int dir_atributo;
     z80_byte byte_leido;
 
 
@@ -1599,57 +2050,54 @@ void tsconf_store_scanline_ula(void)
     int fila;
 
     z80_byte attribute,bright,flash;
-	z80_int ink,paper,aux;
+    z80_int ink,paper,aux;
 
-    z80_byte *screen=get_base_mem_pantalla();
-
-    direccion=screen_addr_table[(y_origen_pixeles<<5)];
 
 
     fila=y_origen_pixeles/8;
     dir_atributo=6144+(fila*32);
 
 
-  	int puntero_layer_ula=0;
+      int puntero_layer_ula=0;
 
-	z80_byte videomode=tsconf_get_video_mode_display();
+    z80_byte videomode=tsconf_video_render_vconfig&3;
 
 
-	if (videomode==3) {
-		//modo texto
-		int ancho_caracter=8;
-		int ancho_linea=tsconf_current_pixel_width*2;
+    if (videomode==3) {
+        //modo texto
+        int ancho_caracter=8;
+        int ancho_linea=tsconf_current_pixel_width*2;
 
-		z80_int puntero=0x0000;
+        z80_int puntero=0x0000;
 
-		z80_byte *screen;
-		screen=tsconf_ram_mem_table[tsconf_get_vram_page() ];
+        z80_byte *screen;
+        screen=tsconf_ram_mem_table[tsconf_video_render_vpage];
 
-		//int ancho_linea_caracteres=256;
-		int x=0;
-		int y=y_origen_pixeles;
-		puntero=fila*256;
+        //int ancho_linea_caracteres=256;
+        int x=0;
+        int y=y_origen_pixeles;
+        puntero=fila*256;
 
-		z80_byte font_page=tsconf_get_text_font_page();
+        z80_byte font_page=tsconf_video_render_vpage ^ 1;
 
-		z80_byte *puntero_fuente;
-		puntero_fuente=tsconf_ram_mem_table[font_page];
+        z80_byte *puntero_fuente;
+        puntero_fuente=tsconf_ram_mem_table[font_page];
 
-		//z80_int puntero_orig=puntero;
+        //z80_int puntero_orig=puntero;
 
-		z80_byte caracter;
-		//z80_byte caracter_text;
+        z80_byte caracter;
+        //z80_byte caracter_text;
 
-		z80_bit inverse;
+        z80_bit inverse;
 
- 		inverse.v=0;
+         inverse.v=0;
 
-    	z80_int offset_caracter;
+        z80_int offset_caracter;
 
-    	//z80_byte tinta,papel;
-    	unsigned int tinta,papel;
+        //z80_byte tinta,papel;
+        unsigned int tinta,papel;
 
-    	z80_byte atributo;
+        z80_byte atributo;
 
 
 
@@ -1665,109 +2113,111 @@ void tsconf_store_scanline_ula(void)
 
                 offset_caracter=caracter*8;
 
-				//Sumarle scanline % 8
-				offset_caracter +=(y % 8);
+                //Sumarle scanline % 8
+                offset_caracter +=(y % 8);
 
                 //No tengo ni idea de si se leen los atributos asi, pero parece similar al real
                 tinta=atributo&15;
                 papel=(atributo>>4)&15;
 
 
-				scr_tsconf_putsprite_comun(&puntero_fuente[offset_caracter],1,x,y,inverse,tinta,papel,&tsconf_layer_ula[puntero_layer_ula]);
+                scr_tsconf_putsprite_comun(&puntero_fuente[offset_caracter],1,x,y,inverse,tinta,papel,&tsconf_layer_ula[puntero_layer_ula]);
 
 
-				puntero_layer_ula+=ancho_caracter;
+                puntero_layer_ula+=ancho_caracter;
 
 
-		}
-	}
+        }
+    }
 
-				//16 o 256 clores
-				if (videomode==1 || videomode==2) {
-					//puntero a vram
-					//Indice a linea
-					int offset;
+                //16 o 256 clores
+                if (videomode==1 || videomode==2) {
+                    //puntero a vram
+                    //Indice a linea
+                    int offset;
 
-					int x_offset=tsconf_af_ports[2]+256*(tsconf_af_ports[3]&1);
-					//if (x_offset) printf ("x_offset: %d\n",x_offset);
-					//edge grinder y 200.spg y lirus y ppal y tcircles y twist0 y unhinged y wavering usan scroll x
+                    int x_offset=tsconf_af_ports[2]+256*(tsconf_af_ports[3]&1);
+                    //if (x_offset) printf ("x_offset: %d\n",x_offset);
+                    //edge grinder y 200.spg y lirus y ppal y tcircles y twist0 y unhinged y wavering usan scroll x
 
-					int posicion_byte_inicial;
+                    int posicion_byte_inicial;
 
-					//Posicion y inicial
-					//16 colores
-					if (videomode==1) {
-						offset=y_origen_pixeles*256;
+                    //Posicion y inicial
+                    //16 colores
+                    if (videomode==1) {
+                        offset=y_origen_pixeles*256;
 
-						//offset +=x_offset/2;
-						//posicion_byte_inicial=x_offset/2;
-					}
+                        //offset +=x_offset/2;
+                        //posicion_byte_inicial=x_offset/2;
+                    }
 
-					//256 colores
-					else {
-						offset=y_origen_pixeles*512;
+                    //256 colores
+                    else {
+                        offset=y_origen_pixeles*512;
 
-						//offset +=x_offset;
-						//posicion_byte_inicial=x_offset;
-					}
-
-
-					//Ver cuantas paginas salta esto
-					int pagina_offset=offset/16384;
-
-					//y offset final
-					z80_int offset_final=offset % 16384;
-
-					z80_byte vram_page=tsconf_get_vram_page()+pagina_offset;
-					z80_byte *screen;
-
-					screen=tsconf_ram_mem_table[vram_page]+offset_final;
-
-					z80_byte *screen_izquierda=screen; //primera posicion con x=0
+                        //offset +=x_offset;
+                        //posicion_byte_inicial=x_offset;
+                    }
 
 
-					//Sumamos scrolll x
-					//16 colores
-					if (videomode==1) {
-						screen +=x_offset/2;
-						posicion_byte_inicial=x_offset/2;
-					}
+                    //Ver cuantas paginas salta esto
+                    int pagina_offset=offset/16384;
 
-					//256 colores
-					else {
-						screen +=x_offset;
-						posicion_byte_inicial=x_offset;
-					}
+                    //y offset final
+                    z80_int offset_final=offset % 16384;
 
+                    // Los modos gráficos toman VPAGE como base de un bloque completo.
+                    z80_byte vram_base=tsconf_video_render_vpage & (videomode==1 ? 0xF8 : 0xF0);
+                    z80_byte vram_page=vram_base+pagina_offset;
+                    z80_byte *screen;
 
-					z80_byte color,color_orig;
-					z80_int color_final;
+                    screen=tsconf_ram_mem_table[vram_page]+offset_final;
+
+                    z80_byte *screen_izquierda=screen; //primera posicion con x=0
 
 
+                    //Sumamos scrolll x
+                    //16 colores
+                    if (videomode==1) {
+                        screen +=x_offset/2;
+                        posicion_byte_inicial=x_offset/2;
+                    }
+
+                    //256 colores
+                    else {
+                        screen +=x_offset;
+                        posicion_byte_inicial=x_offset;
+                    }
 
 
-					for (x=0;x<tsconf_current_pixel_width;x++,posicion_byte_inicial++) {
-						if (videomode==2) { //256 colores
-							color=*screen;
-						}
+                    z80_byte color,color_orig;
+                    z80_int color_final;
 
 
-						if (videomode==1) { //16 colores
-							color_orig=*screen;
-
-							//pixel de la izquierda
-							color=(color_orig>>4)&0xF;
 
 
-							//Con paleta
-							color +=tsconf_return_cram_palette_offset();
+                    for (x=0;x<tsconf_current_pixel_width;x++,posicion_byte_inicial++) {
+                        if (videomode==2) { //256 colores
+                            color=*screen;
+                        }
 
-							color_final=tsconf_return_cram_color(color);
-						            //doble ancho
-						            tsconf_layer_ula[puntero_layer_ula++]=color_final;
-						            tsconf_layer_ula[puntero_layer_ula++]=color_final;
 
-							x++;
+                        if (videomode==1) { //16 colores
+                            color_orig=*screen;
+
+                            //pixel de la izquierda
+                            color=(color_orig>>4)&0xF;
+
+
+                            //Con paleta
+                            color +=tsconf_return_cram_palette_offset();
+
+                            color_final=tsconf_return_cram_color(color);
+                                    //doble ancho
+                                    tsconf_layer_ula[puntero_layer_ula++]=color_final;
+                                    tsconf_layer_ula[puntero_layer_ula++]=color_final;
+
+                            x++;
 
                                                         //pixel de la derecha
                                                         color=color_orig&0xF;
@@ -1775,28 +2225,28 @@ void tsconf_store_scanline_ula(void)
                                                         //Con paleta
                                                         color +=tsconf_return_cram_palette_offset();
 
-						}
+                        }
 
 
-						color_final=tsconf_return_cram_color(color);
+                        color_final=tsconf_return_cram_color(color);
                                                 //doble ancho
                                                 tsconf_layer_ula[puntero_layer_ula++]=color_final;
                                                 tsconf_layer_ula[puntero_layer_ula++]=color_final;
 
-						screen++;
+                        screen++;
 
 
-						if (posicion_byte_inicial>=512) {  //Volver a inicial
-							//printf ("---LLegado scroll derecha\n");
-							screen=screen_izquierda;
-							posicion_byte_inicial=0;
-						}
+                        if (posicion_byte_inicial>=512) {  //Volver a inicial
+                            //printf ("---LLegado scroll derecha\n");
+                            screen=screen_izquierda;
+                            posicion_byte_inicial=0;
+                        }
 
 
-					}
-				}
+                    }
+                }
 
-				if (videomode==0) {
+                if (videomode==0) {
 
 //temp
                                         //z80_byte vram_page=tsconf_get_vram_page();
@@ -1804,17 +2254,34 @@ void tsconf_store_scanline_ula(void)
 
                                         //screen=tsconf_ram_mem_table[vram_page];
 
+            z80_byte *screen=get_base_mem_pantalla();
 
+            int y_linea_pantalla=y_origen_pixeles;
 
-        	for (x=0;x<32;x++) {
+            //por si acaso, no deberia pasar pero...
+            if (y_linea_pantalla>191) y_linea_pantalla=191;
+            direccion=screen_addr_table[(y_linea_pantalla<<5)];
+
+            for (x=0;x<32;x++) {
 
 
                         byte_leido=screen[direccion];
 
                         attribute=screen[dir_atributo];
-						//attribute=56;
 
-						//printf ("byte %d atributo %d\n",byte_leido,attribute);
+                        if (scr_refresca_sin_colores.v) attribute=56;
+
+                        else {
+                            if (scr_refresca_show_attribute_grid.v) {
+                                int cuad=(fila+x)%2;
+                                if (cuad) attribute=56+64;
+                                else attribute=56;
+                            }
+                        }
+
+                        //attribute=56;
+
+                        //printf ("byte %d atributo %d\n",byte_leido,attribute);
 
                         ink=attribute &7;
                         paper=(attribute>>3) &7;
@@ -1839,13 +2306,13 @@ void tsconf_store_scanline_ula(void)
 
 
 
-																color= ( byte_leido & 128 ? ink : paper ) ;
+                                                                color= ( byte_leido & 128 ? ink : paper ) ;
 
-																color= tsconf_return_cram_color  (tsconf_return_cram_palette_offset()+color);
-																//color=tsconf_return_cram_color(color);
+                                                                color= tsconf_return_cram_color  (tsconf_return_cram_palette_offset()+color);
+                                                                //color=tsconf_return_cram_color(color);
 
-																//doble ancho
-																//color=44;
+                                                                //doble ancho
+                                                                //color=44;
                                             //doble ancho
                                 tsconf_layer_ula[puntero_layer_ula++]=color;
                                 tsconf_layer_ula[puntero_layer_ula++]=color;
@@ -1859,13 +2326,13 @@ void tsconf_store_scanline_ula(void)
 
 
                         }
-												direccion++;
-												dir_atributo++;
+                                                direccion++;
+                                                dir_atributo++;
 
 
 
-        			}
-					}
+                    }
+                    }
 
 
 
@@ -1882,9 +2349,9 @@ void tsconf_store_scanline_putsprite_putpixel(z80_int *puntero,z80_int color,z80
   //Con paleta
   z80_int color_final=tsconf_return_cram_color(color+16*spal);
 
-	*puntero=color_final;
-	puntero++;
-	*puntero=color_final;
+    *puntero=color_final;
+    puntero++;
+    *puntero=color_final;
 
 }
 */
@@ -1894,24 +2361,24 @@ z80_int *tsconf_current_tile_written_pointer;
 
 void tsconf_put_tile_pixel(z80_int color,z80_byte spal)
 {
-	if (color) {
-		//color=tsconf_return_cram_color(color+16*spal);
-		color=tsconf_return_cram_color(color|spal);
-						*tsconf_current_tile_written_pointer=color;
-					tsconf_current_tile_written_pointer++;
-					*tsconf_current_tile_written_pointer=color;
-					tsconf_current_tile_written_pointer++;
-	}
+    if (color) {
+        //color=tsconf_return_cram_color(color+16*spal);
+        color=tsconf_return_cram_color(color|spal);
+                        *tsconf_current_tile_written_pointer=color;
+                    tsconf_current_tile_written_pointer++;
+                    *tsconf_current_tile_written_pointer=color;
+                    tsconf_current_tile_written_pointer++;
+    }
 
-	else {
-		tsconf_current_tile_written_pointer+=2;
-	}
+    else {
+        tsconf_current_tile_written_pointer+=2;
+    }
 
-	tsconf_current_tile_written_index+=2;
-	if (tsconf_current_tile_written_index==1024) {
-		tsconf_current_tile_written_index=0;
-		tsconf_current_tile_written_pointer-=1024;
-	}
+    tsconf_current_tile_written_index+=2;
+    if (tsconf_current_tile_written_index==1024) {
+        tsconf_current_tile_written_index=0;
+        tsconf_current_tile_written_pointer-=1024;
+    }
 }
 
 //Solo tiles
@@ -1920,30 +2387,30 @@ void tsconf_store_scanline_puttiles(int ancho, int incx,z80_byte spal,z80_byte *
 
 
 
-		z80_byte byte_sprite;
-		z80_int color_izq,color_der;
+        z80_byte byte_sprite;
+        z80_int color_izq,color_der;
 
-			for (;ancho;ancho-=2) { //-=2 porque son a 4bpp
-				byte_sprite=*sprite_origen;
+            for (;ancho;ancho-=2) { //-=2 porque son a 4bpp
+                byte_sprite=*sprite_origen;
 
-				if (incx==-1) {
-					color_der=(byte_sprite>>4)&15;
-					color_izq=byte_sprite&15;
-				}
+                if (incx==-1) {
+                    color_der=(byte_sprite>>4)&15;
+                    color_izq=byte_sprite&15;
+                }
 
-				else {
-					color_izq=(byte_sprite>>4)&15;
-					color_der=byte_sprite&15;
-				}
-
-
-				tsconf_put_tile_pixel(color_izq,spal);
-
-            	tsconf_put_tile_pixel(color_der,spal);
+                else {
+                    color_izq=(byte_sprite>>4)&15;
+                    color_der=byte_sprite&15;
+                }
 
 
-				sprite_origen+=incx;
-			}
+                tsconf_put_tile_pixel(color_izq,spal);
+
+                tsconf_put_tile_pixel(color_der,spal);
+
+
+                sprite_origen+=incx;
+            }
 
 
 
@@ -1957,55 +2424,55 @@ void tsconf_store_scanline_putsprite(int x_orig,int incx,int ancho, int tnum_x G
 
 
 
-	  z80_int *puntero_buf_sprite;
+      z80_int *puntero_buf_sprite;
 
 
-			//puntero_buf_sprite=&tsconf_layer_sprites[ x*2 ];
+            //puntero_buf_sprite=&tsconf_layer_sprites[ x*2 ];
       //puntero_buf_sprite=&layer[ x*2 ];
 
-		//destino
-		puntero_buf_sprite=&layer[x_orig*2];
+        //destino
+        puntero_buf_sprite=&layer[x_orig*2];
 
-		z80_byte byte_sprite;
-		z80_int color_final;
+        z80_byte byte_sprite;
+        z80_int color_final;
 
-			for (;ancho;ancho-=2) { //-=2 porque son a 4bpp
-				byte_sprite=*sprite_origen;
+            for (;ancho;ancho-=2) { //-=2 porque son a 4bpp
+                byte_sprite=*sprite_origen;
 
-				z80_int color_izq;
-				z80_int color_der;
+                z80_int color_izq;
+                z80_int color_der;
 
-				//si mirror
-				if (incx==-1) {
-					color_der=(byte_sprite>>4)&15;
-					color_izq=byte_sprite&15;
-				}
-				else {
-					color_izq=(byte_sprite>>4)&15;
-					color_der=byte_sprite&15;
-				}
+                //si mirror
+                if (incx==-1) {
+                    color_der=(byte_sprite>>4)&15;
+                    color_izq=byte_sprite&15;
+                }
+                else {
+                    color_izq=(byte_sprite>>4)&15;
+                    color_der=byte_sprite&15;
+                }
 
-				if (color_izq) { //0 es transparente
-					//Lo hacemos asi para que sea mas rapido
-					color_final=tsconf_return_cram_color(color_izq+16*spal);
-					*puntero_buf_sprite=color_final;
-					puntero_buf_sprite++;
-					*puntero_buf_sprite=color_final;
-					puntero_buf_sprite++;
-				}
+                if (color_izq) { //0 es transparente
+                    //Lo hacemos asi para que sea mas rapido
+                    color_final=tsconf_return_cram_color(color_izq+16*spal);
+                    *puntero_buf_sprite=color_final;
+                    puntero_buf_sprite++;
+                    *puntero_buf_sprite=color_final;
+                    puntero_buf_sprite++;
+                }
 
-				else {
-					puntero_buf_sprite+=2;
-				}
+                else {
+                    puntero_buf_sprite+=2;
+                }
 
-				x_orig++;
-				if (x_orig>=512) {
-					x_orig=0;
-					puntero_buf_sprite=layer;
-				}
+                x_orig++;
+                if (x_orig>=512) {
+                    x_orig=0;
+                    puntero_buf_sprite=layer;
+                }
 
 
-				if (color_der) { //0 es transparente
+                if (color_der) { //0 es transparente
 
 
                                         //Lo hacemos asi para que sea mas rapido
@@ -2014,21 +2481,21 @@ void tsconf_store_scanline_putsprite(int x_orig,int incx,int ancho, int tnum_x G
                                         puntero_buf_sprite++;
                                         *puntero_buf_sprite=color_final;
                                         puntero_buf_sprite++;
-				}
+                }
 
 
-				else {
-					puntero_buf_sprite+=2;
-				}
+                else {
+                    puntero_buf_sprite+=2;
+                }
 
-				x_orig++;
-				if (x_orig>=512) {
-					x_orig=0;
-					puntero_buf_sprite=layer;
-				}
+                x_orig++;
+                if (x_orig>=512) {
+                    x_orig=0;
+                    puntero_buf_sprite=layer;
+                }
 
-				sprite_origen+=incx;
-			}
+                sprite_origen+=incx;
+            }
 
 
 
@@ -2037,11 +2504,11 @@ void tsconf_store_scanline_putsprite(int x_orig,int incx,int ancho, int tnum_x G
 
 int tsconf_return_spritesgraphicspage(void)
 {
-	int direccion=tsconf_af_ports[0x19]>>3;
+    int direccion=tsconf_af_ports[0x19]>>3;
     direccion=direccion & 31;
     direccion=direccion << 17;
 
-	return direccion;
+    return direccion;
 }
 
 void tsconf_store_scanline_sprites_putsprite(int x,int incx,int y_offset,int ancho, int tnum_x, int tnum_y,z80_byte spal,z80_int *layer)
@@ -2051,7 +2518,7 @@ void tsconf_store_scanline_sprites_putsprite(int x,int incx,int y_offset,int anc
                 direccion=direccion & 31;
                 direccion=direccion << 17;*/
 
-				int direccion=tsconf_return_spritesgraphicspage();
+                int direccion=tsconf_return_spritesgraphicspage();
 
                 z80_byte *sprite_origen;
 
@@ -2068,7 +2535,7 @@ void tsconf_store_scanline_sprites_putsprite(int x,int incx,int y_offset,int anc
                 tnum_x /=2;
 
 
-				if (incx==-1) tnum_x=tnum_x+ancho/2-1;
+                if (incx==-1) tnum_x=tnum_x+ancho/2-1;
 
 
                 sprite_origen+=(tnum_y*ancho_linea)+tnum_x;
@@ -2077,7 +2544,7 @@ void tsconf_store_scanline_sprites_putsprite(int x,int incx,int y_offset,int anc
                 sprite_origen +=y_offset*(ancho_linea);
                 //printf ("sprite_origen: %d\n",sprite_origen);
 
-		        tsconf_store_scanline_putsprite(x,incx,ancho, tnum_x, tnum_y,spal,sprite_origen,layer);
+                tsconf_store_scanline_putsprite(x,incx,ancho, tnum_x, tnum_y,spal,sprite_origen,layer);
 }
 
 
@@ -2087,159 +2554,161 @@ void tsconf_store_scanline_sprites(int capa_mostrar)
    //linea que se debe leer
     //int scanline_copia=t_scanline_draw-tsconf_current_border_height;
 
-	int scanline_copia=tsconf_get_current_visible_scanline();
-	scanline_copia -=tsconf_current_border_height;
+    int scanline_copia=tsconf_get_current_visible_scanline();
+    scanline_copia -=tsconf_current_border_height;
 
-	if (scanline_copia<0) return;
+    if (scanline_copia<0) return;
 
-		int i;
-		int offset=0;
-		int salir=0;
+        int i;
+        int offset=0;
+        int salir=0;
 
-	int capa_actual=0;
+    int capa_actual=0;
 
-	z80_int *layer;
+    z80_int *layer;
 
-	if (capa_mostrar==0) layer=tsconf_layer_sprites_zero;
-	if (capa_mostrar==1) layer=tsconf_layer_sprites_one;
-	if (capa_mostrar==2) layer=tsconf_layer_sprites_two;
+    if (capa_mostrar==0) layer=tsconf_layer_sprites_zero;
+    if (capa_mostrar==1) layer=tsconf_layer_sprites_one;
+    if (capa_mostrar==2) layer=tsconf_layer_sprites_two;
 
     //Los 85 sprites
-		for (i=0;i<TSCONF_MAX_SPRITES && !salir;i++,offset+=6) {
-			z80_byte sprite_r0h=tsconf_fmaps[0x200+offset+1];
+        for (i=0;i<TSCONF_MAX_SPRITES && !salir;i++,offset+=6) {
+            z80_byte sprite_r0h=tsconf_fmaps[0x200+offset+1];
 
-			z80_byte sprite_leap=sprite_r0h&64;
-			if (sprite_r0h&64) {
-				//salir=1; //Bit Leap, ultimo sprite
-				//printf ("\nUltimo sprite");
-			}
+            z80_byte sprite_leap=sprite_r0h&64;
+            if (sprite_r0h&64) {
+                //salir=1; //Bit Leap, ultimo sprite
+                //printf ("\nUltimo sprite");
+            }
 
-			//Si sprite activo y es de esta capa
-			if (sprite_r0h&32 && capa_actual==capa_mostrar) {
-        		int y=tsconf_fmaps[0x200+offset]+256*(sprite_r0h&1);
-	      		z80_byte ysize=8*(1+((sprite_r0h>>1)&7));
+            //Si sprite activo y es de esta capa
+            if (sprite_r0h&32 && capa_actual==capa_mostrar) {
+                int y=tsconf_fmaps[0x200+offset]+256*(sprite_r0h&1);
+                  z80_byte ysize=8*(1+((sprite_r0h>>1)&7));
 
 
-        		//Ver si esta en rango y
-        		if (scanline_copia>=y && scanline_copia<y+ysize) {
+                //Ver si esta en rango y
+                if (scanline_copia>=y && scanline_copia<y+ysize) {
 
-					z80_byte sprite_r1h=tsconf_fmaps[0x200+offset+3];
-		      		int x=tsconf_fmaps[0x200+offset+2]+256*(sprite_r1h&1);
-			    	z80_byte xsize=8*(1+((sprite_r1h>>1)&7));
+                    video_chips_common_set_sprite_used_in_frame(i);
 
-					z80_byte sprite_r2h=tsconf_fmaps[0x200+offset+5];
-			    	z80_int tnum=(tsconf_fmaps[0x200+offset+4])+256*(sprite_r2h&15);
-			    	//Tile Number for upper left corner. Bits 0-5 are X Position in Graphics Bitmap, bits 6-11 - Y Position.
-			    	z80_int tnum_x=tnum & 63;
-    				z80_int tnum_y=(tnum>>6)&63;
+                    z80_byte sprite_r1h=tsconf_fmaps[0x200+offset+3];
+                      int x=tsconf_fmaps[0x200+offset+2]+256*(sprite_r1h&1);
+                    z80_byte xsize=8*(1+((sprite_r1h>>1)&7));
 
-		    		z80_byte spal=(sprite_r2h>>4)&15;
+                    z80_byte sprite_r2h=tsconf_fmaps[0x200+offset+5];
+                    z80_int tnum=(tsconf_fmaps[0x200+offset+4])+256*(sprite_r2h&15);
+                    //Tile Number for upper left corner. Bits 0-5 are X Position in Graphics Bitmap, bits 6-11 - Y Position.
+                    z80_int tnum_x=tnum & 63;
+                    z80_int tnum_y=(tnum>>6)&63;
 
-			    	/*
-			    	En demo ny17, xsize=ysize=32. tnum_x va de 0,4,8, etc. Asumimos que para posicionar en el sprite adecuado,
-			    	es un desplazamiento de tnum_x*8. Mismo para tnum_y
-			    	Para pasar de cada coordenada y, hay que sumar 512 pixeles (son de 4bpp), por tanto, 256 direcciones
-			    	*/
+                    z80_byte spal=(sprite_r2h>>4)&15;
 
-	        		//if (x>320) printf ("\nsprite %d x: %d y: %d xs: %d ys: %d tnum_x: %d tnum_y: %d spal: %d",i,x,y,xsize,ysize,tnum_x,tnum_y,spal);
-				  	//temp_sprite_xy(x,y,1+8);
-          			int y_offset=scanline_copia-y;
-          			//printf ("\nscanline: %d yoff: %d sprite %d x: %d y: %d xs: %d ys: %d tnum_x: %d tnum_y: %d spal: %d",scanline_copia,y_offset,i,x,y,xsize,ysize,tnum_x,tnum_y,spal);
-          			//temp_sprite_xy_putsprite(x,y,xsize,ysize,tnum_x,tnum_y,spal);
+                    /*
+                    En demo ny17, xsize=ysize=32. tnum_x va de 0,4,8, etc. Asumimos que para posicionar en el sprite adecuado,
+                    es un desplazamiento de tnum_x*8. Mismo para tnum_y
+                    Para pasar de cada coordenada y, hay que sumar 512 pixeles (son de 4bpp), por tanto, 256 direcciones
+                    */
 
-					//Si hay mirror vertical
-					if (sprite_r0h&128) {
-						y_offset=ysize-1-y_offset;
-					}
+                    //if (x>320) printf ("\nsprite %d x: %d y: %d xs: %d ys: %d tnum_x: %d tnum_y: %d spal: %d",i,x,y,xsize,ysize,tnum_x,tnum_y,spal);
+                      //temp_sprite_xy(x,y,1+8);
+                      int y_offset=scanline_copia-y;
+                      //printf ("\nscanline: %d yoff: %d sprite %d x: %d y: %d xs: %d ys: %d tnum_x: %d tnum_y: %d spal: %d",scanline_copia,y_offset,i,x,y,xsize,ysize,tnum_x,tnum_y,spal);
+                      //temp_sprite_xy_putsprite(x,y,xsize,ysize,tnum_x,tnum_y,spal);
 
-					//int final_layer_x_offset=x*2;  //*2 porque la resolucion de pixeles es de 360 maximo mientras que el scanline entero es de 720,
-					//y solo se pueden usar 720 con el modo texto
+                    //Si hay mirror vertical
+                    if (sprite_r0h&128) {
+                        y_offset=ysize-1-y_offset;
+                    }
 
-					  int incx=+1;
-					//Si hay mirror horizontal
-					if (sprite_r1h&128) {
-						//tnum_x=tnum_x-xsize/2;
-						incx=-1;
-					}
-					tsconf_store_scanline_sprites_putsprite(x,incx,y_offset,xsize,tnum_x,tnum_y,spal,layer);
-        		}
+                    //int final_layer_x_offset=x*2;  //*2 porque la resolucion de pixeles es de 360 maximo mientras que el scanline entero es de 720,
+                    //y solo se pueden usar 720 con el modo texto
 
-			}
+                      int incx=+1;
+                    //Si hay mirror horizontal
+                    if (sprite_r1h&128) {
+                        //tnum_x=tnum_x-xsize/2;
+                        incx=-1;
+                    }
+                    tsconf_store_scanline_sprites_putsprite(x,incx,y_offset,xsize,tnum_x,tnum_y,spal,layer);
+                }
 
-			if (sprite_leap) capa_actual++;
-			if (capa_actual>2) salir=1;
-		}
+            }
 
-		//printf ("\n");
+            if (sprite_leap) capa_actual++;
+            if (capa_actual>2) salir=1;
+        }
+
+        //printf ("\n");
 }
 
 //Retorna los dos bytes de definicion de un tile para una columna x dada (teniendo en cuenta que >=64, resetea a 0)
 void tsconf_tile_return_column_values(z80_byte *start_line,int x,z80_byte *valor1,z80_byte *valor2)
 {
 
-	x=x&63;
+    x=x&63;
 
-	z80_byte *puntero=&start_line[x*2];
-	*valor1=*puntero;
-	puntero++;
-	*valor2=*puntero;
+    z80_byte *puntero=&start_line[x*2];
+    *valor1=*puntero;
+    puntero++;
+    *valor2=*puntero;
 }
 
 
 
 int tsconf_return_tilegraphicspage(z80_byte layer)
 {
-	int direccion_graficos=tsconf_af_ports[0x17+layer]>>3;
+    int direccion_graficos=tsconf_af_ports[0x17+layer]>>3;
 
-	direccion_graficos=direccion_graficos & 31;
+    direccion_graficos=direccion_graficos & 31;
     direccion_graficos=direccion_graficos<<17;
 
-	return direccion_graficos;
+    return direccion_graficos;
 }
 
 int tsconf_return_tilemappage(void)
 {
-	int direccion_tile=tsconf_af_ports[0x16];
+    int direccion_tile=tsconf_af_ports[0x16];
     direccion_tile=direccion_tile<< 14;
 
-	return direccion_tile;
+    return direccion_tile;
 }
 
 void tsconf_store_scanline_tiles(z80_byte layer,z80_int *layer_tiles)
 {
 
-	int scanline_copia=tsconf_get_current_visible_scanline();
+    int scanline_copia=tsconf_get_current_visible_scanline();
 
 
    //linea que se debe leer
     scanline_copia -= tsconf_current_border_height;
 
-	//TODO: tener en cuenta zona invisible border ??
-	if (scanline_copia<0) return;
+    //TODO: tener en cuenta zona invisible border ??
+    if (scanline_copia<0) return;
 
 
-	int direccion_graficos=tsconf_return_tilegraphicspage(layer);
+    int direccion_graficos=tsconf_return_tilegraphicspage(layer);
 
 
-	int direccion_tile=tsconf_return_tilemappage();
+    int direccion_tile=tsconf_return_tilemappage();
 
-		//printf ("direccion_tile: %06XH\n",direccion_tile);
-
-
-
-
-	z80_byte *puntero_layer;
-	z80_byte *puntero_graficos;
-
-	puntero_layer=tsconf_ram_mem_table[0]+direccion_tile;
-	puntero_graficos=tsconf_ram_mem_table[0]+direccion_graficos;
+        //printf ("direccion_tile: %06XH\n",direccion_tile);
 
 
 
-	z80_byte puntero_offset_scroll=0x40+4*layer;
 
-	int offset_x=tsconf_af_ports[puntero_offset_scroll]+256*(tsconf_af_ports[puntero_offset_scroll+1]&1);
-	int offset_y=tsconf_af_ports[puntero_offset_scroll+2]+256*(tsconf_af_ports[puntero_offset_scroll+3]&1);
+    z80_byte *puntero_layer;
+    z80_byte *puntero_graficos;
+
+    puntero_layer=tsconf_ram_mem_table[0]+direccion_tile;
+    puntero_graficos=tsconf_ram_mem_table[0]+direccion_graficos;
+
+
+
+    z80_byte puntero_offset_scroll=0x40+4*layer;
+
+    int offset_x=tsconf_af_ports[puntero_offset_scroll]+256*(tsconf_af_ports[puntero_offset_scroll+1]&1);
+    int offset_y=tsconf_af_ports[puntero_offset_scroll+2]+256*(tsconf_af_ports[puntero_offset_scroll+3]&1);
 
   //aplicar offset_y
   scanline_copia +=offset_y;
@@ -2251,14 +2720,14 @@ void tsconf_store_scanline_tiles(z80_byte layer,z80_int *layer_tiles)
 
   //http://forum.tslabs.info/viewtopic.php?f=35&t=157
 
-	int y=scanline_copia/8;
-	//Valores mayores que 64, volver al principio
-	y=y&63;
+    int y=scanline_copia/8;
+    //Valores mayores que 64, volver al principio
+    y=y&63;
 
-	puntero_layer +=256*y; //Cada linea en mapa de tiles ocupa 256 bytes
+    puntero_layer +=256*y; //Cada linea en mapa de tiles ocupa 256 bytes
 
-	//Lo de antes es equivalente a:
-	//puntero_layer +=32*(scanline_copia & 0xFFF8); //Ignorar los primeros 3 bits, es como dividir entre 8 y multiplicar de nuevo por 8
+    //Lo de antes es equivalente a:
+    //puntero_layer +=32*(scanline_copia & 0xFFF8); //Ignorar los primeros 3 bits, es como dividir entre 8 y multiplicar de nuevo por 8
 
   /*
   O sea: se almacena en la forma (64 (layer0) + 64 (layer1)) x 64 tile = (128 + 128) x 64 bytes = 16kB = 1 page
@@ -2269,54 +2738,54 @@ void tsconf_store_scanline_tiles(z80_byte layer,z80_int *layer_tiles)
   //printf ("scanline: %d tile y: %d\n",scanline_copia,y);
 
 
-	puntero_layer +=128*layer;
+    puntero_layer +=128*layer;
 
 
-	//En que scanline esta 0...7
-	int desplazamiento_scanline=(scanline_copia & 7)*256;
+    //En que scanline esta 0...7
+    int desplazamiento_scanline=(scanline_copia & 7)*256;
 
-	//Cada linea del bitmap ocupa 256 bytes
+    //Cada linea del bitmap ocupa 256 bytes
 
-	z80_byte valor1, valor2;
+    z80_byte valor1, valor2;
 
-	int total_tiles;
-	int tile_x;
-	tile_x=offset_x/8;
-	tile_x=0;
+    int total_tiles;
+    int tile_x;
+    tile_x=offset_x/8;
+    tile_x=0;
 
-	tsconf_current_tile_written_index=-offset_x*2;
+    tsconf_current_tile_written_index=-offset_x*2;
 
-	if (tsconf_current_tile_written_index<0) {
-		tsconf_current_tile_written_index +=1024;
-	}
+    if (tsconf_current_tile_written_index<0) {
+        tsconf_current_tile_written_index +=1024;
+    }
 
-	tsconf_current_tile_written_pointer=&layer_tiles[tsconf_current_tile_written_index];
+    tsconf_current_tile_written_pointer=&layer_tiles[tsconf_current_tile_written_index];
 
-	///printf ("index: %d\n",tsconf_current_tile_written_index);
+    ///printf ("index: %d\n",tsconf_current_tile_written_index);
 
-	z80_byte *sprite_origen;
+    z80_byte *sprite_origen;
 
-	for (total_tiles=0;total_tiles<64;total_tiles++,tile_x++) {
+    for (total_tiles=0;total_tiles<64;total_tiles++,tile_x++) {
 
 
-				tsconf_tile_return_column_values(puntero_layer,tile_x,&valor1,&valor2);
+                tsconf_tile_return_column_values(puntero_layer,tile_x,&valor1,&valor2);
 
-				z80_int tnum=valor1+256*(valor2&15);
+                z80_int tnum=valor1+256*(valor2&15);
 
-				//z80_byte tpal=(valor2>>4)&3;
-				z80_byte tpal=(valor2)&(32+16);
-				//Tile Palette Selector, bits 0-1. Bits 2-3 are taken from PalSel register bits 6-7 or 4-5, dependently on tiles layer 1 or 0.
-				z80_byte palsel=tsconf_af_ports[7];
+                //z80_byte tpal=(valor2>>4)&3;
+                z80_byte tpal=(valor2)&(32+16);
+                //Tile Palette Selector, bits 0-1. Bits 2-3 are taken from PalSel register bits 6-7 or 4-5, dependently on tiles layer 1 or 0.
+                z80_byte palsel=tsconf_af_ports[7];
 
-				z80_byte tpal_23;
+                z80_byte tpal_23;
 
-				/*if (layer==0) {
-					tpal_23=(palsel>>2)&(4+8); //bits 4-5 los muevo a 2-3
-				}
+                /*if (layer==0) {
+                    tpal_23=(palsel>>2)&(4+8); //bits 4-5 los muevo a 2-3
+                }
 
-				else {
-					tpal_23=(palsel>>4)&(4+8); //bits 6-7 los muevo a 2-3
-				}*/
+                else {
+                    tpal_23=(palsel>>4)&(4+8); //bits 6-7 los muevo a 2-3
+                }*/
 
                                 if (layer==0) {
                                         tpal_23=(palsel<<2)&(64+128); //bits 4-5 los muevo a 6-7
@@ -2327,49 +2796,55 @@ void tsconf_store_scanline_tiles(z80_byte layer,z80_int *layer_tiles)
                                 }
 
 
-				tpal |=tpal_23;
+                tpal |=tpal_23;
 
-				int tnum_x=tnum&63;
-				int tnum_y=(tnum>>6)&63;
+                int tnum_x=tnum&63;
+                int tnum_y=(tnum>>6)&63;
 
-				//z80_byte tile_xf=puntero_layer[1] & 64;
-				//z80_byte tile_yf=puntero_layer[1] & 128;
+                //z80_byte tile_xf=puntero_layer[1] & 64;
+                //z80_byte tile_yf=puntero_layer[1] & 128;
 
-				z80_byte tile_xf=valor2 & 64;
-				z80_byte tile_yf=valor2 & 128;
+                z80_byte tile_xf=valor2 & 64;
+                z80_byte tile_yf=valor2 & 128;
 
-				sprite_origen=puntero_graficos+(tnum_y*256*8);
-
-
-				int incx;
-
-				if (tile_xf) {
-					incx=-1;
-					sprite_origen +=tnum_x*8/2+3;
-					//printf ("x mirror\n");
-				}
-
-				else {
-					incx=+1;
-					sprite_origen +=tnum_x*8/2;
-				}
-
-				//printf ("desplazamiento scanline: %d\n",desplazamiento_scanline);
-
-				if (tile_yf) {
-					//printf ("y mirror. layer: %d tnum_x: %d tnum_y: %d\n",layer,tnum_x,tnum_y);
-					//sprite_origen +=7*256-desplazamiento_scanline;
-					sprite_origen=sprite_origen+(7*256)-desplazamiento_scanline;
-
-				}
-				else {
-        				sprite_origen +=desplazamiento_scanline;
-				}
+                sprite_origen=puntero_graficos+(tnum_y*256*8);
 
 
-				tsconf_store_scanline_puttiles(8, incx, tpal,sprite_origen);
+                int incx;
 
-	}
+                if (tile_xf) {
+                    incx=-1;
+                    sprite_origen +=tnum_x*8/2+3;
+                    //printf ("x mirror\n");
+                }
+
+                else {
+                    incx=+1;
+                    sprite_origen +=tnum_x*8/2;
+                }
+
+                //printf ("desplazamiento scanline: %d\n",desplazamiento_scanline);
+
+                if (tile_yf) {
+                    //printf ("y mirror. layer: %d tnum_x: %d tnum_y: %d\n",layer,tnum_x,tnum_y);
+                    //sprite_origen +=7*256-desplazamiento_scanline;
+                    sprite_origen=sprite_origen+(7*256)-desplazamiento_scanline;
+
+                }
+                else {
+                        sprite_origen +=desplazamiento_scanline;
+                }
+
+
+                if (tnum || (tsconf_af_ports[6]&(4<<layer))) {
+                    tsconf_store_scanline_puttiles(8, incx, tpal,sprite_origen);
+                }
+                else {
+                    // Con T0Z_EN/T1Z_EN a cero, el tile número cero es transparente.
+                    for (int pixel=0;pixel<8;pixel++) tsconf_put_tile_pixel(0,tpal);
+                }
+
+    }
 
 
 
@@ -2377,54 +2852,60 @@ void tsconf_store_scanline_tiles(z80_byte layer,z80_int *layer_tiles)
 
 int tsconf_if_ula_enabled(void)
 {
-	if (tsconf_af_ports[0]&32) return 0;
-	return 1;
+    if (tsconf_af_ports[0]&32) return 0;
+    return 1;
 }
 
 int tsconf_if_sprites_enabled(void)
 {
-	z80_byte tsconfig=tsconf_af_ports[6];
-	if (tsconfig&128) return 1;
-	else return 0;
+    z80_byte tsconfig=tsconf_af_ports[6];
+    if (tsconfig&128) return 1;
+    else return 0;
         //printf ("Sprite layers enable ");
 }
 
 int tsconf_if_tiles_zero_enabled(void)
 {
-	z80_byte tsconfig=tsconf_af_ports[6];
-	if (tsconfig&32) return 1;
-	else return 0;
+    z80_byte tsconfig=tsconf_af_ports[6];
+    if (tsconfig&32) return 1;
+    else return 0;
 }
 
 
 int tsconf_if_tiles_one_enabled(void)
 {
-	z80_byte tsconfig=tsconf_af_ports[6];
-	if (tsconfig&64) return 1;
-	else return 0;
+    z80_byte tsconfig=tsconf_af_ports[6];
+    if (tsconfig&64) return 1;
+    else return 0;
 }
 
 //Para zona de border o pantalla
 void screen_store_scanline_rainbow_solo_display_tsconf(void)
 {
+    tsconf_video_render_vconfig=tsconf_video_next_vconfig;
+    tsconf_video_render_vpage=tsconf_video_next_vpage;
+    tsconf_video_next_vconfig=tsconf_af_ports[0];
+    tsconf_video_next_vpage=tsconf_af_ports[1];
+    tsconf_set_sizes_display_vconfig(tsconf_video_render_vconfig);
 
+    int linea_render_visible=tsconf_get_current_visible_scanline();
 
-	int linea_render_visible=tsconf_get_current_visible_scanline();
+    //El dibujado de borde no es real. Tendria que usar un buffer border como en spectrum ,pero de momento ya me vale
+    /*
+    De momento he visto que la demo "fast" cambia los colores del border, aunque no todo el border de golpe, no a cada scanline
+    */
 
-	//El dibujado de borde no es real. Tendria que usar un buffer border como en spectrum ,pero de momento ya me vale
-	/*
-	De momento he visto que la demo "fast" cambia los colores del border, aunque no todo el border de golpe, no a cada scanline
-	*/
+    //Zona de borde superior o inferior. Dibujar directamente en buffer rainbow
+    if (linea_render_visible<tsconf_current_border_height || linea_render_visible>=tsconf_current_border_height+tsconf_current_pixel_height) {
+        tsconf_store_scanline_border_supinf_izqder(0);
+        //No hay mas que eso en el scanline. volver
+        return;
+    }
 
-	//Zona de borde superior o inferior. Dibujar directamente en buffer rainbow
-	if (linea_render_visible<tsconf_current_border_height || linea_render_visible>=tsconf_current_border_height+tsconf_current_pixel_height) {
-		tsconf_store_scanline_border_supinf_izqder(0);
-		//No hay mas que eso en el scanline. volver
-		return;
-	}
+    tsconf_advance_ula_y_counter(linea_render_visible-tsconf_current_border_height);
 
-	//Border laterales. Dibujar directamente en buffer rainbow
-	tsconf_store_scanline_border_supinf_izqder(1);
+    //Border laterales. Dibujar directamente en buffer rainbow
+    tsconf_store_scanline_border_supinf_izqder(1);
 
   //Inicializamos array de capas
   int i;
@@ -2433,13 +2914,13 @@ void screen_store_scanline_rainbow_solo_display_tsconf(void)
   }
 
   //Dibujamos las capas
-	//Capa ULA
-	if (tsconf_if_ula_enabled() && tsconf_force_disable_layer_ula.v==0) {
-		tsconf_store_scanline_ula();
-				if (tsconf_reveal_layer_ula.v) {
-								tsconf_reveal_layer_draw(tsconf_layer_ula);
-				}
-	}
+    //Capa ULA
+    if (!(tsconf_video_render_vconfig&32) && tsconf_force_disable_layer_ula.v==0) {
+        tsconf_store_scanline_ula();
+                if (tsconf_reveal_layer_ula.v) {
+                                tsconf_reveal_layer_draw(tsconf_layer_ula);
+                }
+    }
 
 
 //Si estamos en zona de superior o inferior, ni sprites ni tiles
@@ -2452,117 +2933,117 @@ int spritestiles=1;
         //linea que se debe leer
         int scanline_copia=linea_render_visible-tsconf_current_border_height;
 
-				//borde superior
-				if (scanline_copia<0) spritestiles=0;
+                //borde superior
+                if (scanline_copia<0) spritestiles=0;
 
-				//Si zona border inferior
-				if (scanline_copia>tsconf_current_pixel_height) spritestiles=0;
+                //Si zona border inferior
+                if (scanline_copia>tsconf_current_pixel_height) spritestiles=0;
 
   if (spritestiles) {
 
   //if (tsconf_si_render_spritetile_rapido.v==0) {
   if (1) {
-	  //z80_byte tsconfig=tsconf_af_ports[6];
-	  //if (tsconfig&128) {
-	  if (tsconf_if_sprites_enabled() ) {
+      //z80_byte tsconfig=tsconf_af_ports[6];
+      //if (tsconfig&128) {
+      if (tsconf_if_sprites_enabled() ) {
         //printf ("Sprite layers enable ");
         if (tsconf_force_disable_layer_sprites_zero.v==0) {
-					tsconf_store_scanline_sprites(0);
-					if (tsconf_reveal_layer_sprites_zero.v) {
-								tsconf_reveal_layer_draw(tsconf_layer_sprites_zero);
-					}
-				}
+                    tsconf_store_scanline_sprites(0);
+                    if (tsconf_reveal_layer_sprites_zero.v) {
+                                tsconf_reveal_layer_draw(tsconf_layer_sprites_zero);
+                    }
+                }
 
-			if (tsconf_force_disable_layer_sprites_one.v==0) {
-			tsconf_store_scanline_sprites(1);
-					if (tsconf_reveal_layer_sprites_one.v) {
-								tsconf_reveal_layer_draw(tsconf_layer_sprites_one);
-					}
-			}
+            if (tsconf_force_disable_layer_sprites_one.v==0) {
+            tsconf_store_scanline_sprites(1);
+                    if (tsconf_reveal_layer_sprites_one.v) {
+                                tsconf_reveal_layer_draw(tsconf_layer_sprites_one);
+                    }
+            }
 
-			if (tsconf_force_disable_layer_sprites_two.v==0) {
-			tsconf_store_scanline_sprites(2);
-					if (tsconf_reveal_layer_sprites_two.v) {
-								tsconf_reveal_layer_draw(tsconf_layer_sprites_two);
-					}
-	  	}
+            if (tsconf_force_disable_layer_sprites_two.v==0) {
+            tsconf_store_scanline_sprites(2);
+                    if (tsconf_reveal_layer_sprites_two.v) {
+                                tsconf_reveal_layer_draw(tsconf_layer_sprites_two);
+                    }
+          }
 
-		}
-
-
-
-	  //if (tsconfig&32) {
-	  if (tsconf_if_tiles_zero_enabled() ) {
-			//printf ("Tile layer 0 enable- ");
-		  if (tsconf_force_disable_layer_tiles_zero.v==0) {
-				tsconf_store_scanline_tiles(0,tsconf_layer_tiles_zero);
-					if (tsconf_reveal_layer_tiles_zero.v) {
-								tsconf_reveal_layer_draw(tsconf_layer_tiles_zero);
-					}
-			}
-	 }
+        }
 
 
 
-	  //if (tsconfig&64) {
-	  if (tsconf_if_tiles_one_enabled() ) {
-        	//printf ("Tile layer 1 enable- ");
-	    if (tsconf_force_disable_layer_tiles_one.v==0) {
-				tsconf_store_scanline_tiles(1,tsconf_layer_tiles_one);
-					if (tsconf_reveal_layer_tiles_one.v) {
-								tsconf_reveal_layer_draw(tsconf_layer_tiles_one);
-					}
-			}
-	  }
+      //if (tsconfig&32) {
+      if (tsconf_if_tiles_zero_enabled() ) {
+            //printf ("Tile layer 0 enable- ");
+          if (tsconf_force_disable_layer_tiles_zero.v==0) {
+                tsconf_store_scanline_tiles(0,tsconf_layer_tiles_zero);
+                    if (tsconf_reveal_layer_tiles_zero.v) {
+                                tsconf_reveal_layer_draw(tsconf_layer_tiles_zero);
+                    }
+            }
+     }
 
 
-  	}
+
+      //if (tsconfig&64) {
+      if (tsconf_if_tiles_one_enabled() ) {
+            //printf ("Tile layer 1 enable- ");
+        if (tsconf_force_disable_layer_tiles_one.v==0) {
+                tsconf_store_scanline_tiles(1,tsconf_layer_tiles_one);
+                    if (tsconf_reveal_layer_tiles_one.v) {
+                                tsconf_reveal_layer_draw(tsconf_layer_tiles_one);
+                    }
+            }
+      }
+
+
+      }
   }
 
 
 
 
 
-		int total_ancho_rainbow=get_total_ancho_rainbow();
+        int total_ancho_rainbow=get_total_ancho_rainbow();
 
 
         //la copiamos a buffer rainbow
         z80_int *puntero_buf_rainbow;
 
         int y_rainbow=scanline_copia*2;
-				//printf ("store y: %d\n",y_rainbow);
+                //printf ("store y: %d\n",y_rainbow);
 
         puntero_buf_rainbow=&rainbow_buffer[ y_rainbow*total_ancho_rainbow ];
 
-				//Margenes border
-				puntero_buf_rainbow +=tsconf_current_border_width*2;
-				puntero_buf_rainbow +=total_ancho_rainbow*tsconf_current_border_height*2;
+                //Margenes border
+                puntero_buf_rainbow +=tsconf_current_border_width*2;
+                puntero_buf_rainbow +=total_ancho_rainbow*tsconf_current_border_height*2;
 
         int x;
 
 
-				//scanline_copia tiene coordenada scanline de dentro de zona pantalla
+                //scanline_copia tiene coordenada scanline de dentro de zona pantalla
 
 
 
-		z80_int *layer_one;
-		z80_int *layer_two;
-		z80_int *layer_three;
-		z80_int *layer_four;
-		z80_int *layer_five;
-		z80_int *layer_six;
+        z80_int *layer_one;
+        z80_int *layer_two;
+        z80_int *layer_three;
+        z80_int *layer_four;
+        z80_int *layer_five;
+        z80_int *layer_six;
 
 
-            	//Sprites encima de tiles y encima de ula
-		layer_one=tsconf_layer_sprites_two;
-		layer_two=&tsconf_layer_tiles_one[0];     //Empieza en offset 8. Tenemos 8 pixeles de margen a la izquierda que no se ven
-		layer_three=tsconf_layer_sprites_one;
-		layer_four=&tsconf_layer_tiles_zero[0]; //Empieza en offset 8. Tenemos 8 pixeles de margen a la izquierda que no se ven
-		layer_five=tsconf_layer_sprites_zero;
-		layer_six=tsconf_layer_ula;
+                //Sprites encima de tiles y encima de ula
+        layer_one=tsconf_layer_sprites_two;
+        layer_two=&tsconf_layer_tiles_one[0];     //Empieza en offset 8. Tenemos 8 pixeles de margen a la izquierda que no se ven
+        layer_three=tsconf_layer_sprites_one;
+        layer_four=&tsconf_layer_tiles_zero[0]; //Empieza en offset 8. Tenemos 8 pixeles de margen a la izquierda que no se ven
+        layer_five=tsconf_layer_sprites_zero;
+        layer_six=tsconf_layer_ula;
 
 
-	for (x=0;x<tsconf_current_pixel_width*2;x++) {
+    for (x=0;x<tsconf_current_pixel_width*2;x++) {
 
 
             z80_int color_final;
@@ -2572,44 +3053,44 @@ int spritestiles=1;
             //Gestion de capas
 
         color_final=*layer_one;
-		if (color_final==TSCONF_SCANLINE_TRANSPARENT_COLOR) {
-			color_final=*layer_two;
-			if (color_final==TSCONF_SCANLINE_TRANSPARENT_COLOR) {
-				color_final=*layer_three;
-				if (color_final==TSCONF_SCANLINE_TRANSPARENT_COLOR) {
-					color_final=*layer_four;
-					if (color_final==TSCONF_SCANLINE_TRANSPARENT_COLOR) {
-						color_final=*layer_five;
-						if (color_final==TSCONF_SCANLINE_TRANSPARENT_COLOR) {
-							color_final=*layer_six;
-							//Si transparente, color 0
-	        		        if (color_final==TSCONF_SCANLINE_TRANSPARENT_COLOR) color_final=0;
-						}
-					}
+        if (color_final==TSCONF_SCANLINE_TRANSPARENT_COLOR) {
+            color_final=*layer_two;
+            if (color_final==TSCONF_SCANLINE_TRANSPARENT_COLOR) {
+                color_final=*layer_three;
+                if (color_final==TSCONF_SCANLINE_TRANSPARENT_COLOR) {
+                    color_final=*layer_four;
+                    if (color_final==TSCONF_SCANLINE_TRANSPARENT_COLOR) {
+                        color_final=*layer_five;
+                        if (color_final==TSCONF_SCANLINE_TRANSPARENT_COLOR) {
+                            color_final=*layer_six;
+                            // Si no hay capa visible, el fondo es el color del borde.
+                            if (color_final==TSCONF_SCANLINE_TRANSPARENT_COLOR) color_final=tsconf_return_cram_color(tsconf_get_border_colour());
+                        }
+                    }
 
-				}
-			}
-		}
+                }
+            }
+        }
 
 
 
             color_final +=TSCONF_INDEX_FIRST_COLOR;
 
-						*puntero_buf_rainbow=color_final;
+                        *puntero_buf_rainbow=color_final;
 
-						//doble alto
-						*(puntero_buf_rainbow+total_ancho_rainbow)=color_final;
+                        //doble alto
+                        *(puntero_buf_rainbow+total_ancho_rainbow)=color_final;
 
-						//Siguiente pixel
-						puntero_buf_rainbow++;
+                        //Siguiente pixel
+                        puntero_buf_rainbow++;
 
-		layer_one++;
-		layer_two++;
-		layer_three++;
-		layer_four++;
-		layer_five++;
-		layer_six++;
-	}
+        layer_one++;
+        layer_two++;
+        layer_three++;
+        layer_four++;
+        layer_five++;
+        layer_six++;
+    }
 }
 
 
@@ -2619,121 +3100,118 @@ int spritestiles=1;
 void screen_tsconf_refresca_text_mode(void)
 {
 
-	int ancho_caracter=8;
-	int ancho_linea=tsconf_current_pixel_width*2;
-	int alto_pantalla=tsconf_current_pixel_height;
+    int ancho_caracter=8;
+    int ancho_linea=tsconf_current_pixel_width*2;
+    int alto_pantalla=tsconf_current_pixel_height;
 
-	//z80_int puntero=0xc000;
+    //z80_int puntero=0xc000;
 
-	z80_int puntero=0x0000;
+    z80_int puntero=0x0000;
 
-	z80_byte *screen;
-	screen=tsconf_ram_mem_table[tsconf_get_vram_page() ];
+    z80_byte *screen;
+    screen=tsconf_ram_mem_table[tsconf_get_vram_page() ];
 
-	int ancho_linea_caracteres=256;
-	int x=0;
-	int y=0;
+    int ancho_linea_caracteres=256;
+    int x=0;
+    int y=0;
 
-	z80_byte font_page=tsconf_get_text_font_page();
+    z80_byte font_page=tsconf_get_text_font_page();
 
-	z80_byte *puntero_fuente;
-	puntero_fuente=tsconf_ram_mem_table[font_page];
+    z80_byte *puntero_fuente;
+    puntero_fuente=tsconf_ram_mem_table[font_page];
 
-	z80_int puntero_orig=puntero;
+    z80_int puntero_orig=puntero;
 
-	z80_byte caracter;
-	//z80_byte caracter_text;
-
-
+    z80_byte caracter;
+    //z80_byte caracter_text;
 
 
-	z80_bit inverse;
-
-	inverse.v=0;
-
-	z80_int offset_caracter;
-
-	z80_byte tinta,papel;
-
-	z80_byte atributo;
-
-	for (;puntero<7680;) {
-
-		caracter=screen[puntero];
-		atributo=screen[puntero+128];
-
-		//printf ("%d ",atributo);
-
-		puntero++;
 
 
-		offset_caracter=caracter*8;
+    z80_bit inverse;
 
-		//No tengo ni idea de si se leen los atributos asi, pero parece similar al real
-		tinta=atributo&15;
-		papel=(atributo>>4)&15;
+    inverse.v=0;
 
-		scr_tsconf_putsprite_comun(&puntero_fuente[offset_caracter],8,x,y,inverse,tinta,papel,NULL);
+    z80_int offset_caracter;
+
+    z80_byte tinta,papel;
+
+    z80_byte atributo;
+
+    for (;puntero<7680;) {
+
+        caracter=screen[puntero];
+        atributo=screen[puntero+128];
+
+        //printf ("%d ",atributo);
+
+        puntero++;
 
 
-		x+=ancho_caracter;
-		if (x+ancho_caracter>ancho_linea) {
-			//printf ("\n");
-			x=0;
-			y+=8;
-			if (y+8>alto_pantalla) {
-				//provocar fin
-				puntero=7680;
-			}
-			puntero=puntero_orig+ancho_linea_caracteres; //saltar atributos
-			puntero_orig=puntero;
-		}
-	}
+        offset_caracter=caracter*8;
+
+        //No tengo ni idea de si se leen los atributos asi, pero parece similar al real
+        tinta=atributo&15;
+        papel=(atributo>>4)&15;
+
+        scr_tsconf_putsprite_comun(&puntero_fuente[offset_caracter],8,x,y,inverse,tinta,papel,NULL);
+
+
+        x+=ancho_caracter;
+        if (x+ancho_caracter>ancho_linea) {
+            //printf ("\n");
+            x=0;
+            y+=8;
+            if (y+8>alto_pantalla) {
+                //provocar fin
+                puntero=7680;
+            }
+            puntero=puntero_orig+ancho_linea_caracteres; //saltar atributos
+            puntero_orig=puntero;
+        }
+    }
 }
 
 
 //Putpixel de pixeles 2x2 de border de tsconf para modo no rainbow
 void scr_tsconf_putpixel_zoom_border(int x,int y, unsigned int color)
 {
-	x*=2;
-	y*=2;
-
-    int menu_x=x/8;
-    int menu_y=y/8;
+    x*=2;
+    y*=2;
 
 
-    //Suponemos que x, x+1 e y e y+1 van a estar dentro de una cuadricula igual los dos, por tanto la comprobacion siguiente solo la hacemos una vez
-    if (scr_ver_si_refrescar_por_menu_activo(menu_x,menu_y)){
+
+
         scr_putpixel_zoom(x,y,color);
         scr_putpixel_zoom(x+1,y,color);
         scr_putpixel_zoom(x,y+1,color);
         scr_putpixel_zoom(x+1,y+1,color);
-    }
+
 }
 
 void scr_refresca_border_tsconf_cont(void)
 {
-	int color;
+    int color;
 
-	color=tsconf_get_border_colour();
+    color=tsconf_get_border_colour();
         color=TSCONF_INDEX_FIRST_COLOR+tsconf_return_cram_color(color);
 
 
 
-	if (scr_refresca_sin_colores.v) color=7;
+    if (scr_refresca_sin_colores.v) color=7;
 
 //      printf ("Refresco border\n");
 
         int x,y;
 
-	//Top border cambia en spectrum y zx8081 y ace
-	//int topborder=TOP_BORDER;
+    //Top border cambia en spectrum y zx8081 y ace
+    //int topborder=TOP_BORDER;
 
         //parte superior e inferior
         for (y=0;y<tsconf_current_border_height;y++) {
                 for (x=0;x<TSCONF_DISPLAY_WIDTH/2;x++) {
                                 scr_tsconf_putpixel_zoom_border(x,y,color);
-																scr_tsconf_putpixel_zoom_border(x,y+tsconf_current_pixel_height+tsconf_current_border_height,color);
+                                                                scr_tsconf_putpixel_zoom_border(x,y+tsconf_current_pixel_height+tsconf_current_border_height,color);
                 }
         }
 
@@ -2752,16 +3230,16 @@ void scr_refresca_border_tsconf_cont(void)
 
 void screen_tsconf_refresca_border(void)
 {
-	//if (rainbow_enabled.v==0) {
+    //if (rainbow_enabled.v==0) {
         if (border_enabled.v) {
-		    //ver si hay que refrescar border
-			if (modificado_border.v) {
+            //ver si hay que refrescar border
+            if (modificado_border.v) {
                 scr_refresca_border_tsconf_cont();
                 modificado_border.v=0;
             }
 
         }
-	//}
+    //}
 }
 
 //z80_int temp_cc=0;
@@ -2769,8 +3247,8 @@ void screen_tsconf_refresca_border(void)
 //Refresco pantalla sin rainbow en tsconf
 void scr_tsconf_refresca_pantalla_zxmode_no_rainbow_comun(void)
 {
-	//printf ("refresca\n");
-	int x,y,bit;
+    //printf ("refresca\n");
+    int x,y,bit;
         z80_int direccion,dir_atributo;
         z80_byte byte_leido;
         int color=0;
@@ -2781,18 +3259,18 @@ void scr_tsconf_refresca_pantalla_zxmode_no_rainbow_comun(void)
 
 
        z80_byte *screen;
-			 z80_byte vram_page=tsconf_get_vram_page();
-			 //vram_page=temp_cc/64;
-			 //temp_cc++;
+             z80_byte vram_page=tsconf_get_vram_page();
+             //vram_page=temp_cc/64;
+             //temp_cc++;
 
 
-			 //printf ("refresca modo 0. vram: %d\n",vram_page);
-			 screen=tsconf_ram_mem_table[vram_page];
-			 //temp
-			 //screen=tsconf_ram_mem_table[tsconf_af_ports[1]];
+             //printf ("refresca modo 0. vram: %d\n",vram_page);
+             screen=tsconf_ram_mem_table[vram_page];
+             //temp
+             //screen=tsconf_ram_mem_table[tsconf_af_ports[1]];
 
         //printf ("dpy=%x ventana=%x gc=%x image=%x\n",dpy,ventana,gc,image);
-	z80_byte x_hi;
+    z80_byte x_hi;
 
         for (y=0;y<192;y++) {
 
@@ -2804,55 +3282,63 @@ void scr_tsconf_refresca_pantalla_zxmode_no_rainbow_comun(void)
                 for (x=0,x_hi=0;x<32;x++,x_hi +=8) {
 
 
-			//Ver en casos en que puede que haya menu activo y hay que hacer overlay
-			if (1==1) {
-			//if (scr_ver_si_refrescar_por_menu_activo(x,fila)) {
-
-                	        byte_leido=screen[direccion];
-	                        attribute=screen[dir_atributo];
-
-				if (scr_refresca_sin_colores.v) attribute=56;
+            //Ver en casos en que puede que haya menu activo y hay que hacer overlay
+            if (1==1) {
 
 
-        	                ink=attribute &7;
-                	        paper=(attribute>>3) &7;
-	                        bright=(attribute) &64;
-        	                flash=(attribute)&128;
-                	        if (flash) {
-                        	        //intercambiar si conviene
-	                                if (estado_parpadeo.v) {
-        	                                aux=paper;
-                	                        paper=ink;
-	                                        ink=aux;
-        	                        }
-                	        }
+                            byte_leido=screen[direccion];
+                            attribute=screen[dir_atributo];
 
-				if (bright) {
-					ink +=8;
-					paper +=8;
-				}
+                if (scr_refresca_sin_colores.v) attribute=56;
 
-                        	for (bit=0;bit<8;bit++) {
-
-					color= ( byte_leido & 128 ? ink : paper );
-
-					color=TSCONF_INDEX_FIRST_COLOR+ tsconf_return_cram_color  (tsconf_return_cram_palette_offset()+color);
+                else {
+                    if (scr_refresca_show_attribute_grid.v) {
+                        int cuad=(fila+x)%2;
+                        if (cuad) attribute=56+64;
+                        else attribute=56;
+                    }
+                }
 
 
-					scr_tsconf_putpixel_zx_mode(x_hi+bit,y,color);
+                            ink=attribute &7;
+                            paper=(attribute>>3) &7;
+                            bright=(attribute) &64;
+                            flash=(attribute)&128;
+                            if (flash) {
+                                    //intercambiar si conviene
+                                    if (estado_parpadeo.v) {
+                                            aux=paper;
+                                            paper=ink;
+                                            ink=aux;
+                                    }
+                            }
 
-	                                byte_leido=byte_leido<<1;
-        	                }
-			}
+                if (bright) {
+                    ink +=8;
+                    paper +=8;
+                }
 
-			//temp
-			//else {
-			//	printf ("no refrescamos zona x %d fila %d\n",x,fila);
-			//}
+                            for (bit=0;bit<8;bit++) {
+
+                    color= ( byte_leido & 128 ? ink : paper );
+
+                    color=TSCONF_INDEX_FIRST_COLOR+ tsconf_return_cram_color  (tsconf_return_cram_palette_offset()+color);
+
+
+                    scr_tsconf_putpixel_zx_mode(x_hi+bit,y,color);
+
+                                    byte_leido=byte_leido<<1;
+                            }
+            }
+
+            //temp
+            //else {
+            //	printf ("no refrescamos zona x %d fila %d\n",x,fila);
+            //}
 
 
                         direccion++;
-			dir_atributo++;
+            dir_atributo++;
                 }
 
         }
@@ -2866,7 +3352,7 @@ z80_byte temp_conta_ts2=0;
 void scr_tsconf_refresca_pantalla_16c_256c_no_rainbow(int modo)
 {
 
-	int x,y;
+    int x,y;
 
 
     z80_byte color;
@@ -2893,13 +3379,13 @@ void scr_tsconf_refresca_pantalla_16c_256c_no_rainbow(int modo)
         for (x=0;x<tsconf_current_pixel_width;) {
 
 
-			//Ver en casos en que puede que haya menu activo y hay que hacer overlay
+            //Ver en casos en que puede que haya menu activo y hay que hacer overlay
             if (1==1) {
-			//if (scr_ver_si_refrescar_por_menu_activo(x,fila)) {
+
 
                 if (modo==1) { //16c
                     color=screen[puntero++];
-					//printf ("color: %d\n",color);
+                    //printf ("color: %d\n",color);
                     scr_tsconf_putpixel_zx_mode(x++,y,TSCONF_INDEX_FIRST_COLOR+ tsconf_return_cram_color (tsconf_return_cram_palette_offset()+( (color>>4)&0xF) ) );
                     scr_tsconf_putpixel_zx_mode(x++,y,TSCONF_INDEX_FIRST_COLOR+ tsconf_return_cram_color  (tsconf_return_cram_palette_offset()+ (color&0xF) ) );
                 }
@@ -2934,93 +3420,35 @@ void scr_tsconf_refresca_pantalla_16c_256c_no_rainbow(int modo)
 void scr_tsconf_refresca_pantalla_zxmode_no_rainbow(void)
 {
 
-	/*if (border_enabled.v) {
-		//ver si hay que refrescar border
-		if (modificado_border.v) {
+    /*if (border_enabled.v) {
+        //ver si hay que refrescar border
+        if (modificado_border.v) {
 
 
-			//screen_prism_refresca_no_rainbow_border(color);
-			scr_refresca_border_tsconf_cont();
+            //screen_prism_refresca_no_rainbow_border(color);
+            scr_refresca_border_tsconf_cont();
 
-			modificado_border.v=0;
-		}
-
-	}*/
-
-	scr_tsconf_refresca_pantalla_zxmode_no_rainbow_comun();
-
-}
-
-
-void screen_tsconf_refresca_rainbow(void) {
-
-	int ancho,alto;
-
-    ancho=get_total_ancho_rainbow();
-    alto=get_total_alto_rainbow();
-
-    //printf ("ancho: %d alto: %d\n",ancho,alto);
-
-    int x,y,bit;
-
-    //margenes de zona interior de pantalla. Para overlay menu
-    /*int margenx_izq=screen_total_borde_izquierdo*border_enabled.v;
-       int margenx_der=screen_total_borde_izquierdo*border_enabled.v+512;
-       int margeny_arr=screen_borde_superior*border_enabled.v;
-        int margeny_aba=screen_borde_superior*border_enabled.v+384;*/
-
-    //en tsconf menu no aparece con margen de border. Sale tal cual desde 0,0
-
-    //para overlay menu tambien
-
-    z80_int color_pixel;
-    z80_int *puntero;
-
-    puntero=rainbow_buffer;
-    int dibujar;
-
-    int menu_x,menu_y;
-
-    for (y=0;y<alto;y++) {
-        for (x=0;x<ancho;x+=8) {
-            dibujar=1;
-
-            //Ver si esa zona esta ocupada por texto de menu u overlay.
-            // Como tsconf usa menu doble de tamanyo, multiplicamos por valor de menu_gui_zoom que sera 2 siempre (seria lo mismo
-            //que poner y<384 && x<512, pero queda mas explicativo en este caso y se puede usar el mismo if para diferentes maquinas
-            if (y<192*menu_gui_zoom && x<256*menu_gui_zoom) {
-                dibujar=0;
-				menu_x=x/8;
-				menu_y=y/8;
-
-				if (scr_ver_si_refrescar_por_menu_activo(menu_x,menu_y)) dibujar=1;
-            }
-
-
-            if (dibujar==1) {
-                //printf ("dibujamos en X: %d y: %d\n",x,y);
-                for (bit=0;bit<8;bit++) {
-                    color_pixel=*puntero++;
-                    scr_putpixel_zoom_rainbow(x+bit,y,color_pixel);
-                }
-            }
-            else puntero+=8;
-
+            modificado_border.v=0;
         }
-    }
 
+    }*/
+
+    scr_tsconf_refresca_pantalla_zxmode_no_rainbow_comun();
 
 }
+
+
+
 
 
 void screen_tsconf_refresca_pantalla(void)
 {
 
 
-	//Como spectrum clasico
+    //Como spectrum clasico
 
-	//modo clasico. sin rainbow
-	if (rainbow_enabled.v==0) {
+    //modo clasico. sin rainbow
+    if (rainbow_enabled.v==0) {
         screen_tsconf_refresca_border();
         z80_byte modo_video=tsconf_get_video_mode_display();
 
@@ -3031,14 +3459,12 @@ void screen_tsconf_refresca_pantalla(void)
         if (modo_video==2) scr_tsconf_refresca_pantalla_16c_256c_no_rainbow(2);
         if (modo_video==3) screen_tsconf_refresca_text_mode();
 
-	}
+    }
 
-	else {
-	//modo rainbow - real video
-
-
-        screen_tsconf_refresca_rainbow();
-	}
+    else {
+    //modo rainbow - real video
+        scr_refresca_pantalla_rainbow_comun();
+    }
 
 }
 
@@ -3050,33 +3476,33 @@ void tsconf_get_debug_sprite(int sprite,struct s_tsconf_debug_sprite *dest)
 {
 
 //Para debug, retornar info de sprite X (0..84)
-			sprite=sprite%TSCONF_MAX_SPRITES;
+            sprite=sprite%TSCONF_MAX_SPRITES;
 
-			int offset=sprite*6;
-			z80_byte sprite_r0h=tsconf_fmaps[0x200+offset+1];
+            int offset=sprite*6;
+            z80_byte sprite_r0h=tsconf_fmaps[0x200+offset+1];
 
-			dest->leap=sprite_r0h&64;
-
-
-			dest->act=sprite_r0h&32;
-        	dest->y=tsconf_fmaps[0x200+offset]+256*(sprite_r0h&1);
-	      	dest->ys=8*(1+((sprite_r0h>>1)&7));
+            dest->leap=sprite_r0h&64;
 
 
-        	z80_byte sprite_r1h=tsconf_fmaps[0x200+offset+3];
-		    dest->x=tsconf_fmaps[0x200+offset+2]+256*(sprite_r1h&1);
-			dest->xs=8*(1+((sprite_r1h>>1)&7));
+            dest->act=sprite_r0h&32;
+            dest->y=tsconf_fmaps[0x200+offset]+256*(sprite_r0h&1);
+              dest->ys=8*(1+((sprite_r0h>>1)&7));
 
-			z80_byte sprite_r2h=tsconf_fmaps[0x200+offset+5];
-			z80_int tnum=(tsconf_fmaps[0x200+offset+4])+256*(sprite_r2h&15);
-			    	//Tile Number for upper left corner. Bits 0-5 are X Position in Graphics Bitmap, bits 6-11 - Y Position.
-			dest->tnum_x=tnum & 63;
-    		dest->tnum_y=(tnum>>6)&63;
 
-		    dest->spal=(sprite_r2h>>4)&15;
+            z80_byte sprite_r1h=tsconf_fmaps[0x200+offset+3];
+            dest->x=tsconf_fmaps[0x200+offset+2]+256*(sprite_r1h&1);
+            dest->xs=8*(1+((sprite_r1h>>1)&7));
 
-			dest->xf=sprite_r1h&128;
-			dest->yf=sprite_r0h&128;
+            z80_byte sprite_r2h=tsconf_fmaps[0x200+offset+5];
+            z80_int tnum=(tsconf_fmaps[0x200+offset+4])+256*(sprite_r2h&15);
+                    //Tile Number for upper left corner. Bits 0-5 are X Position in Graphics Bitmap, bits 6-11 - Y Position.
+            dest->tnum_x=tnum & 63;
+            dest->tnum_y=(tnum>>6)&63;
+
+            dest->spal=(sprite_r2h>>4)&15;
+
+            dest->xf=sprite_r1h&128;
+            dest->yf=sprite_r0h&128;
 
 
 
@@ -3088,22 +3514,22 @@ z80_byte tsconf_vector_fired_interrupt=0xFF;
 void tsconf_generate_im1_im2(z80_byte vector)
 {
 
-	tsconf_vector_fired_interrupt=vector;
-	interrupcion_maskable_generada.v=1;
+    tsconf_vector_fired_interrupt=vector;
+    interrupcion_maskable_generada.v=1;
 
 
 }
 
 void tsconf_fire_line_interrupt(void)
 {
-	tsconf_generate_im1_im2(253);
+    tsconf_generate_im1_im2(253);
 }
 
 
 
 void tsconf_fire_frame_interrupt(void)
 {
-	tsconf_generate_im1_im2(255);
+    tsconf_generate_im1_im2(255);
 }
 
 int tsconf_handle_frame_interrupts_prev_horiz=9999;
@@ -3114,64 +3540,62 @@ int tsconf_handle_frame_interrupts_prev_horiz=9999;
 void tsconf_handle_frame_interrupts(void)
 {
 
-	//Depende de DI???
-	if (iff1.v==0) return;
+    //Depende de DI???
+    if (iff1.v==0) return;
 
-	//registro intmask 2aH bit 1
-	if ((tsconf_af_ports[0x2a]&1)==0) return;
+    //registro intmask 2aH bit 1
+    if ((tsconf_af_ports[0x2a]&1)==0) return;
 
-	//printf ("tsconf raster line mask");
-	z80_byte int_raster_x=(tsconf_af_ports[0x22]);
-	//Si > 223, desactivado
-	if (int_raster_x>223) return;
+    //printf ("tsconf raster line mask");
+    z80_byte int_raster_x=(tsconf_af_ports[0x22]);
+    //Si > 223, desactivado
+    if (int_raster_x>223) return;
 
-	int int_raster_y=(tsconf_af_ports[0x23])+256*(tsconf_af_ports[0x24]&1);
+    int int_raster_y=(tsconf_af_ports[0x23])+256*(tsconf_af_ports[0x24]&1);
 
-	//Si >319, desactivado
-	if (int_raster_y>319) return;
+    //Si >319, desactivado
+    if (int_raster_y>319) return;
 
-	//temp. Si <2, desactivado
-	//if (int_raster_y<2) return;
-
-
-	//printf ("tsconf raster set to %d %d\n",int_raster_x,int_raster_y);
-	//Ver en que posicion de t-estados por linea estamos
-
-	int estados_en_linea=t_estados % screen_testados_linea;
-
-	//Dividir por turbo
-	//estados_en_linea /=cpu_turbo_speed;
-
-	//primero comparar scanline
-	if (t_scanline==int_raster_y) {
-		//printf ("t: %d estados_en_linea: %d raster_x: %d last_interrupt: %d",t_estados,estados_en_linea,int_raster_x,tsconf_handle_frame_interrupts_prev_horiz);
-		//printf ("disparada raster y: %d  \n",int_raster_y);
-		//Y ahora ver si nos "hemos" pasado de la posicion estados_en_linea anterior
-
-		if (estados_en_linea>=int_raster_x && estados_en_linea<tsconf_handle_frame_interrupts_prev_horiz) {
-			//temp saltar sin tener en cuenta posicion X
-			//if (t_scanline>tsconf_last_frame_y) {
-
-			//Generar interrupcion
-			tsconf_fire_frame_interrupt();
-
-			//debug_printf (VERBOSE_DEBUG,"Fired frame interrupt. VSINT: %d , HSINT: %d . scanline: %d , states in line: %d. vint_inc: %X",
-			//	int_raster_y,int_raster_x,t_scanline,estados_en_linea,(tsconf_af_ports[0x24]>>4)&0xF);
-
-			//printf ("Reg VSINTH: %d\n",tsconf_af_ports[0x24]);
-
-				//printf ("tsconf raster set to line %d x %d\n",int_raster_y,int_raster_x);
-				//printf ("Fired frame interrupt. VSINT: %d , HSINT: %d . scanline: %d , states in line: %d. vint_inc: %X\n",
-				//int_raster_y,int_raster_x,t_scanline,estados_en_linea,(tsconf_af_ports[0x24]>>4)&0xF);
+    //temp. Si <2, desactivado
+    //if (int_raster_y<2) return;
 
 
-			tsconf_handle_frame_interrupts_prev_horiz=estados_en_linea;
-			//tsconf_last_frame_y=t_scanline;
+    //printf ("tsconf raster set to %d %d\n",int_raster_x,int_raster_y);
+    //Ver en que posicion de t-estados por linea estamos
 
-		}
+    int estados_en_linea=t_estados % screen_testados_linea;
+    int posicion_interrupcion=int_raster_x*cpu_turbo_speed;
+
+    //primero comparar scanline
+    if (t_scanline==int_raster_y) {
+        //printf ("t: %d estados_en_linea: %d raster_x: %d last_interrupt: %d",t_estados,estados_en_linea,int_raster_x,tsconf_handle_frame_interrupts_prev_horiz);
+        //printf ("disparada raster y: %d  \n",int_raster_y);
+        //Y ahora ver si nos "hemos" pasado de la posicion estados_en_linea anterior
+
+        if (estados_en_linea>=posicion_interrupcion && estados_en_linea<tsconf_handle_frame_interrupts_prev_horiz) {
+            //temp saltar sin tener en cuenta posicion X
+            //if (t_scanline>tsconf_last_frame_y) {
+
+            //Generar interrupcion
+            tsconf_fire_frame_interrupt();
+
+            //debug_printf (VERBOSE_DEBUG,"Fired frame interrupt. VSINT: %d , HSINT: %d . scanline: %d , states in line: %d. vint_inc: %X",
+            //	int_raster_y,int_raster_x,t_scanline,estados_en_linea,(tsconf_af_ports[0x24]>>4)&0xF);
+
+            //printf ("Reg VSINTH: %d\n",tsconf_af_ports[0x24]);
+
+                //printf ("tsconf raster set to line %d x %d\n",int_raster_y,int_raster_x);
+                //printf ("Fired frame interrupt. VSINT: %d , HSINT: %d . scanline: %d , states in line: %d. vint_inc: %X\n",
+                //int_raster_y,int_raster_x,t_scanline,estados_en_linea,(tsconf_af_ports[0x24]>>4)&0xF);
 
 
-	}
+            tsconf_handle_frame_interrupts_prev_horiz=estados_en_linea;
+            //tsconf_last_frame_y=t_scanline;
+
+        }
+
+
+    }
 
 }
 
@@ -3180,43 +3604,43 @@ void tsconf_handle_frame_interrupts(void)
 void tsconf_handle_line_interrupts(void)
 {
 
-	//Depende de DI???
-	if (iff1.v==0) return;
+    //Depende de DI???
+    if (iff1.v==0) return;
 
-	//registro intmask 2aH bit 1
-	if ((tsconf_af_ports[0x2a]&2)==0) return;
+    //registro intmask 2aH bit 1
+    if ((tsconf_af_ports[0x2a]&2)==0) return;
 
 
-	//printf ("line interrupt set and fired at line %d\n",t_scanline);
+    //printf ("line interrupt set and fired at line %d\n",t_scanline);
 
-	tsconf_fire_line_interrupt();
+    tsconf_fire_line_interrupt();
 
 
 
 }
 
 const z80_byte tsconf_default_basic_palette[]={
-0x00,0x00,0x10,0x00,0x00,0x40,0x10,0x40,0x00,0x02,0x10,0x02,0x00,0x42,0x10,0x42,0x08,0x21,0x18,0x00,0x00,0x60,0x18,0x60,0x00,0x03,0x18,0x03,0x00,0x63,0x18,0x63
+0x00,0x00,0x10,0x00,0x00,0x40,0x10,0x40,0x00,0x02,0x10,0x02,0x00,0x42,0x10,0x42,0x00,0x00,0x18,0x00,0x00,0x60,0x18,0x60,0x00,0x03,0x18,0x03,0x00,0x63,0x18,0x63
 };
 
 //Inicializar tabla de colores 240-255 pues hay juegos, como pixeldemo, que usan dichos colores, y si se carga desde linea de comandos, sin pasar por la bios de tsconf, la paleta esta vacia
 void tsconf_set_default_basic_palette(void)
 {
 
-	debug_printf(VERBOSE_DEBUG,"Initializing TSConf basic palette (240-255)");
+    debug_printf(VERBOSE_DEBUG,"Initializing TSConf basic palette (240-255)");
 
-	int index=240*2;
-	int i;
+    int index=240*2;
+    int i;
 
-	for (i=0;i<16*2;i++) {
-		tsconf_fmaps[index+i]=tsconf_default_basic_palette[i];
-	}
+    for (i=0;i<16*2;i++) {
+        tsconf_fmaps[index+i]=tsconf_default_basic_palette[i];
+    }
 }
 
 
 void tsconf_set_emulador_settings(void)
 {
-	//Sincronizar settings de emulador con los valores de puertos de tsconf
+    //Sincronizar settings de emulador con los valores de puertos de tsconf
   tsconf_set_emulator_setting_turbo();
 
 
@@ -3226,7 +3650,7 @@ void tsconf_set_emulador_settings(void)
 z80_byte tsconf_zifi_read_data_reg(void)
 {
 
-	return uartbridge_readdata();
+    return uartbridge_readdata();
 }
 
 
@@ -3234,23 +3658,22 @@ void tsconf_zifi_write_data_reg(z80_byte value)
 {
 
 
-	uartbridge_writedata(value);
+    uartbridge_writedata(value);
 
 
 }
 
 z80_byte tsconf_zifi_read_error_reg(void)
 {
-	//TODO: Ni idea que retornar
+    //TODO: Ni idea que retornar
 
-	return 0;
+    return 0;
 }
 
-void tsconf_zifi_write_command_reg(z80_byte value)
+void tsconf_zifi_write_command_reg(z80_byte value GCC_UNUSED)
 {
-	//TODO: Ni idea que hacer con esto, aparentemente altera la fifo de conexion con la wifi
-	value=1; //Para que no se queje el compilador
-	value++;
+    //TODO: Ni idea que hacer con esto, aparentemente altera la fifo de conexion con la wifi
+
 }
 
 
@@ -3259,37 +3682,26 @@ z80_byte tsconf_zifi_read_input_fifo_status(void)
 
 
 
-	//No dispositivo abierto
-	if (!uartbridge_available()) return 0;
+    //No dispositivo abierto
+    if (!uartbridge_available()) return 0;
 
 
-	int status=chardevice_status(uartbridge_handler);
+    int status=chardevice_status(uartbridge_handler);
 
 
-	z80_byte status_retorno=0;
+    z80_byte status_retorno=0;
 
-	if (status & CHDEV_ST_RD_AVAIL_DATA) status_retorno |= 1;
-	//0 - input FIFO is empty,
+    if (status & CHDEV_ST_RD_AVAIL_DATA) status_retorno |= 1;
+    //0 - input FIFO is empty,
 
-	return status_retorno;
+    return status_retorno;
 }
 
 
 z80_byte tsconf_zifi_read_output_fifo_status(void)
 {
-	//printf ("tsconf_zifi_read_output_fifo_status\n");
+    //printf ("tsconf_zifi_read_output_fifo_status\n");
 
-	//0 - output FIFO is full
-	return 1;
+    //0 - output FIFO is full
+    return 1;
 }
-
-z80_byte temp_valor_puerto_57;
-
-z80_byte tsconf_read_port_57(void)
-{
-	//TODO: ni idea. demo zifi espera que sea FFH
-	//printf ("PC=%04XH\n",reg_pc);
-	temp_valor_puerto_57++;
-	return temp_valor_puerto_57;
-}
-

@@ -50,6 +50,7 @@
 #include "printers.h"
 #include "z88.h"
 #include "zxuno.h"
+#include "tsconf.h"
 #include "textspeech.h"
 #include "mmc.h"
 #include "ide.h"
@@ -76,6 +77,7 @@
 #include "zxvision_topbar.h"
 #include "microdrive.h"
 #include "zxmmcplus.h"
+#include "ql_zx8302.h"
 
 #include "autoselectoptions.h"
 
@@ -383,7 +385,7 @@ void timer_trigger_interrupt(void)
 }
 
 
-void *usleep_timer_function(void *nada)
+void *usleep_timer_function(void *nada GCC_UNUSED)
 {
 	while (1) {
 		timer_usleep(timer_sleep_machine);
@@ -397,9 +399,6 @@ void *usleep_timer_function(void *nada)
 
 	}
 
-	//para que no se queje el compilador de variable no usada
-	nada=0;
-	nada++;
 
 
 	return NULL;
@@ -633,6 +632,20 @@ void init_timer(void)
 
 #endif
 
+
+#if defined(__APPLE__)
+    //Parece que en Mac el timer usleep no funciona bien... lo metemos al final de la lista de prioridades
+    timer_remove_timer(available_timers,TIMER_USLEEP);
+    //printf("Quitar usleep\n");
+
+#ifdef USE_PTHREADS
+    timer_add_timer_usleep_to_bottom();
+    //printf("Poner usleep al fondo\n");
+#endif
+
+#endif
+
+
     debug_printf(VERBOSE_DEBUG,"Available timers:");
     //printf("Available timers at final of init_timer:\n");
     timer_debug_print_timer_list(available_timers);
@@ -779,6 +792,59 @@ int timer_condicion_top_speed(void)
 }
 
 
+//Contador en frames que indica que está activa la carga rápida
+int timer_storage_common_accelerate_loading_counter=0;
+
+void timer_storage_common_accelerate_loading(void)
+{
+
+    if (storage_accelerate_loading.v==0) return;
+    timer_storage_common_accelerate_loading_counter=10;
+    if (top_speed_timer.v) return;
+
+    //printf("Enabling turbo on loading\n");
+    top_speed_timer.v=1;
+}
+
+void timer_storage_common_accelerate_loading_decrease_counter(void)
+{
+    if (!timer_storage_common_accelerate_loading_counter) return;
+
+    //printf("Decrease counter\n");
+
+    timer_storage_common_accelerate_loading_counter--;
+    if (!timer_storage_common_accelerate_loading_counter) {
+        top_speed_timer.v=0;
+        //printf("Quitar turbo por timer\n");
+    }
+}
+
+
+//Contador en frames que indica que está activa la grabación rápida
+int timer_storage_common_accelerate_saving_counter=0;
+
+void timer_storage_common_accelerate_saving(void)
+{
+
+    if (storage_accelerate_saving.v==0) return;
+    timer_storage_common_accelerate_saving_counter=10;
+    if (top_speed_timer.v) return;
+
+    //printf("Enabling turbo on saving\n");
+    top_speed_timer.v=1;
+}
+
+void timer_storage_common_accelerate_saving_decrease_counter(void)
+{
+    if (!timer_storage_common_accelerate_saving_counter) return;
+
+    //printf("Decrease counter\n");
+
+    timer_storage_common_accelerate_saving_counter--;
+    if (!timer_storage_common_accelerate_saving_counter) {
+        top_speed_timer.v=0;
+    }
+}
 
 
 
@@ -814,8 +880,16 @@ void timer_pause_waiting_end_frame(void)
 		timer_usleep(1000/16);
 
 #else
+
+    //Otras esperas para final de frame, por ejemplo para FiwixOS, esto mejora la velocidad
+    #ifdef SHORT_SLEEP_TIMER
+        //printf("Using short timer\n");
+        timer_usleep(1000/16);
+    #else
+
 		//Timer normal
 		timer_sleep(1);
+    #endif
 
 #endif
 	}
@@ -991,7 +1065,12 @@ void timer_check_interrupt(void)
 
         //printf ("contador_20ms: %d\n",contador_20ms);
 
-        if (contador_20ms<20000) return;
+        if (machine_60hz.v) {
+            if (contador_20ms<16666) return;
+        }
+        else {
+            if (contador_20ms<20000) return;
+        }
 
         //Cosas que suceden cada 20 ms aproximadamente
         /*digo aproximadamente porque:
@@ -1064,7 +1143,7 @@ void timer_check_interrupt(void)
                 if (menu_button_osdkeyboard_return.v) {
                     menu_button_osdkeyboard_return.v=0;
                     menu_button_osdkeyboard.v=1;
-                    menu_abierto=1;
+                    menu_set_menu_abierto(1);
                 }
             }
 
@@ -1091,7 +1170,7 @@ void timer_check_interrupt(void)
             if (timer_on_screen_adv_key==0) {
                 //Hay que volver a menu
                 menu_button_osd_adv_keyboard_return.v=1;
-                                    menu_abierto=1;
+                                    menu_set_menu_abierto(1);
             }
         }
 
@@ -1129,19 +1208,23 @@ void timer_check_interrupt(void)
             }
         }
 
+        timer_storage_common_accelerate_loading_decrease_counter();
+        timer_storage_common_accelerate_saving_decrease_counter();
+
         if (z88_pendiente_cerrar_tapa_timer) {
             z88_pendiente_cerrar_tapa_timer--;
             if (z88_pendiente_cerrar_tapa_timer==0) z88_close_flap_ahora();
         }
 
         //Input file keyboard
-        if (input_file_keyboard_is_playing() ) {
-            input_file_keyboard_delay_counter++;
-            if (input_file_keyboard_delay_counter>=input_file_keyboard_delay) {
-                input_file_keyboard_delay_counter=0;
-                input_file_keyboard_pending_next.v=1;
+        if (send_text_as_keystrokes_is_playing() ) {
+            send_text_as_keystrokes_delay_counter++;
+            //printf("timer send_text_as_keystrokes_delay_counter %d send_text_as_keystrokes_is_pause.v %d\n",send_text_as_keystrokes_delay_counter,send_text_as_keystrokes_is_pause.v);
+            if (send_text_as_keystrokes_delay_counter>=send_text_as_keystrokes_delay) {
+                send_text_as_keystrokes_delay_counter=0;
+                send_text_as_keystrokes_pending_next.v=1;
 
-                input_file_keyboard_is_pause.v ^=1;
+                send_text_as_keystrokes_is_pause.v ^=1;
 
             }
         }
@@ -1236,6 +1319,8 @@ void timer_check_interrupt(void)
         //Ocultación/activación topbar
         topbar_timer_event();
 
+        tooltips_mouse_timer_event();
+
         pd765_handle_speed_motor();
 
         hilow_timer_events();
@@ -1250,6 +1335,8 @@ void timer_check_interrupt(void)
         timer_watermark_device_activity_decrement_counter();
 
         textadv_location_timer_event();
+
+        gamelife_timer_counter_event();
 
         //Cosas que suceden cada 1 segundo
         if (contador_segundo>=1000) {
@@ -1275,7 +1362,7 @@ void timer_check_interrupt(void)
             //resetear texto splash
             reset_welcome_message();
 
-
+            zxvision_timer_check_if_nightday_change_style();
 
             //temporizador de carga de cinta para escribir texto loading en pantalla
             /*if (tape_loading_counter) {
@@ -1286,9 +1373,7 @@ void timer_check_interrupt(void)
             }*/
 
 
-            //contador para juego de la vida
-            gamelife_timer_counter++;
-
+            ql_rtc_second_timer();
 
             //temporizador de impresion para escribir generico footer en pantalla
             if (generic_footertext_operating_counter) {
@@ -1306,7 +1391,7 @@ void timer_check_interrupt(void)
                 }
             }
 
-
+            if (MACHINE_IS_TSCONF) tsconf_dma_decrease_info_timer();
 
             //Temporizador para decir si se ha detectado real joystick
             //dado que si no hay joystick, por defecto está habilitado el bit de joystick presente, pero luego
@@ -1391,6 +1476,8 @@ void timer_check_interrupt(void)
             timer_device_activity_change_watermark_colors();
 
             timer_get_cpu_use();
+
+            zx8081_timer_vsync_detection();
 
 
             //escritura de contenido de flash de superupgrade a disco

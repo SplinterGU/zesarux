@@ -97,6 +97,19 @@ enum token_parser_indice {
 	TPI_V_OPCODE3,
 	TPI_V_OPCODE4,
 
+    TPI_V_VARIABLE0,
+    TPI_V_VARIABLE1,
+    TPI_V_VARIABLE2,
+    TPI_V_VARIABLE3,
+    TPI_V_VARIABLE4,
+    TPI_V_VARIABLE5,
+    TPI_V_VARIABLE6,
+    TPI_V_VARIABLE7,
+    TPI_V_VARIABLE8,
+    TPI_V_VARIABLE9,
+
+    TPI_V_MOUSE_LEFT,
+
 	//de tipo registro
 
 	TPI_R_PC,

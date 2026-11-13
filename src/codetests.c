@@ -33,6 +33,7 @@
 #include "cpu.h"
 #include "debug.h"
 #include "utils.h"
+#include "utils_math.h"
 #include "operaciones.h"
 #include "timer.h"
 #include "ula.h"
@@ -876,9 +877,17 @@ void codetests_expression_parser(void)
 
 	codetests_expression_parser_expect("0H",0);
 	codetests_expression_parser_expect("1H",1);
+    codetests_expression_parser_expect("AH",10);
+    codetests_expression_parser_expect("0xA",10);
+    codetests_expression_parser_expect("$A",10);
+    codetests_expression_parser_expect("C123H",49443);
+    codetests_expression_parser_expect("0xC123",49443);
+    codetests_expression_parser_expect("$C123",49443);
 
 	codetests_expression_parser_expect("101%",5);
 	codetests_expression_parser_expect("AAB0H",0xaab0);
+    codetests_expression_parser_expect("0xaab0",0xaab0);
+    codetests_expression_parser_expect("$aab0",0xaab0);
 	codetests_expression_parser_expect("\"A\"",'A');
 	codetests_expression_parser_expect("'b'",'b');
 
@@ -923,6 +932,30 @@ void codetests_expression_parser(void)
 
 	codetests_expression_parser_expect("10/2",5);
 	codetests_expression_parser_expect("4+10/2",9);
+    codetests_expression_parser_expect("4+AH/2",9);
+    codetests_expression_parser_expect("4+$A/2",9);
+    codetests_expression_parser_expect("4+0xA/2",9);
+
+    codetests_expression_parser_expect("64+20/2",74);
+    codetests_expression_parser_expect("40H+20/2",74);
+    codetests_expression_parser_expect("40H+14H/2",74);
+    codetests_expression_parser_expect("40H+0x14/2",74);
+    codetests_expression_parser_expect("40H+$14/2",74);
+    codetests_expression_parser_expect("0x40+$14/2",74);
+    codetests_expression_parser_expect("$40+$14/2",74);
+    codetests_expression_parser_expect("$40+20/2",74);
+
+    codetests_expression_parser_expect("32000+20000/2",42000);
+    codetests_expression_parser_expect("0x7d00+0x4e20/2",42000);
+    codetests_expression_parser_expect("0x7d00+20000/2",42000);
+    codetests_expression_parser_expect("$7d00+20000/2",42000);
+    codetests_expression_parser_expect("$7d00+$4e20/2",42000);
+    codetests_expression_parser_expect("$7d00+20000/2",42000);
+    codetests_expression_parser_expect("32000+$4e20/2",42000);
+    codetests_expression_parser_expect("32000+0x4e20/2",42000);
+    codetests_expression_parser_expect("32000+0x4e20/2H",42000);
+    codetests_expression_parser_expect("32000+0x4e20/0x2",42000);
+    codetests_expression_parser_expect("32000+0x4e20/$2",42000);
 
 	//Comparadores
 	codetests_expression_parser_expect("1=1",1);
@@ -1181,7 +1214,7 @@ void codetests_zeng(void)
 }
 
 
-void codetests_https()
+void codetests_https(void)
 {
 	//http://www.zx81.nl/files.html
 	int http_code;
@@ -1252,8 +1285,91 @@ void codetests_https()
 
 }
 
+void codetests_redirect(void)
+{
+	//http://www.zx81.nl/files.html
+	int http_code;
+	char *mem;
+	char *orig_mem;
+	char *mem_after_headers;
+	int total_leidos;
+	//int retorno=zsock_http("www.google.es","/",&http_code,&mem,&total_leidos,&mem_after_headers,0,"",1);
 
-void codetests_https_sni()
+	char redirect_url[NETWORK_MAX_URL]="";
+
+	int retorno=zsock_http("httpbin.org","/redirect-to?url=https%3A%2F%2Fexample.com",
+				&http_code,&mem,&total_leidos,&mem_after_headers,1,"",1,redirect_url,0,"");
+
+	if (retorno<0) {
+        printf ("Error zsock_http: %s\n",z_sock_get_error(retorno));
+        if (mem!=NULL) printf ("Response\n%s\n",mem);
+		exit(1);
+	}
+
+	orig_mem=mem;
+
+	if (retorno==0 && mem!=NULL) printf ("Response\n%s\n",mem);
+
+
+
+	//leer linea a linea hasta fin cabecera
+	char buffer_linea[1024];
+	int i=0;
+	int salir=0;
+	do {
+		int leidos;
+		char *next_mem;
+		if (*mem=='\n') {
+			//esto puede que no pase, linea con solo salto linea tendra un cr antes,
+			//por tanto la deteccion de esa linea se leera abajom cuando buffer linea vacia
+			salir=1;
+			mem++;
+			printf ("salir con salto linea inicial\n");
+		}
+		else {
+			next_mem=util_read_line(mem,buffer_linea,total_leidos,1024,&leidos);
+			total_leidos -=leidos;
+
+			if (buffer_linea[0]==0) {
+				salir=1;
+				printf ("salir con linea vacia final\n");
+				mem=next_mem;
+			}
+			else {
+				printf ("cabecera %d: %s\n",i,buffer_linea);
+				i++;
+				mem=next_mem;
+			}
+
+			if (total_leidos<=0) salir=1;
+		}
+	} while (!salir);
+
+	printf ("respuesta despues cabeceras:\n%s\n",mem);
+
+
+	if (orig_mem!=NULL) free (orig_mem);
+
+	//peticion saltando cabeceras
+	//printf ("Request skipping headers\n");
+	//retorno=zsock_http("www.google.es","/",&http_code,&mem,&total_leidos,&mem_after_headers,1,"",1);
+	//if (mem_after_headers!=NULL) printf ("Answer after headers:\n%s\n",mem_after_headers);
+
+	//if (mem!=NULL) free (mem);
+
+
+    printf("Redirect url: [%s]\n",redirect_url);
+
+    if (strcmp("https://example.com",redirect_url)) {
+        printf("Error invalid redirection\n");
+        exit(1);
+    }
+
+
+}
+
+
+void codetests_https_sni(void)
 {
 	//http://www.zx81.nl/files.html
 	int http_code;
@@ -1891,10 +2007,11 @@ void codetests_get_pixel_color_scr(void)
         for (x=0;x<256;x++) {
             for (y=0;y<192;y++) {
                 //printf("%d %d\n",x,y);
-                int color=util_get_pixel_color_scr(buffer_get_pixel,x,y);
+                //int color=
+                util_get_pixel_color_scr(buffer_get_pixel,x,y);
 
                 //Esto solo para que no se queje el compilador de variable no usada
-                color++;
+                //color++;
             }
         }
 
@@ -2801,6 +2918,222 @@ void codetests_timer(void)
 
 }
 
+void codetests_leading_zeroes_check(char *input_number,char *expected_number)
+{
+    char number[100];
+    strcpy(number,input_number);
+    printf("Testing %s\n",number);
+    util_quitar_ceros_decimales(number);
+    if (strcmp(number,expected_number)) {
+        printf("Error strip leading zeroes. Got: [%s] Expected: [%s]\n",number,expected_number);
+        exit(1);
+    }
+}
+
+void codetests_leading_zeroes(void)
+{
+    codetests_leading_zeroes_check("1","1");
+    codetests_leading_zeroes_check("11","11");
+    codetests_leading_zeroes_check("10","10");
+    codetests_leading_zeroes_check("100.","100.");
+    codetests_leading_zeroes_check("11.0","11");
+    codetests_leading_zeroes_check("22.02","22.02");
+    codetests_leading_zeroes_check("33.0400","33.04");
+    codetests_leading_zeroes_check("-1","-1");
+    codetests_leading_zeroes_check("-1.0","-1");
+    codetests_leading_zeroes_check("-1234.56789","-1234.56789");
+    codetests_leading_zeroes_check("-1234.56789000","-1234.56789");
+    codetests_leading_zeroes_check("-1234.567890001","-1234.567890001");
+    codetests_leading_zeroes_check("-1234.567890001000","-1234.567890001");
+}
+
+void codetests_utf8(void)
+{
+    char *texto="12345áéíóú";
+
+    int longitud=util_strlen_utf(texto);
+
+    if (longitud!=10) {
+        printf("Error strlen utf8. Got [%d] Expected: 10\n",longitud);
+        exit(1);
+    }
+
+    int pos=util_get_pos_character_in_string(texto,0);
+    if (pos!=0) {
+        printf("Error pos utf8. Got [%d] Expected: 0\n",pos);
+        exit(1);
+    }
+
+    pos=util_get_pos_character_in_string(texto,1);
+    if (pos!=1) {
+        printf("Error pos utf8. Got [%d] Expected: 1\n",pos);
+        exit(1);
+    }
+
+    pos=util_get_pos_character_in_string(texto,5);
+    if (pos!=5) {
+        printf("Error pos utf8. Got [%d] Expected: 5\n",pos);
+        exit(1);
+    }
+
+    //despues de la á
+    pos=util_get_pos_character_in_string(texto,6);
+    if (pos!=7) {
+        printf("Error pos utf8. Got [%d] Expected: 7\n",pos);
+        exit(1);
+    }
+
+    //despues de la óu
+    pos=util_get_pos_character_in_string(texto,9);
+    if (pos!=13) {
+        printf("Error pos utf8. Got [%d] Expected: 13\n",pos);
+        exit(1);
+    }
+
+    //al final
+    pos=util_get_pos_character_in_string(texto,10);
+    if (pos!=15) {
+        printf("Error pos utf8. Got [%d] Expected: 15\n",pos);
+        exit(1);
+    }
+}
+
+void codetests_strings_language(void)
+{
+    menu_init_strings_language_array();
+
+    gui_language=GUI_LANGUAGE_SPANISH;
+
+    int i;
+
+    int total_iteraciones=0;
+
+    for (i=0;i<sorted_strings_language_list_elementos;i++) {
+        char *string_english_buscar=strings_language_list[i].string_english;
+        printf("Buscando [%s]\n",string_english_buscar);
+        char *string_spanish_encontrada=menu_get_string_language(string_english_buscar);
+        if (!strcasecmp(string_spanish_encontrada,strings_language_list[i].string_spanish)) {
+            printf("Coincide [%s] y [%s]\n",string_spanish_encontrada,strings_language_list[i].string_spanish);
+        }
+        else {
+            printf("NO Coincide [%s] y [%s]\n",string_spanish_encontrada,strings_language_list[i].string_spanish);
+            exit(1);
+        }
+
+        int iteraciones=menu_get_string_language_debug_ultimas_iteraciones;
+
+        total_iteraciones +=iteraciones;
+    }
+
+    printf("Buscando cadena inexistente\n");
+
+    if (strcasecmp(menu_get_string_language("bla bla kwefkkwek wehjfhwef"),"bla bla kwefkkwek wehjfhwef")) {
+        printf("Error busqueda cadena inexistente\n");
+        exit(1);
+    }
+
+    if (sorted_strings_language_list_elementos) {
+        printf("Media iteraciones: %d Total elementos: %d\n",total_iteraciones/sorted_strings_language_list_elementos,sorted_strings_language_list_elementos);
+    }
+
+
+}
+
+void codetests_midi_notes(void)
+{
+    int i;
+
+    for (i=0;i<256;i++) {
+        printf("Midi note: %3d Name: %s\n",i,get_note_name_by_mid_number(i));
+        if (i<12 || i>131) {
+            if (strcasecmp("XX",get_note_name_by_mid_number(i))) {
+                printf("ERROR\n");
+                exit(1);
+            }
+        }
+    }
+}
+
+void codetests_subfolder_tests_check(char *folder1,char *expected_subfolder1)
+{
+    char buffer_subfolder[PATH_MAX];
+
+
+    util_get_subfolder_in_path(folder1,buffer_subfolder);
+    if (strcmp(buffer_subfolder,expected_subfolder1)) {
+        printf("ERROR getting subfolder in [%s]. Got [%s] Expected [%s]\n",folder1,buffer_subfolder,expected_subfolder1);
+        exit(1);
+    }
+}
+
+void codetests_subfolder_tests(void)
+{
+
+
+    char *folder1="/ruta/a/carpeta";
+    char *expected_subfolder1="carpeta";
+    codetests_subfolder_tests_check(folder1,expected_subfolder1);
+
+    char *folder2="/ruta/a/carpeta/";
+    char *expected_subfolder2="carpeta";
+    codetests_subfolder_tests_check(folder2,expected_subfolder2);
+
+
+    char *folder3="/ruta/a/carpeta.ext";
+    char *expected_subfolder3="carpeta.ext";
+    codetests_subfolder_tests_check(folder3,expected_subfolder3);
+
+    char *folder4="/ruta/a/carpeta.ext/";
+    char *expected_subfolder4="carpeta.ext";
+    codetests_subfolder_tests_check(folder4,expected_subfolder4);
+
+
+    char *folder5="/ruta/carpeta";
+    char *expected_subfolder5="carpeta";
+    codetests_subfolder_tests_check(folder5,expected_subfolder5);
+
+
+    char *folder6="/carpeta";
+    char *expected_subfolder6="carpeta";
+    codetests_subfolder_tests_check(folder6,expected_subfolder6);
+
+
+    char *folder7="carpeta";
+    char *expected_subfolder7="carpeta";
+    codetests_subfolder_tests_check(folder7,expected_subfolder7);
+
+
+    char *folder8="c";
+    char *expected_subfolder8="c";
+    codetests_subfolder_tests_check(folder8,expected_subfolder8);
+
+    char *folder81="/c";
+    char *expected_subfolder81="c";
+    codetests_subfolder_tests_check(folder81,expected_subfolder81);
+
+    char *folder9="";
+    char *expected_subfolder9="";
+    codetests_subfolder_tests_check(folder9,expected_subfolder9);
+
+
+    char *folder10="/ruta/a/carpeta//";
+    char *expected_subfolder10="carpeta";
+    codetests_subfolder_tests_check(folder10,expected_subfolder10);
+
+    char *folder11="/ruta/a/carpeta///////";
+    char *expected_subfolder11="carpeta";
+    codetests_subfolder_tests_check(folder11,expected_subfolder11);
+
+
+    char *folder12="/ruta/a\\carpeta.ext\\";
+    char *expected_subfolder12="carpeta.ext";
+    codetests_subfolder_tests_check(folder12,expected_subfolder12);
+
+    char *folder13="C:\\ruta\\a\\carpeta.ext\\";
+    char *expected_subfolder13="carpeta.ext";
+    codetests_subfolder_tests_check(folder13,expected_subfolder13);
+}
+
 void codetests_main(int main_argc,char *main_argv[])
 {
 
@@ -2852,6 +3185,8 @@ void codetests_main(int main_argc,char *main_argv[])
 	//codetests_https();
 
     //codetests_https_sni();
+
+    //codetests_redirect();
 
 	//int r=z_sock_close_connection(44);
 	//if (r<0) printf ("Error: %s\n",z_sock_get_error(r));
@@ -2931,6 +3266,21 @@ void codetests_main(int main_argc,char *main_argv[])
 
     printf("\nRunning timer tests\n");
     codetests_timer();
+
+    printf("\nRunning leading zeroes tests\n");
+    codetests_leading_zeroes();
+
+    printf("\nRunning utf8 string tests\n");
+    codetests_utf8();
+
+    printf("\nRunning strings language code tests\n");
+    codetests_strings_language();
+
+    printf("\nRunning midi notes tests\n");
+    codetests_midi_notes();
+
+    printf("\nRunning get subfolder tests\n");
+    codetests_subfolder_tests();
 
     //printf("\nRunning codetests stl\n");
     //codetests_stl();

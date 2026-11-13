@@ -40,6 +40,7 @@ Functions starting with zoc_ means: zeng online client
 #include "cpu.h"
 #include "debug.h"
 #include "utils.h"
+#include "utils_math.h"
 #include "network.h"
 #include "compileoptions.h"
 #include "zeng_online.h"
@@ -80,6 +81,7 @@ pthread_t thread_zeng_online_client_destroy_room;
 pthread_t thread_zeng_online_client_autojoin_room;
 pthread_t thread_zeng_online_client_disable_autojoin_room;
 pthread_t thread_zeng_online_client_write_message_room;
+pthread_t thread_zeng_online_client_write_private_message_room;
 pthread_t thread_zeng_online_client_allow_message_room;
 pthread_t thread_zeng_online_client_list_users;
 pthread_t thread_zeng_online_client_get_profile_keys;
@@ -93,6 +95,71 @@ pthread_t thread_zeng_online_client_stop_master_thread;
 
 #endif
 
+//Variables que aunque son de pthreads se usan en otros sitios
+int zoc_streaming_display_received_counter=0;
+int zeng_online_client_get_snapshot_applied_finished=0;
+int zoc_common_alive_user_send_counter=0;
+int zoc_common_get_messages_received_counter=0;
+int zoc_generated_differential_displays_counter=0;
+int zoc_generated_full_displays_counter=0;
+int zoc_get_keys_counter=0;
+
+int zoc_get_pending_authorization_size_last_queue_size=0;
+int zoc_get_pending_authorization_counter=0;
+int zoc_keys_send_counter=0;
+int zoc_received_snapshot_counter=0;
+
+char *zoc_send_streaming_audio_mem_hexa=NULL;
+int zoc_master_pending_send_streaming_audio=0;
+
+int zoc_send_streaming_audio_counter=0;
+
+int zoc_send_streaming_display_counter=0;
+
+int zoc_sent_snapshots_counter=0;
+
+char zoc_last_audio_value_received=0;
+
+int zoc_sent_streaming_audio_silence_counter=0;
+int zoc_sent_streaming_audio_no_silence_counter=0;
+
+//Decir si se bloquea temporalmente la aplicacion de streaming de video
+int zoc_slave_forbid_apply_streaming_video=0;
+
+int zoc_pending_apply_received_streaming_audio=0;
+
+int zoc_last_id_stream_audio=-1;
+
+
+
+z80_byte *zoc_get_audio_mem_binary=NULL;
+
+z80_byte *zoc_get_audio_mem_binary_second_buffer=NULL;
+
+int zoc_get_audio_mem_binary_longitud=0;
+
+int zoc_streaming_audio_received_counter=0;
+
+int zoc_streaming_audio_no_silence_received_counter=0;
+int zoc_streaming_audio_silence_received_counter=0;
+
+//Conteo de veces llamado a  zeng_online_client_end_frame_from_core_functions, y por tanto frames de video
+//Usado para obtener FPS en modo streaming
+int zoc_client_video_frames=0;
+
+//Conteo de cuantas pantallas recibidas, se usa para obtener el FPS
+int zoc_client_streaming_display_count=0;
+
+int zoc_client_streaming_display_fps=0;
+
+//Usado para obtener la media de fps en un intervalo dado
+int zoc_client_streaming_display_fps_seconds=0;
+int zoc_client_streaming_display_fps_sum=0;
+int zoc_client_streaming_display_fps_last_interval=0;
+
+int zoc_streaming_display_differential_received_counter=0;
+int zoc_streaming_display_full_received_counter=0;
+
 //Variables y funciones que no son de pthreads
 int zeng_online_client_list_rooms_thread_running=0;
 int zeng_online_client_create_room_thread_running=0;
@@ -104,6 +171,7 @@ int zeng_online_client_destroy_room_thread_running=0;
 int zeng_online_client_autojoin_room_thread_running=0;
 int zeng_online_client_disable_autojoin_room_thread_running=0;
 int zeng_online_client_write_message_room_thread_running=0;
+int zeng_online_client_write_private_message_room_thread_running=0;
 int zeng_online_client_allow_message_room_thread_running=0;
 int zeng_online_client_list_users_thread_running=0;
 int zeng_online_client_get_profile_keys_thread_running=0;
@@ -363,7 +431,7 @@ int zeng_online_client_list_rooms_connect(void)
     DBG_PRINT_ZENG_ONLINE_CLIENT VERBOSE_DEBUG,"ZENG Online Client: Sending get-version");
 
     //Enviar un get-version
-    int escritos=z_sock_write_string(indice_socket,"get-version\n");
+    int escritos=z_sock_write_string(indice_socket,"zeng-online get-protocol-version\n");
 
     if (escritos<0) {
         DBG_PRINT_ZENG_ONLINE_CLIENT VERBOSE_ERR,"ZENG Online Client: ERROR. Can't send get-version: %s",z_sock_get_error(escritos));
@@ -375,7 +443,7 @@ int zeng_online_client_list_rooms_connect(void)
     leidos=zsock_read_all_until_command(indice_socket,(z80_byte *)buffer,ZENG_BUFFER_INITIAL_CONNECT,&posicion_command);
     if (leidos>0) {
         buffer[leidos]=0; //fin de texto
-        DBG_PRINT_ZENG_ONLINE_CLIENT VERBOSE_DEBUG,"ZENG Online Client: Received text for get-version (length %d): \n[\n%s\n]",leidos,buffer);
+        DBG_PRINT_ZENG_ONLINE_CLIENT VERBOSE_DEBUG,"ZENG Online Client: Received text for zeng-online get-protocol-version (length %d): \n[\n%s\n]",leidos,buffer);
     }
 
     if (leidos<0) {
@@ -395,9 +463,17 @@ int zeng_online_client_list_rooms_connect(void)
 
     //Comprobar que version remota sea como local
     char myversion[30];
-    util_get_emulator_version_number(myversion);
+    sprintf(myversion,"%d",ZENG_ONLINE_PROTOCOL_VERSION);
+
     if (strcasecmp(myversion,buffer)) {
-        DBG_PRINT_ZENG_ONLINE_CLIENT VERBOSE_ERR,"ZENG Online Client: Local and remote ZEsarUX versions do not match");
+        //Decimos la versión remota, vigilando que no aparezca ningún caracter extraño, y limitando a 3 caracteres máximo
+        buffer[3]=0;
+        int i;
+        for (i=0;buffer[i];i++) {
+            if (buffer[i]<32 || buffer[i]>126) buffer[i]='.';
+        }
+
+        DBG_PRINT_ZENG_ONLINE_CLIENT VERBOSE_ERR,"ZENG Online Client: Local and remote ZENG Online protocol versions do not match (local: %s remote: %s)",myversion,buffer);
         //printf("Local %s remote %s\n",myversion,buffer);
         return 0;
     }
@@ -459,7 +535,7 @@ int zeng_online_client_list_rooms_connect(void)
 
     leidos=zsock_read_all_until_command(indice_socket,(z80_byte *)zeng_remote_list_rooms_buffer,total_listado_rooms_memoria,&posicion_command);
     if (leidos>0) {
-        buffer[leidos]=0; //fin de texto
+        zeng_remote_list_rooms_buffer[leidos]=0; //fin de texto
         DBG_PRINT_ZENG_ONLINE_CLIENT VERBOSE_PARANOID,"ZENG Online Client: Received text for zeng-online list-rooms (length %d): \n[\n%s\n]",leidos,zeng_remote_list_rooms_buffer);
     }
 
@@ -1088,7 +1164,7 @@ int zoc_get_message(int indice_socket,char *mensaje)
     //buffer retorno
     char buffer[ZENG_BUFFER_INITIAL_CONNECT+1];
 
-    int return_value=zoc_common_send_command_buffer(indice_socket,buffer_enviar,"get-message-id",buffer,ZENG_BUFFER_INITIAL_CONNECT);
+    int return_value=zoc_common_send_command_buffer(indice_socket,buffer_enviar,"get-message",buffer,ZENG_BUFFER_INITIAL_CONNECT);
 
     //printf("get_message: [%s]\n",buffer);
 
@@ -1099,6 +1175,36 @@ int zoc_get_message(int indice_socket,char *mensaje)
     strcpy(mensaje,buffer);
 
     return 0;
+
+}
+
+
+void zoc_get_private_message(int indice_socket,char *mensaje)
+{
+    mensaje[0]=0;
+
+    char buffer_enviar[1024];
+
+    //get-message user_pass n
+    sprintf(buffer_enviar,"zeng-online get-private-message %s %d %s\n",
+        created_room_user_password,zeng_online_joined_to_room_number,stats_uuid);
+
+    #define ZENG_BUFFER_INITIAL_CONNECT 199
+
+    //buffer retorno
+    char buffer[ZENG_BUFFER_INITIAL_CONNECT+1];
+
+    int return_value=zoc_common_send_command_buffer(indice_socket,buffer_enviar,"get-private-message",buffer,ZENG_BUFFER_INITIAL_CONNECT);
+
+    //printf("get-private-message: [%s]\n",buffer);
+
+    if (!return_value) {
+        return;
+    }
+
+    strcpy(mensaje,buffer);
+
+    return;
 
 }
 
@@ -1121,6 +1227,27 @@ int zeng_online_client_write_message_room_connect(void)
 
 }
 
+char param_zeng_online_client_write_private_message_room_message[ZENG_ONLINE_MAX_BROADCAST_MESSAGE_LENGTH+1];
+char param_zeng_online_client_write_private_message_room_uuid[STATS_UUID_MAX_LENGTH+1];
+
+//Devuelve 0 si no conectado
+int zeng_online_client_write_private_message_room_connect(void)
+{
+
+    char buffer_enviar[1024];
+
+    //"send-private-message user_pass n nickname uuid message
+    sprintf(buffer_enviar,"zeng-online send-private-message %s %d \"%s\" \"%s\" \"%s\"\n",
+        created_room_user_password,
+        zeng_online_joined_to_room_number,
+        zeng_online_nickname,
+        param_zeng_online_client_write_private_message_room_uuid,
+        param_zeng_online_client_write_private_message_room_message);
+
+    return zoc_open_command_close(buffer_enviar,"send-private-message");
+
+}
+
 char param_zeng_online_client_kick_user_uuid[STATS_UUID_MAX_LENGTH+1];
 
 //Devuelve 0 si no conectado
@@ -1134,6 +1261,7 @@ int zeng_online_client_kick_user_connect(void)
         created_room_creator_password,
         zeng_online_joined_to_room_number,
         param_zeng_online_client_kick_user_uuid);
+    //printf("kick user [%s]\n",param_zeng_online_client_kick_user_uuid);
 
     return zoc_open_command_close(buffer_enviar,"kick");
 
@@ -1270,6 +1398,29 @@ void *zeng_online_client_write_message_room_function(void *nada GCC_UNUSED)
 
 
 	zeng_online_client_write_message_room_thread_running=0;
+
+	return 0;
+
+}
+
+void *zeng_online_client_write_private_message_room_function(void *nada GCC_UNUSED)
+{
+    zeng_online_client_write_private_message_room_thread_running=1;
+
+	//Conectar a remoto
+
+	if (!zeng_online_client_write_private_message_room_connect()) {
+		//Desconectar solo si el socket estaba conectado
+
+        //Desconectar los que esten conectados
+        //TODO zeng_disconnect_remote();
+
+		zeng_online_client_write_private_message_room_thread_running=0;
+		return 0;
+	}
+
+
+	zeng_online_client_write_private_message_room_thread_running=0;
 
 	return 0;
 
@@ -1950,6 +2101,24 @@ void zeng_online_client_write_message_room(char *message)
 
 }
 
+void zeng_online_client_write_private_message_room(char *uuid,char *message)
+{
+
+	//Inicializar thread
+    strcpy(param_zeng_online_client_write_private_message_room_uuid,uuid);
+    strcpy(param_zeng_online_client_write_private_message_room_message,message);
+
+	if (pthread_create( &thread_zeng_online_client_write_private_message_room, NULL, &zeng_online_client_write_private_message_room_function, NULL) ) {
+		DBG_PRINT_ZENG_ONLINE_CLIENT VERBOSE_ERR,"ZENG Online Client: Can not create zeng online write private_message pthread");
+		return;
+	}
+
+	//y pthread en estado detached asi liberara su memoria asociada a thread al finalizar, sin tener que hacer un pthread_join
+	pthread_detach(thread_zeng_online_client_write_private_message_room);
+
+
+}
+
 
 
 void zeng_online_client_kick_user(char *uuid)
@@ -2522,7 +2691,7 @@ int zoc_send_snapshot(int indice_socket)
 
 }
 
-int zoc_send_streaming_display_counter=0;
+
 
 //Para las dos pantallas que se envian cada vez: la diferencial y la completa
 char *zoc_send_streaming_display_mem_hexa[2]={NULL,NULL};
@@ -2578,10 +2747,7 @@ int zoc_send_streaming_display(int indice_socket,int slot)
 
 }
 
-char *zoc_send_streaming_audio_mem_hexa=NULL;
-int zoc_master_pending_send_streaming_audio=0;
 
-int zoc_send_streaming_audio_counter=0;
 
 int zoc_send_streaming_audio(int indice_socket)
 {
@@ -2634,7 +2800,7 @@ int zoc_send_streaming_audio(int indice_socket)
 }
 
 
-int zoc_get_keys_counter=0;
+
 
 void zoc_get_keys(int indice_socket)
 {
@@ -2812,22 +2978,7 @@ void zoc_get_keys(int indice_socket)
 
 }
 
-int zoc_pending_apply_received_streaming_audio=0;
 
-int zoc_last_id_stream_audio=-1;
-
-
-
-z80_byte *zoc_get_audio_mem_binary=NULL;
-
-z80_byte *zoc_get_audio_mem_binary_second_buffer=NULL;
-
-int zoc_get_audio_mem_binary_longitud=0;
-
-int zoc_streaming_audio_received_counter=0;
-
-int zoc_streaming_audio_no_silence_received_counter=0;
-int zoc_streaming_audio_silence_received_counter=0;
 
 int zoc_get_stream_audio_continuous(int indice_socket)
 {
@@ -3241,7 +3392,7 @@ int zoc_keys_tecla_conmutada(zeng_key_presses *elemento)
 
 }
 
-int zoc_keys_send_counter=0;
+
 
 int zoc_keys_send_pending(int indice_socket,int *enviada_alguna_tecla)
 {
@@ -3300,9 +3451,7 @@ int zoc_keys_send_pending(int indice_socket,int *enviada_alguna_tecla)
     return error_desconectar;
 }
 
-int zoc_get_pending_authorization_size_last_queue_size=0;
 
-int zoc_get_pending_authorization_counter=0;
 
 int zoc_get_pending_authorization_size(int indice_socket)
 {
@@ -3428,7 +3577,7 @@ int contador_alive_anteriorsegundos=0;
 //unsigned int antes_network_traffic_counter_read=0;
 //unsigned int antes_network_traffic_counter_write=0;
 
-int zoc_common_alive_user_send_counter=0;
+
 
 void zoc_common_alive_user(int indice_socket)
 {
@@ -3460,7 +3609,7 @@ void zoc_common_alive_user(int indice_socket)
     }
 }
 
-int zoc_common_get_messages_received_counter=0;
+
 
 void zoc_common_get_messages_slave_master(int indice_socket)
 {
@@ -3484,36 +3633,46 @@ void zoc_common_get_messages_slave_master(int indice_socket)
         //fin prueba mostrar trafico
 
         int id_actual=zoc_get_message_id(indice_socket);
+        char buffer_mensaje[ZENG_ONLINE_MAX_BROADCAST_MESSAGE_SHOWN_LENGTH+1]="";
+        int es_broadcast=1;
         if (id_actual!=zoc_last_message_id) {
             DBG_PRINT_ZENG_ONLINE_CLIENT VERBOSE_DEBUG,"ZENG Online Client: There is a new message");
-            char buffer_mensaje[ZENG_ONLINE_MAX_BROADCAST_MESSAGE_SHOWN_LENGTH+1];
+
             zoc_get_message(indice_socket,buffer_mensaje);
-            if (buffer_mensaje[0]) {
-
-                //Y lo mostramos en el footer
-                char mensaje[AUTOSELECTOPTIONS_MAX_FOOTER_LENGTH+ZENG_ONLINE_MAX_BROADCAST_MESSAGE_SHOWN_LENGTH+1];
-
-                sprintf(mensaje,"%s",buffer_mensaje);
-
-                //Por si acaso truncar al maximo que permite el footer
-                mensaje[AUTOSELECTOPTIONS_MAX_FOOTER_LENGTH]=0;
-
-                put_footer_first_message(mensaje);
-
-                //Y enviarlo a speech
-                textspeech_print_speech(mensaje);
-
-                zoc_common_get_messages_received_counter++;
-
-            }
-
-
             zoc_last_message_id=id_actual;
         }
+
+
+        //ver tambien mensajes privados si no hay broadcast
+        if (buffer_mensaje[0]==0) {
+            es_broadcast=0;
+            zoc_get_private_message(indice_socket,buffer_mensaje);
+        }
+
+
+        if (buffer_mensaje[0]) {
+
+            //Y lo mostramos en el footer
+            char mensaje[AUTOSELECTOPTIONS_MAX_FOOTER_LENGTH+ZENG_ONLINE_MAX_BROADCAST_MESSAGE_SHOWN_LENGTH+1];
+
+            sprintf(mensaje,"%s%s",(es_broadcast ? "Broadcast " : ""),buffer_mensaje);
+
+            //Por si acaso truncar al maximo que permite el footer
+            mensaje[AUTOSELECTOPTIONS_MAX_FOOTER_LENGTH]=0;
+
+            put_footer_first_message(mensaje);
+
+            //Y enviarlo a speech
+            textspeech_print_speech(mensaje);
+
+            zoc_common_get_messages_received_counter++;
+
+        }
+
     }
 }
 
-int zoc_sent_snapshots_counter=0;
+
 
 void master_thread_put_snapshot(int indice_socket)
 {
@@ -3891,7 +4050,7 @@ void *zoc_master_thread_function_stream_audio(void *nada GCC_UNUSED)
 
 }
 
-int zoc_received_snapshot_counter=0;
+
 
 
 int zoc_receive_snapshot(int indice_socket)
@@ -4187,7 +4346,7 @@ int zoc_receive_snapshot(int indice_socket)
 
 }
 
-int zoc_streaming_display_received_counter=0;
+
 
 int zoc_receive_streaming_display(int indice_socket,int slot)
 {
@@ -4565,7 +4724,7 @@ void slave_thread_get_snapshot(int indice_socket)
 
 int zoc_slave_force_get_snapshot=0;
 
-int zeng_online_client_get_snapshot_applied_finished=0;
+
 
 void *zoc_slave_thread_function(void *nada GCC_UNUSED)
 {
@@ -5044,22 +5203,7 @@ void zeng_online_client_apply_pending_received_snapshot(void)
 }
 
 
-//Conteo de veces llamado a  zeng_online_client_end_frame_from_core_functions, y por tanto frames de video
-//Usado para obtener FPS en modo streaming
-int zoc_client_video_frames=0;
 
-//Conteo de cuantas pantallas recibidas, se usa para obtener el FPS
-int zoc_client_streaming_display_count=0;
-
-int zoc_client_streaming_display_fps=0;
-
-//Usado para obtener la media de fps en un intervalo dado
-int zoc_client_streaming_display_fps_seconds=0;
-int zoc_client_streaming_display_fps_sum=0;
-int zoc_client_streaming_display_fps_last_interval=0;
-
-int zoc_streaming_display_differential_received_counter=0;
-int zoc_streaming_display_full_received_counter=0;
 
 z80_byte *zoc_get_base_mem_pantalla(void)
 {
@@ -5068,8 +5212,7 @@ z80_byte *zoc_get_base_mem_pantalla(void)
     return get_base_mem_pantalla();
 }
 
-//Decir si se bloquea temporalmente la aplicacion de streaming de video
-int zoc_slave_forbid_apply_streaming_video=0;
+
 
 void zeng_online_client_apply_pending_received_streaming_display(void)
 {
@@ -5441,8 +5584,7 @@ int zoc_generate_differential_display(z80_byte *current_screen)
 
 }
 
-int zoc_generated_differential_displays_counter=0;
-int zoc_generated_full_displays_counter=0;
+
 
 int zoc_get_streaming_display(z80_byte *buffer_temp_sin_comprimir,int force_full_display)
 {
@@ -5650,7 +5792,7 @@ int zec_autoadjust_differentials_equal(int a,int b)
     //Si A=12, B=9, margen=3: no es igual
     //Si A=9, B=12, margen=3: no es igual
     //Si A=12, B=8, margen=3: no es igual
-    if (util_abs(a-b)<ZEC_AUTOADJUST_MARGIN_COMPARISON) return 1;
+    if (util_get_absolute(a-b)<ZEC_AUTOADJUST_MARGIN_COMPARISON) return 1;
     else return 0;
 }
 
@@ -5693,9 +5835,9 @@ void zec_autoadjust_differentials_display(void)
         //Evitar valor inicial
         if (zoc_slave_differential_displays_limit_full_previous_fps>=0) {
 
-            //Si 50 fps y diferenciales 0
-            if (zoc_client_streaming_display_fps_last_interval==50 && zoc_slave_differential_displays_limit_full==0) {
-                //printf("50 FPS and 0 differentials. Ideal state. Do nothing\n");
+            //Si 50/60 fps y diferenciales 0
+            if (zoc_client_streaming_display_fps_last_interval==get_frequency_refresh_video() && zoc_slave_differential_displays_limit_full==0) {
+                //printf("50/60 FPS and 0 differentials. Ideal state. Do nothing\n");
             }
             else {
 
@@ -5856,7 +5998,7 @@ void zoc_client_manage_fps_diferential_display(void)
 {
 
     zoc_client_video_frames++;
-    if (zoc_client_video_frames==50) {
+    if (zoc_client_video_frames==get_frequency_refresh_video()) {
 
         zoc_client_video_frames=0;
 
@@ -5983,10 +6125,7 @@ void zeng_online_client_alter_fps_streaming(void)
 }
 
 
-char zoc_last_audio_value_received=0;
 
-int zoc_sent_streaming_audio_silence_counter=0;
-int zoc_sent_streaming_audio_no_silence_counter=0;
 
 void zeng_online_client_end_audio_frame_stuff(void)
 {
@@ -6248,6 +6387,10 @@ void zeng_online_client_end_audio_frame_stuff(void)
 }
 
 void zeng_online_client_apply_pending_received_snapshot(void)
+{
+}
+
+void zoc_slave_set_force_get_snapshot(void)
 {
 }
 

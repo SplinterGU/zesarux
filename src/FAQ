@@ -201,17 +201,29 @@ A: As the name suggests, you must connect a speaker to two GPI pins: one goes to
 Then use the onebitspeaker driver, set type to Raspberry Pi GPIO.
 The default pin number is set to 22, but you can change it to any other you want. 
 
+Q: What are the MIDI/MID features on ZEsarUX?
+A: ZEsarUX have three midi related functions:
 
-Q: How can I enable the MIDI output feature?
-A: You must select a machine with Audio Chip (Spectrum 128k, QL, MSX, Master System, etc) and go to menu Settings-> Audio-> Audio Chip to MIDI Output
+1) On Spectrum 128k/+2/+2A/+3 and other Speccy clones with AY Chip, values sent to registers 14 and 15 (MIDI registers) are routed to a external midi device connected to your computer (or software synth)
+2) Sounds generated on an audio chip (AY Chip, SN Chip or QL Chip) can be played on a external midi device connected to your computer (or software synth)
+3) Sounds generated on an audio chip (AY Chip, SN Chip or QL Chip) can be exported to a .mid file
 
+To use functions 1 and 2, first you need a external midi device (like a Piano) or use a software midi synth, which 'emulates' a MIDI device:
 
-Q: I want to use the MIDI output feature but I don't have any MIDI device. Is there any way to use it?
-A: Yes, you can use a software which 'emulates' a MIDI device. There are many, depending on your operating system:
--GNU/Linux: Timidity. Included on most Linux distributions.
--Mac: fluidsynth. You can install it with 'brew install fluidsynth' or 'sudo port install fluidsynth', depending on what package manager you have.
-You'll also need a soundfount, which you can download for example from: http://www.schristiancollins.com/generaluser.php.
--Windows: CoolSoft VirtualMIDISynth (but I think some Windows have a software MIDI by default, so maybe you won't need another one).
+- If you use a external midi device, Mac and Windows have native support, Linux also have native support but you must use the alsa audio driver. Just plug the device on a USB port.
+
+- If you use a software midi synth, you can try some, depending on your operating system:
+ - GNU/Linux: Timidity. Included on most Linux distributions.
+ - Mac: fluidsynth. You can install it with 'brew install fluidsynth' or 'sudo port install fluidsynth', depending on what package manager you have.
+   You'll also need a soundfount, which you can download for example from: http://www.schristiancollins.com/generaluser.php.
+ - Windows: CoolSoft VirtualMIDISynth (but I think some Windows have a software MIDI by default, so maybe you won't need another one).
+
+Then, enable setting on menu Settings-> Hardware-> Audio-> Audio Chip to MIDI Output
+
+Also, to use function 1, you need to be sure setting Menu-> Audio-> AY Mixer-> AY MIDI Registers is enabled. There is a midi player included on ZX-Uno mmc image (on the extras mmc image), use command ".playmidi"
+and look on MID folder on that image, there are some .mid files to play.
+
+To use function 3, go to Menu-> Audio-> Audio Chip to .mid
 
 ----------------------------------------------------------------------------
 
@@ -252,6 +264,30 @@ or use command line setting: --no-autochange-zoom-big-display
 Q: I started ZEsarUX on Linux a pure text console mode, tried the fbdev driver but gives me an error:
 "fbdev: ioctl VT_GETSTATE: Inappropriate ioctl for device (not a linux console?)"
 A: You need to start it from a pseudo-text console mode, I mean, it's a text console but set in a graphics mode. To do that, you must set a vga mode parameter on the kernel boot. Try adding this parameter to the Grub boot: "vga=792"
+
+
+Q: Can ZEsarUX generate Anaglyph images for 3D glasses? (Red-Blue glasses)
+A: Yes, you can use the Emulated Display FX effects, on Settings-> Main Window-> Emulated Display FX. You need to create a initial image in red, apply an offset and then mix it with the same image in blue. This can be achieved by applying the following effects, in order:
+
+- Scroll Horizontal. 20 pixels
+- Red
+- Copy to buffer
+- Restore Original
+- RGB. Select only Blue
+- Mix from buffer. 50%. Type: Average
+
+You can also enable these effects using the following config settings:
+
+--video-fx-enable
+--video-fx-set "Scroll Horizontal" 0 1
+--video-fx-set "Red" 1 1
+--video-fx-set "Copy to buffer" 2 1
+--video-fx-set "Restore Original" 3 1
+--video-fx-set "RGB" 4 1
+--video-fx-set "Mix from buffer" 5 1
+--video-fx-mix-type "Mix from buffer" "Average"
+--video-fx-offset "Scroll Horizontal" 20
+--video-fx-rgb RGB 0 0 1
 
 ----------------------------------------------------------------------------
 
@@ -326,6 +362,16 @@ So, you must configure on ZENG menu:
 - On Host C, set hosts: 192.168.1.139,192.168.1.191. Uncheck master
 
 Do not write whitespaces between the hosts
+
+
+Q: I have started two ZEsarUX windows, one creates a room on ZENG Online server and the other one connects to that room. That second one can't send any key presses
+A: If you have started two ZEsarUX windows, both have same configuration and there is a parameter that must be unique when connecting to a ZENG Online server: 
+--stats-uuid X
+That parameter associates a unique identificator for the ZENG Online player; if this uuid is repeated, keys are not received well. You can change the "X" value to another
+number or even remove this parameter and when starting ZEsarUX, a new one will be generated.
+Also, there is another parameter, --zeng-online-nickname, that assigns a nickname to the ZENG Online player. These nicknames should also be different for all players; however,
+everything will work ok but it could be confusing having the same nickname repeated on a room
+
 
 ----------------------------------------------------------------------------
 
@@ -593,6 +639,74 @@ See files on extras/docs/prism/ to know which roms are included in the Flash
 ----------------------------------------------------------------------------
 
 
+Scorpion
+--------
+
+Q: How do I access SD, IDE and TRD files on Scorpion GMX?
+
+A: Choose the method that matches where your files are stored:
+
+- SD: In Storage -> SD/MMC, select a FAT-formatted card image and enable MMC Emulation and Z-Controller Enabled. Open the GMX NMI menu (ZEsarUX: Debug -> Generate NMI), then select B. Save & Load -> ROM disk -> Fatall 0.25. Press Right Arrow to select the right panel, press 2 (Drive) and select the SD card to browse its files.
+- IDE: In Storage -> IDE, select a FAT-formatted disk image and enable IDE Emulation and SMUC Enabled. Fatall can also browse IDE: open it as above, select the right panel with Right Arrow, press 2 (Drive) and select the IDE disk. The separate HDD boot question below explains how to boot a program from IDE.
+- TRD file inside SD: GMX can browse the SD card with Fatall, but cannot mount a .trd stored there for use in TR-DOS.
+- TRD file inside IDE: After setting up IDE as above, open the GMX NMI menu and select Hard Disk Utility -> Mount on A:, then choose the .trd file on the IDE disk. In the emulated GMX startup menu, enter TR-DOS to use that disk.
+- TRD file on your computer: In ZEsarUX, select Storage -> Betadisk -> TRD File and enable TRD Emulation. In the emulated GMX startup menu, enter TR-DOS to use that disk.
+
+Q: What are the different boot screens of Scorpion GMX? I don't understand Russian.
+
+A: On startup, GMX briefly displays a message asking you to press DELETE to enter “GMX Loader Set Up”. It also reports how much RAM it detected. If you do nothing, it continues booting into the usual Scorpion menu.
+
+Pressing DELETE opens the GMX Loader menu. The firmware currently used by ZEsarUX shows these entries:
+
+- 0: Restart.
+- 1: Startup configuration.
+- 2: Scorpion configuration.
+- 3: Absent; no configuration is stored in this slot.
+- 4: Pentagon configuration.
+- 5: Komposit configuration.
+- 6: DK Test (hardware test).
+- 7: Pentagon7 configuration.
+- D: Select a file.
+- P: Update the ROM.
+
+The message at the bottom means "No disk with firmware selected". The numbered entries select GMX hardware configurations and their associated firmware, not just different ROM banks. ZEsarUX does not yet fully emulate every alternative GMX configuration.
+
+Q: How can I test the Scorpion GMX 640x200 graphics mode?
+
+A: At the GMX Loader menu, select 6: DK Test. In the hardware test menu, press A to start the graphics screen test. It displays 25 rows of 80 characters filled with the word "SCORPION". The 80x25 layout comes from drawing 8x8 characters on the 640x200 graphics screen; it is not a separate video mode. Press T or G to scroll the display up or down by one text row, and Q to return to the normal video mode.
+
+Q: What do the keys in Scorpion GMX DK Test do?
+
+A: Select 6: DK Test in the GMX Loader menu. The main test keys are:
+
+- A: Show the 640x200 graphics test with 80x25 "SCORPION" characters. In this test, T scrolls up and G scrolls down by one text row.
+- Q: Return to the standard 256x192 video mode.
+- S / W: Switch the CPU to Turbo / Normal speed.
+- 1: Test screen attributes and graphics; 2: RAM data and address buses; 3: RAM paging; 4: RAM; 5: ROM.
+- 6: Test TR-DOS and the floppy controller. One of its subtests writes to the inserted disk.
+- 7: Test peripherals, including tape, sound, Kempston joystick, printer ports, interrupts and AY.
+- 8: Run a continuous RAM test; 9: Run a sequence of tests, including the floppy tests.
+- P: Write a byte to a selected I/O port; press P again to leave this test.
+- 0: Lock the configuration port until Reset; R: restart.
+
+During individual tests, keys 1-4 can restart, continue, repeat or stop the current test; their exact action depends on the test.
+
+Q: What does the HDD boot menu option do on Scorpion GMX?
+
+A: HDD boot in the 128 BASIC menu starts the boot source configured in ProfROM's NMI monitor. To boot a file from the hard disk, open the NMI monitor, select D. Disk utility -> V. from drive, and set the boot type to "file". Then use H. HDD file to select a .spg, .sna or .$C file. Return to the 128 BASIC menu and select HDD boot.
+
+Q: Why does the Scorpion GMX show the CMOS, SMUC and hard disk test on startup, but skip it after Reset?
+
+A: A normal Reset keeps the initialized state in RAM, so the firmware takes the quicker startup path. To run the full startup test again, hold the Left Arrow key while resetting the machine. This brings back the screen that reports RAM, ROM, CMOS, SMUC and hard disk status.
+
+Q: Why does Scorpion GMX run at 2x speed, even in 128 BASIC or 48 BASIC?
+
+A: The GMX Boot ROM 1.3 V. 5.00 enables Turbo by writing bit 7 of port 7EFDh. Entering BASIC does not necessarily switch it back to Normal, so programs may continue running at 2x speed. This is consistent with the Scorpion ZS-256 Turbo user manual, which says that model starts in Turbo mode by default. To run at normal speed in ZEsarUX, use Settings -> CPU -> Set GMX Normal CPU speed. The GMX hardware also has a Normal/Turbo button that changes the speed with each press.
+
+
+----------------------------------------------------------------------------
+
+
 ZX Spectrum Next
 ----------------
 
@@ -615,6 +729,7 @@ Q: I have enabled divmmc on Next bios, but seems it's not working (no esxdos or 
 A: Sometimes, enabling divmmc on Next bios requires closing and reopening ZEsarUX. The technical answer for this issue,
 is that enabling/disabling divmmc on Next is not done the same way as when you enable/disable it from ZEsarUX menu, 
 Next does not disables entirely divmmc, only automatic memory paging
+
 
 
 Q: Why can't enable divmmc paging (or full divmmc emulation) from command line/config file on Next? When exiting emulator, these settings are not saved on configuration file. But... if I force them to enable from command line, Next does not boot, and then doing a hard reset it boots ok
@@ -695,6 +810,15 @@ A: You must enable Storage-> SD/MMC-> Enable SDHC addressing. Then, use Smartloa
 TSConf
 ------
 
+Q: How do I access SD, IDE and TRD files on TSConf?
+A: To change boot settings in the emulated machine, hold Symbol Shift (Ctrl or Alt) just after a hard reset to open TS-BIOS setup:
+
+- SD: In ZEsarUX, select a FAT-formatted card image in Storage -> SD/MMC and enable MMC Emulation and Z-Controller Enabled.
+- IDE: In ZEsarUX, select a FAT-formatted disk image in Storage -> IDE and enable IDE Emulation. Enable Nemo IDE Enabled or SMUC Enabled to match the TS-BIOS Boot Device you will select.
+- Browse SD or IDE: Put Wild Commander as boot.$c in the root of the card or disk image. In TS-BIOS, set Boot Device to SD Z-Controller, IDE Nemo M or IDE Smuc M to match that image, and set "Reset to" to "BD boot.$c". Reset the machine; Wild Commander will start and let you browse the files.
+- TRD file inside SD or IDE: Select the SD or IDE image in ZEsarUX and boot Wild Commander from it as described above. Select the .trd file, press Enter and choose the TR-DOS drive where it should be mounted.
+- TRD file on your computer: In ZEsarUX, select Storage -> Betadisk -> TRD File and enable TRD Emulation. In TS-BIOS, set "Reset to" to "ROM #00" and its "bank" to "TR-DOS", then reset to enter TR-DOS and access the disk.
+
 
 Q: When I do a hard reset, the screen goes to black and seems it runs nothing
 A: Do a hard reset and just after that, keep pressing Symbol Shift (CTRL or ALT) and you will return to the TSConf Bios
@@ -702,8 +826,64 @@ A: Do a hard reset and just after that, keep pressing Symbol Shift (CTRL or ALT)
 Q: How do I exit from TSConf Bios? F12 keys seems to do nothing
 A: F12 on a real TSConf means Reset. So to simulate it you just open the ZEsarUX menu Debug->Reset
 
+Q: What do "Reset to", "CS Reset to" and "bank" mean in the TS-BIOS setup?
+A: "Reset to" selects what starts after a normal reset. "CS Reset to" selects what starts when Caps Shift is held during reset. Both have the same choices:
+- ROM #00: start from the first 64 KiB ROM block (pages #00-#03).
+- ROM #04: start from the second 64 KiB ROM block (pages #04-#07). Its contents depend on the installed ROM image.
+- RAM #F8: start from RAM pages #F8-#FB, which must already contain executable code. A hard reset clears this RAM.
+- BD boot.$c: load boot.$c from the selected Boot Device. The "bank" setting does not apply.
+- BD sys.rom: present in this TS-BIOS menu, but its boot routine is not implemented; it does not load sys.rom.
+
+For ROM #00, ROM #04 and RAM #F8, "bank" selects a page within that four-page block:
+                 SYS    TR-DOS    Basic 128    Basic 48
+ROM #00          #00      #01         #02          #03
+ROM #04          #04      #05         #06          #07
+RAM #F8          #F8      #F9         #FA          #FB
+
+SYS uses direct page mapping. The other banks use Spectrum-compatible mapping; TR-DOS also enters through its DOS activation address. These names describe the selected page and mode, not what is actually stored there. In particular, choosing TR-DOS in ROM #04 does not make page #05 contain a TR-DOS ROM.
+
 Q: Some .spg games seem to fail loading
 A: Be sure you haven't enabled divmmc or divide paging, it's incompatible with some of them  
+
+
+----------------------------------------------------------------------------
+
+
+BaseConf
+------
+
+Q: How do I access SD, IDE and TRD files on BaseConf?
+A: Choose the method that matches where your files are stored:
+
+- SD: In Storage -> SD/MMC, select a FAT-formatted card image and enable MMC Emulation and BaseConf SD Enabled. Open File Browser in the EVO Reset Service; press D. Drive to select the SD card.
+- IDE: In Storage -> IDE, select a FAT-formatted disk image and enable IDE Emulation and Nemo IDE Enabled. Open File Browser in the EVO Reset Service; press D. Drive to select the IDE disk.
+- TRD file inside SD or IDE: First select the SD or IDE image in ZEsarUX and enable its interface as described above. In the EVO Reset Service, open File Browser and press D. Drive to choose the SD or IDE disk. Select the .trd file, press Enter, choose 0. Only load, then select Z. TR-DOS boot.
+- TRD file on your computer: In ZEsarUX, select Storage -> Betadisk -> TRD File and enable TRD Emulation. In the EVO Reset Service, select Z. TR-DOS boot to access the inserted disk.
+
+Q: What is FAT Boot on the EVO Reset Service?
+A: It's used to load Hobeta files, you can find an example on the mmc card called "TEST.$C"
+
+Q: What is HDD Boot on the EVO Reset Service?
+A: It's used to load IDE disk images, like iS-DOS/TASiS 
+
+----------------------------------------------------------------------------
+
+
+ATM Turbo
+---------
+
+Q: On ATM2/3, what does the option "IDE Hard drive master" on Bios or the "HDD Boot" on Spectrum menu do?
+A: You can boot operating systems from IDE, for example CP/M + Tasis/iS-DOS for ATM
+
+----------------------------------------------------------------------------
+
+
+Didaktik Gama
+-------------
+
+Q: How do I switch between the two RAM banks from BASIC?
+A: Use OUT 127,0 to select bank 0 or OUT 127,1 to select bank 1. The selected
+   bank occupies addresses 8000h-FFFFh; screen RAM at 4000h-7FFFh stays fixed.
 
 
 ----------------------------------------------------------------------------
@@ -844,33 +1024,51 @@ https://github.com/chernandezba/zesarux-extras
 Q: How is pronounced ZEsarUX?
 A: Phonetically: ZEsarUX is pronounced: θe.sa.ɾ'uks
 One by one, every letter:
-Z like th on think
-E like e on let
-S like s on sing
-A like a on cat
-R like r on round 
-U like u on put
-X like x on Linux
+Z like "th" in think
+E like "e" in let
+S like "s" in sing
+A like "a" in cat
+R like "r" in round
+U like "u" in put
+X like "x" in Linux
 And saying the accent on the final syllable 
 You can also play zesarux.mp3 to hear how it sounds
 
 
 Q: What is the origin of the name of ZEsarUX?
-A: ZEsarUX comes from:
+A: The name ZEsarUX comes from:
 ZX Second-Emulator And Released for UniX.
-I write second-emulator with a hyphen because I changed the order of the two words to have the final name... If not, name would be:
-ZsEarUX :P
-Second because it's my second emulator. The first was ZXSpectr:
+The hyphen in Second-Emulator is intentional. I swapped the order of the words so the initials would spell ZEsarUX. Otherwise, the name would have been "ZsEarUX" :P
+Second because it's my second emulator. The first one was ZXSpectr:
 https://github.com/chernandezba/zxspectr
-Why the capital letters? Because one of the first names I thought was ZEUX, but there's another emulator called zeus... 
-Then I thought some name like mine (Cesar) and adding letters zx (for zx spectrum) and also UX for UNIX/Linux, so GNU/Linux was the first supported platform. Then I simply joined all these letters and have a translation for every letter to a word, on a phrase with sense: 
+Why the capital letters? Because one of the first names I considered was ZEUX, but I discovered there was already another emulator called Zeus... 
+I also liked the idea of a name that sounded a bit like my own name, César, while including ZX (for the ZX Spectrum) and UX (for Unix), since GNU/Linux was the first platform supported by the emulator. Eventually I combined all those ideas and assigned a meaning to every letter, resulting in the phrase:
 ZX Second-Emulator And Released for UniX.
-It's important to write lowercase and uppercase characters correctly. Uppercase letters refer to the most important part of the name: "ZX", "Emulator", "UniX"
-And lowercase letters refer to the less important part : "second", "and", "released"
+
+The capitalization is intentional. The uppercase letters represent the most important parts of the name: "ZX", "Emulator", "UniX" while the lowercase letters correspond to the connecting words: "second", "and", "released"
+
+Before the final ZEsarUX name, I thought on many other possible names:
+* zx + ....
+* zxsinclair emu
+* zxemu
+* zxclive
+* zspectux
+* zemulatorx
+* zxjump
+* zxnew
+* zxspectrx
+* zxee  -> zx extended emulator
+* zeux
+* zxdh
+* zxgo
+* zxnew : zx nonamed emulator w?
+* zgeckox: Z X, Gnu, Emulator, Computer, K, O
+* ZX Gecko: ZX, X Unix, General / Gnu, Emulator, Computer / Complete, K Known, Overall
+* and some other names combining ideas like: new, second, zx, c, unix, sinclair
 
 
-Q: I have seen a gecko in the About window. What does it mean?
-A: That gecko is a real one which I saw in my parents house, some years ago. This is a tribute to my father, who was very fond of geckos
+Q: What does the gecko in the About window mean?
+A: The gecko shown in the About window is a real one that I saw at my parents' house a few years ago. It is a tribute to my father, who was very fond of geckos.
 
 
 Q: Can this emulator run on MS-DOS?
@@ -879,21 +1077,21 @@ https://github.com/chernandezba/zxspectr
 It does run on MS-DOS. It was created on June 1996, so it's more than 20 years old!
 
 
-Q: Using the menu "video out to file" generates a raw video file. Seems I have to use the program "mplayer" to run it, I tried but I didn't succeed. I'm using Mac
-A: Playing the raw video on Mac it's a bit tricky, but yes, you can use mplayer for Mac.
-First download MplayerX from:
-http://mplayerx.org
+Q: Using the menu "video out to file" generates a raw video file. Seems I have to use the program "mpv" to run it, I tried but I didn't succeed. I'm using Mac
+A: Playing the raw video on Mac it's a bit tricky, but yes, you can use mpv for Mac.
+First download mpv from:
+https://mpv.io
 
-Then, when you enable video out on ZEsarUX, a window will be appear with the parameters needed for mplayer, but also on console (enabling verbose debug). For example:
-mplayer -demuxer rawvideo -rawvideo fps=5:w=720:h=576:format=bgr24 /Users/chernandezba/Documents/video.rwv
+Then, when you enable video out on ZEsarUX, a window will be appear with the parameters needed for mpv, but also on console (enabling verbose debug). For example:
+mpv --demuxer=rawvideo --demuxer-rawvideo-fps=5 --demuxer-rawvideo-w=720 --demuxer-rawvideo-h=576 --demuxer-rawvideo-mp-format=bgr24 /Users/chernandezba/Documents/video.rwv
 (this example was for a video recording on TSConf machine)
 
-So, MplayerX has a beautiful fronted for Mac but it also has a command line program to play video; this is what you need to play the video generated from ZEsarUX
-You should run the command line mplayer by opening a Terminal, and write:
-/Applications/MPlayerX.app/Contents/Resources/MPlayerX.mplayer.bundle/Contents/Resources/x86_64/mplayer XXXX
+So, mpv has a command line program to play video; this is what you need to play the video generated from ZEsarUX
+You should run the command line mpv by opening a Terminal, and write:
+/Applications/mpv.app/Contents/MacOS/mpv XXXX
 
 Where XXXX are all the parameters that ZEsarUX gave you. In this example, the command line sentence will be:
-/Applications/MPlayerX.app/Contents/Resources/MPlayerX.mplayer.bundle/Contents/Resources/x86_64/mplayer -demuxer rawvideo -rawvideo fps=5:w=720:h=576:format=bgr24 /Users/chernandezba/Documents/video.rwv
+/Applications/mpv.app/Contents/MacOS/mpv --demuxer=rawvideo --demuxer-rawvideo-fps=5 --demuxer-rawvideo-w=720 --demuxer-rawvideo-h=576 --demuxer-rawvideo-mp-format=bgr24 /Users/chernandezba/Documents/video.rwv
 
 
 Q: Is there any manual or documentation?
@@ -1030,6 +1228,17 @@ the command line setting "--spectrum-reduced-core" when running ZEsarUX, and eve
 Q: What are RWA files?
 A: RWA means Raw Wave Audio file; it's an audio file without header, sampled at rate 15600 Hz, 8 bit unsigned, 1 channel. They are used widely in ZEsarUX
 
+
+Q: What type of software versioning are you using on ZEsarUX?
+A: Before version 12, I used Semantic versioning (Major.Minor.Patch), although .Patch was only used on one version. Major versions changed when I considered there was some important changes that needed a new Major, but, as you may see, this can be very subjective.
+So, starting version 12, I use some kind of Calendar versioning: (current year-2013).(release of that year starting at 0, 1, 2 etc). So, as ZEsarUX started on 2013, the version tells me how many years has passed since the initial version to the one you are using. For example:
+- Version 12.0 was released on January 2025 (13 years after the first one - forget the month). If release is 0, I simply omit it
+- Version 12.1 was released on September 2025 (13 years after the first one, and second release of 2025)
+
+So it doesn't depend now on kind of changes of every release, but the year of the release.
+By the way, maybe I will change version type on the future again, considering the current year, for example version 2027.0, 2027.1, etc
+
+Also, all versions have an "edition" name, which is most of the times a game I like, for example: ZEsarUX 12.1 - Night Shift edition.
 
 Q: I have a question not listed here. What can I do?
 A: Send a mail to chernandezba (at) hotmail.com and I will answer you.

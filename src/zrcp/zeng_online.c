@@ -233,6 +233,8 @@ void zeng_online_destroy_room_aux(int room_number)
 
     zeng_online_rooms_list[room_number].current_players=0;
 
+    zeng_online_rooms_list[room_number].uptime=0;
+
     strcpy(zeng_online_rooms_list[room_number].name,"<free>");
 
     if (zeng_online_rooms_list[room_number].snapshot_memory!=NULL) {
@@ -246,6 +248,23 @@ void zeng_online_destroy_room_aux(int room_number)
 
 }
 
+void zeng_online_increment_uptime_rooms(void)
+{
+
+    DBG_PRINT_ZENG_ONLINE VERBOSE_INFO,"ZENG Online: Increment uptime of rooms");
+
+    int room_number;
+
+    for (room_number=0;room_number<zeng_online_current_max_rooms;room_number++) {
+        if (zeng_online_rooms_list[room_number].created) {
+            DBG_PRINT_ZENG_ONLINE VERBOSE_DEBUG,"ZENG Online: Increment uptime of room %d",room_number);
+
+            zeng_online_rooms_list[room_number].uptime++;
+
+        }
+
+    }
+}
 
 void zeng_online_expire_non_alive_users(void)
 {
@@ -349,6 +368,9 @@ void timer_zeng_online_server(void)
 
     //Destruir rooms que no tengan usuarios
     if (zeng_online_destroy_rooms_without_players.v) zeng_online_destroy_empty_rooms();
+
+    //Incrementar contador de uptime
+    zeng_online_increment_uptime_rooms();
 
 }
 
@@ -725,6 +747,14 @@ void zoc_send_broadcast_message(int room_number,char *message)
 
 }
 
+void zoc_send_private_message(int room_number,char *uuid_destination,char *message)
+{
+    //No hace falta indicar room number dado que solo se mostraran mensajes de nuestro room
+    strcpy(zeng_online_rooms_list[room_number].private_message,message);
+    strcpy(zeng_online_rooms_list[room_number].private_message_uuid,uuid_destination);
+
+}
+
 void init_zeng_online_rooms(void)
 {
 
@@ -736,6 +766,7 @@ void init_zeng_online_rooms(void)
         zeng_online_rooms_list[i].created=0;
         zeng_online_rooms_list[i].max_players=zeng_online_current_max_players_per_room;
         zeng_online_rooms_list[i].current_players=0;
+        zeng_online_rooms_list[i].uptime=0;
         strcpy(zeng_online_rooms_list[i].name,"<free>");
         zeng_online_rooms_list[i].snapshot_memory=NULL;
         zeng_online_rooms_list[i].snapshot_size=0;
@@ -877,6 +908,7 @@ void zeng_online_create_room(int misocket,int room_number,char *room_name,int st
     //zeng_online_rooms_list[room_number].max_players=zeng_online_current_max_players_per_room;
 
     zeng_online_rooms_list[room_number].current_players=0;
+    zeng_online_rooms_list[room_number].uptime=0;
     zeng_online_rooms_list[room_number].snapshot_memory=NULL;
 
     zeng_online_rooms_list[room_number].autojoin_enabled=0;
@@ -886,6 +918,9 @@ void zeng_online_create_room(int misocket,int room_number,char *room_name,int st
     zeng_online_rooms_list[room_number].broadcast_message_id=0;
     zeng_online_rooms_list[room_number].broadcast_message[0]=0;
     zeng_online_rooms_list[room_number].broadcast_messages_allowed=1;
+
+    zeng_online_rooms_list[room_number].private_message[0]=0;
+    zeng_online_rooms_list[room_number].private_message_uuid[0]=0;
 
     zeng_online_rooms_list[room_number].kicked_user[0]=0;
 
@@ -973,6 +1008,10 @@ void zeng_online_parse_command(int misocket,int comando_argc,char **comando_argv
         }
     }
 
+    else if (!strcmp(comando_argv[0],"get-protocol-version")) {
+        escribir_socket_format(misocket,"%d",ZENG_ONLINE_PROTOCOL_VERSION);
+    }
+
     else if (!strcmp(comando_argv[0],"list-rooms")) {
         if (!zeng_online_enabled) {
             escribir_socket(misocket,"ERROR. ZENG Online is not enabled");
@@ -981,15 +1020,16 @@ void zeng_online_parse_command(int misocket,int comando_argc,char **comando_argv
 
         int i;
 
-        escribir_socket(misocket,"N.  Created Autojoin Players Max Name\n");
+        escribir_socket(misocket,"N.  Created Autojoin Players Max Uptime Name\n");
 
         for (i=0;i<zeng_online_current_max_rooms;i++) {
-            escribir_socket_format(misocket,"%3d %d       %d      %3d       %3d %s\n",
+            escribir_socket_format(misocket,"%3d %d       %d      %3d       %3d %6d %s\n",
                 i,
                 zeng_online_rooms_list[i].created,
                 zeng_online_rooms_list[i].autojoin_enabled,
                 zeng_online_rooms_list[i].current_players,
                 zeng_online_rooms_list[i].max_players,
+                zeng_online_rooms_list[i].uptime/60,   //retornamos en horas
                 zeng_online_rooms_list[i].name
             );
         }
@@ -2100,6 +2140,49 @@ void zeng_online_parse_command(int misocket,int comando_argc,char **comando_argv
             comando_argv[4]);
         zoc_send_broadcast_message(room_number,broadcast_message);
 
+    }
+//    "send-message user_pass n nickname message       Sends broadcast message to room\n"
+  //  "send-private-message user_pass n nickname uuid message   Sends private message to room. nickname is the origin, uuid is the destination\n"
+    else if (!strcmp(comando_argv[0],"send-private-message")) {
+        if (!zeng_online_enabled) {
+            escribir_socket(misocket,"ERROR. ZENG Online is not enabled");
+            return;
+        }
+
+        if (comando_argc<5) {
+            escribir_socket(misocket,"ERROR. Needs five parameters");
+            return;
+        }
+
+        int room_number=parse_string_to_number(comando_argv[2]);
+
+        if (room_number<0 || room_number>=zeng_online_current_max_rooms) {
+            escribir_socket_format(misocket,"ERROR. Room number beyond limit");
+            return;
+        }
+
+        if (!zeng_online_rooms_list[room_number].created) {
+            escribir_socket(misocket,"ERROR. Room is not created");
+            return;
+        }
+
+        //validar user_pass. comando_argv[1]
+        if (strcmp(comando_argv[1],zeng_online_rooms_list[room_number].user_password)) {
+            escribir_socket(misocket,"ERROR. Invalid user password for that room");
+            return;
+        }
+
+
+        char private_message[ZENG_ONLINE_MAX_BROADCAST_MESSAGE_SHOWN_LENGTH];
+
+        //No hace falta indicar room number dado que solo se mostraran mensajes de nuestro room
+        sprintf(private_message,
+            "Message from %s: %s",
+            comando_argv[3],
+            comando_argv[5]);
+
+        DBG_PRINT_ZENG_ONLINE VERBOSE_DEBUG,"ZENG Online: Sending private message on room number %d to %d: %s",room_number,comando_argv[4],private_message);
+        zoc_send_private_message(room_number,comando_argv[4],private_message);
 
     }
 
@@ -2245,6 +2328,53 @@ void zeng_online_parse_command(int misocket,int comando_argc,char **comando_argv
         }
 
         escribir_socket(misocket,zeng_online_rooms_list[room_number].broadcast_message);
+
+    }
+
+    //get-private-message user_pass n uuid
+    else if (!strcmp(comando_argv[0],"get-private-message")) {
+        if (!zeng_online_enabled) {
+            escribir_socket(misocket,"ERROR. ZENG Online is not enabled");
+            return;
+        }
+
+        if (comando_argc<3) {
+            escribir_socket(misocket,"ERROR. Needs three parameters");
+            return;
+        }
+
+        int room_number=parse_string_to_number(comando_argv[2]);
+
+        if (room_number<0 || room_number>=zeng_online_current_max_rooms) {
+            escribir_socket_format(misocket,"ERROR. Room number beyond limit");
+            return;
+        }
+
+        if (!zeng_online_rooms_list[room_number].created) {
+            escribir_socket(misocket,"ERROR. Room is not created");
+            return;
+        }
+
+        //validar user_pass. comando_argv[1]
+        if (strcmp(comando_argv[1],zeng_online_rooms_list[room_number].user_password)) {
+            escribir_socket(misocket,"ERROR. Invalid user password for that room");
+            return;
+        }
+
+        //printf("buscando private message para uuid [%s] y el mensaje es para uuid [%s]\n",comando_argv[3],zeng_online_rooms_list[room_number].private_message_uuid);
+
+        if (!strcmp(comando_argv[3],zeng_online_rooms_list[room_number].private_message_uuid)) {
+            //printf("Retornar private message\n");
+            escribir_socket_format(misocket,"%s",zeng_online_rooms_list[room_number].private_message);
+
+            //Una vez recibido se borra
+            zeng_online_rooms_list[room_number].private_message_uuid[0]=0;
+            zeng_online_rooms_list[room_number].private_message[0]=0;
+        }
+        else {
+            //printf("No hay private message\n");
+            escribir_socket(misocket,"");
+        }
 
     }
 
@@ -2823,7 +2953,7 @@ void zeng_online_parse_command(int misocket,int comando_argc,char **comando_argv
 
         //Y notificarlo con un broadcast message
         char broadcast_message[ZENG_ONLINE_MAX_BROADCAST_MESSAGE_SHOWN_LENGTH];
-        sprintf(broadcast_message,"Joined %s",comando_argv[2]);
+        sprintf(broadcast_message,": Joined %s",comando_argv[2]);
         zoc_send_broadcast_message(room_number,broadcast_message);
 
 

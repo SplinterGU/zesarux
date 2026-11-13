@@ -32,21 +32,31 @@
 #include "zxvision.h"
 #include "ula.h"
 #include "zxpand.h"
+#include "tape.h"
+#include "tv.h"
 
-//http://nocash.emubase.de/zxdocs.htm#zx80zx81videointerruptsintsandnmis
-
-//http://www.user.dccnet.com/wrigter/index_files/ZX%20Video%20Tutorial.htm
 
 /*
 
-Info general sobre ZX80 y ZX81
+Información referencia
 
-Dibujan la pantalla mediante rutinas de software. En el emulador no se hace asi, el pintado de pantalla es tarea del driver de video,
-que lee los caracteres de pantalla del zx80/81 y los dibuja. Por tanto, no se soportan modos de video de alta resolucion
+https://8bit-museum.de/heimcomputer-2/sinclair/sinclair-scans/scans-zx81-video-display-system/
 
-Diferencias entre ZX80 y ZX81:
--ZX81 tiene un generador de NMI, que genera NMI cuando está activo cada 64 microsegundos (cada final de frame de pantalla).Podria ignorar el generador, pero sirve para bajar la velocidad real del zx81 (en modo slow). Tambien he visto que el mazogs, cuando genera el laberinto, si no hay nmis no acaba nunca
--ZX80 siempre esta en modo fast, y por tanto presenta parpadeo?¿
+https://github.com/Megatokio/zxsp
+
+http://nocash.emubase.de/zxdocs.htm#zx80zx81videointerruptsintsandnmis
+
+http://www.user.dccnet.com/wrigter/index_files/ZX%20Video%20Tutorial.htm
+
+https://quix.us/timex/rigter/ZX@20Video@20Tutorial.html
+
+http://blog.tynemouthsoftware.co.uk/2023/10/how-the-zx81-generates-video.html
+
+http://www.fruitcake.plus.com/Sinclair/ZX80/FlickerFree/ZX80_DisplayMechanism.htm
+
+http://searle.x10host.com/zx80/zx80nmiV3.html
+
+https://k1.spdns.de/Vintage/Sinclair/80/Sinclair%20ZX81/ROMs/zx81%20version%202%20%27improved%27%20rom%20source.htm
 
 */
 
@@ -72,32 +82,32 @@ The ZX81/ZX80 Keyboard Matrix
 
 
 //Real
-z80_byte   caracteres_zx80_no_artistic[64]=" \"???????????$:?()-+*/=><;,."
+z80_byte   caracteres_zx80_no_artistic[]=" \"???????????$:?()-+*/=><;,."
                            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 //Un poco mas artistico
-z80_byte   caracteres_zx80[64]=" \"|v''../#_^f$:?()-+*/=><;,."
+z80_byte   caracteres_zx80[]=" \"|v''../#_^f$:?()-+*/=><;,."
                            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 
 //Real
-z80_byte   caracteres_zx81_no_artistic[64]=" ??????????\"?$:?()><=+-*/;,."
+z80_byte   caracteres_zx81_no_artistic[]=" ??????????\"?$:?()><=+-*/;,."
                            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 //Un poco mas artistico
-z80_byte   caracteres_zx81[64]=" ''^.|/p#_^\"f$:?()><=+-*/;,."
+z80_byte   caracteres_zx81[]=" ''^.|/p#_^\"f$:?()><=+-*/;,."
                            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 
 //Caracteres sin interrogantes ni nada, para funciones ocr a speech
-z80_byte   caracteres_zx80_solo_letras[64]=
-			   " \"           $:?()-+*/=><;,."
+z80_byte   caracteres_zx80_solo_letras[]=
+               " \"           $:?()-+*/=><;,."
                            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-z80_byte   caracteres_zx81_solo_letras[64]=
-			  //01234567890 12345678901234567
-			   "           \" $:?()><=+-*/;,."
-			  //890123456789012345678901234567890123
+z80_byte   caracteres_zx81_solo_letras[]=
+              //01234567890 12345678901234567
+               "           \" $:?()><=+-*/;,."
+              //890123456789012345678901234567890123
                            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 //Pasar de ascii a zx81. Empezando por el 32
@@ -145,8 +155,67 @@ Despues de ?(), en posicion 18:
 */
 
 
+//
+//Inicio variables para generación de video
+//
 z80_bit nmi_generator_active;
-z80_bit hsync_generator_active;
+//z80_bit hsync_generator_active;
+z80_bit zx8081_vsync_generator={0};
+
+//Tiempo total de hsync:
+//12 microsegundos:
+//1.65 front porch
+//4.7 hsync pulse
+//5.7 back porch
+//TODO: esto deberia ser 39 t-estados (12 microsec)  pero entonces algunos juegos están muy a la izquierda
+//tiempo en t-estados. Para calcularla: (207/64)*valor en microsegundos
+//int hsync_total_duration=39;
+
+int hsync_duration_counter=0;
+
+//linea actual (scan 0-7) del caracter mostrado
+int video_zx8081_lcntr=0;
+
+
+//el siguiente valor que tendra una linea entera segun la ULA
+//zx8081_ula_video_in_sync=1 : con sync , voltaje 0v, color negro
+//zx8081_ula_video_in_sync=0 : sin sync , voltaje "normal" (1V), color blanco
+//sync (ya sea hsync o vsync) es 0V. Depende de lo que dure ese 0V será hsync o vsync (esta duración no la implemento
+//ni aqui ni en el módulo de emulación de tv)
+int zx8081_ula_video_in_sync=0;
+
+z80_byte zx80801_last_sprite_video=0;
+int zx80801_last_sprite_video_tinta=0;
+int zx80801_last_sprite_video_papel=0;
+
+int ula_zx81_time_event_t_estados=0;
+
+
+z80_bit force_zx81_chr_128={0};
+
+
+z80_bit autodetect_wrx;
+
+//WRX hi-res mode
+z80_bit wrx_present;
+
+//chroma enabled
+z80_bit chroma81={0};
+
+z80_bit autodetect_chroma81={1};
+
+//chroma port
+z80_byte chroma81_port_7FEF;
+
+//
+//Fin variables para generación de video
+//
+
+//Opcion para simular perdida de vsync
+z80_bit simulate_lost_vsync;
+
+//Opcion para simular perdida de hsync
+z80_bit simulate_lost_hsync;
 
 //indica si se simula la pantalla negra del modo fast
 z80_bit video_fast_mode_emulation;
@@ -157,7 +226,9 @@ z80_byte video_fast_mode_next_frame_black;
 //Esto solo sirve para mostrar en menu debug i/o ports
 z80_byte zx8081_last_port_write_value;
 
-
+//Para que al hacer hotswap de ZX80 a ZX81, el ZX81 resultante no tenga nmi generator
+//Eso permite que juegos como Breakout y otros se pueda hacer hotswap a ZX81
+z80_bit hotswapped_zx80_to_zx81={0};
 
 z80_int ramtop_zx8081;
 
@@ -165,41 +236,15 @@ z80_int ramtop_zx8081;
 z80_bit zx8081_vsync_sound;
 
 
-//deteccion de perdida de vsync y por tanto se oye sonido
+//deteccion sonido vsync
+//TODO: da falsos positivos en modo fast, en manic miner, en pacman, nolimits, sllc
 z80_bit zx8081_detect_vsync_sound={0};
 
-//en cuanto un frame no tiene vsync, incrementamos aqui, y si vale>0, se activa vsync sound
-//cuando se recibe un vsync completo de frame, se decrementa esto. cuando llega a 0 , se desactiva vsync sound
-//maximo valor de esto: ZX8081_DETECT_VSYNC_SOUND_COUNTER_MAX
-int zx8081_detect_vsync_sound_counter=ZX8081_DETECT_VSYNC_SOUND_COUNTER_MAX;
 
-z80_bit force_zx81_chr_128={0};
+int zx8081_detect_vsync_sound_counter_debe_incrementar=0;
+int zx8081_detect_vsync_sound_counter=0;
 
 
-z80_bit autodetect_wrx;
-
-//chroma enabled
-z80_bit chroma81={0};
-
-z80_bit autodetect_chroma81={1};
-
-//chroma port
-z80_byte chroma81_port_7FEF;
-
-
-//modo real(beta) de video para zx80/81
-//z80_bit beta_zx8081_video;
-
-//opcion de mostrar vsync en pantalla (franjas de carga / grabacion)
-//z80_bit video_zx8081_shows_vsync_on_display;
-
-//Opcion para simular perdida de vsync
-z80_bit simulate_lost_vsync;
-
-
-
-//Esto indica que se ha llegado a final de linea en rainbow, y siguiente escritura de "pantalla" debe tener lnctr=0
-//int temp_final_linea=1;
 
 //8k de RAM en 8192-16383
 z80_bit ram_in_8192;
@@ -210,39 +255,6 @@ z80_bit ram_in_49152;
 //16k de RAM en 32767-49152
 z80_bit ram_in_32768;
 
-//WRX hi-res mode
-z80_bit wrx_present;
-
-//z80_bit wrx_mueve_primera_columna;
-
-//HRG hi-res mode
-//z80_bit hrg_enabled;
-
-//offset ajustable para t_estados a final de linea con wrx. normalmente 8
-//int offset_zx8081_t_estados;
-
-//offset ajustable para coordenada x con wrx. normalmente 0
-int offset_zx8081_t_coordx;
-
-
-//A partir de que linea hay un timeout y se fuerza vsync
-int timeout_linea_vsync;
-
-//Duracion minima de vsync para que se tenga en cuenta
-int minimo_duracion_vsync;
-
-
-z80_bit video_zx8081_lnctr_adjust;
-
-//Ajuste solo para manic miner y para tetrishr. Desplazar coordenada x que normalmente solo se hace en WRX
-//z80_bit manic_miner_game;
-
-z80_bit video_zx8081_estabilizador_imagen;
-
-//int video_zx8081_decremento_x_cuando_mayor;
-
-//Inicio del pulso vsync. Para saber si al final del pulso se admite como vsync o no
-int inicio_pulso_vsync_t_estados;
 
 
 int vsync_per_second;
@@ -250,46 +262,45 @@ int last_vsync_per_second;
 
 z80_byte ascii_to_zx81(z80_byte c)
 {
-	//?
-	if (c<32 || c>127) return 15;
+    //?
+    if (c<32 || c>127) return 15;
 
-	else return caracteres_ascii_zx81[c-32];
+    else return caracteres_ascii_zx81[c-32];
 }
 
 z80_byte ascii_to_zx80(z80_byte c)
 {
-	//?
-	if (c<32 || c>127) return 15;
+    //?
+    if (c<32 || c>127) return 15;
 
-	else return caracteres_ascii_zx80[c-32];
+    else return caracteres_ascii_zx80[c-32];
 }
 
-//z80_bit ejecutado_zona_pantalla;
 
 
 //Activar wrx y offset de t_estados
 void enable_wrx(void)
 {
   if (!MACHINE_IS_ZX8081) {
-		debug_printf (VERBOSE_INFO,"ZXpand can only be enabled on ZX80/81");
-		return;
-	}
+        debug_printf (VERBOSE_INFO,"ZXpand can only be enabled on ZX80/81");
+        return;
+    }
 
-	if (wrx_present.v==0) {
-		screen_print_splash_text_center_no_if_previous(ESTILO_GUI_TINTA_NORMAL,ESTILO_GUI_PAPEL_NORMAL,"Enabling WRX video mode");
-		debug_printf (VERBOSE_INFO,"Enabling WRX video mode");
-	}
+    if (wrx_present.v==0) {
+        screen_print_splash_text_center_no_if_previous(ESTILO_GUI_TINTA_NORMAL,ESTILO_GUI_PAPEL_NORMAL,"Enabling WRX video mode");
+        debug_printf (VERBOSE_INFO,"Enabling WRX video mode");
+    }
 
-	wrx_present.v=1;
+    wrx_present.v=1;
 }
 
 //Desactivar wrx
 void disable_wrx(void)
 {
-	if (wrx_present.v==1) {
-	        wrx_present.v=0;
-		debug_printf (VERBOSE_INFO,"Disabling WRX video mode");
-	}
+    if (wrx_present.v==1) {
+            wrx_present.v=0;
+        debug_printf (VERBOSE_INFO,"Disabling WRX video mode");
+    }
 }
 
 
@@ -297,23 +308,23 @@ void disable_wrx(void)
 
 void enable_ram_in_32768(void)
 {
-	ram_in_32768.v=1;
+    ram_in_32768.v=1;
 
-	//decimos la RAM para BASIC
-	//debug_printf (VERBOSE_INFO,"Setting BASIC RAMTOP to 49152");
-	//memoria_spectrum[16389]=192;
+    //decimos la RAM para BASIC
+    //debug_printf (VERBOSE_INFO,"Setting BASIC RAMTOP to 49152");
+    //memoria_spectrum[16389]=192;
 }
 
 void enable_ram_in_49152(void)
 {
 
-	//si habilitamos esta, tambien la de 32768
-	ram_in_32768.v=1;
-	enable_ram_in_32768();
+    //si habilitamos esta, tambien la de 32768
+    ram_in_32768.v=1;
+    enable_ram_in_32768();
         ram_in_49152.v=1;
 
         //decimos la RAM para BASIC
-	//debug_printf (VERBOSE_INFO,"Setting BASIC RAMTOP to 65535");
+    //debug_printf (VERBOSE_INFO,"Setting BASIC RAMTOP to 65535");
         //memoria_spectrum[16389]=255;
 }
 
@@ -336,10 +347,10 @@ z80_int zx8081_get_total_ram_with_rampacks(void)
 
 z80_int get_ramtop_with_rampacks(void)
 {
-	//retorna la ramtop teniendo en cuenta los rampack
-	if (ram_in_49152.v==1) return 65535;
-	if (ram_in_32768.v==1) return 49151;
-	return ramtop_zx8081;
+    //retorna la ramtop teniendo en cuenta los rampack
+    if (ram_in_49152.v==1) return 65535;
+    if (ram_in_32768.v==1) return 49151;
+    return ramtop_zx8081;
 }
 
 
@@ -348,20 +359,20 @@ z80_int get_ramtop_with_rampacks(void)
 void set_ramtop_with_rampacks(void)
 {
 
-	z80_int r;
+    z80_int r;
 
-	if (MACHINE_IS_ZX80_TYPE) return;
+    if (MACHINE_IS_ZX80_TYPE) return;
 
-	//Solo si hay expansiones de memoria
-	if (ram_in_32768.v==1 || ram_in_49152.v==1) {
-		r=get_ramtop_with_rampacks();
-		r++;
-		if (r==0) r=65535;
+    //Solo si hay expansiones de memoria
+    if (ram_in_32768.v==1 || ram_in_49152.v==1) {
+        r=get_ramtop_with_rampacks();
+        r++;
+        if (r==0) r=65535;
 
-		debug_printf (VERBOSE_INFO,"Setting BASIC RAMTOP to %d",r);
-		memoria_spectrum[16389]=value_16_to_8h(r);
-		memoria_spectrum[16388]=value_16_to_8l(r);
-	}
+        debug_printf (VERBOSE_INFO,"Setting BASIC RAMTOP to %d",r);
+        memoria_spectrum[16389]=value_16_to_8h(r);
+        memoria_spectrum[16388]=value_16_to_8l(r);
+    }
 }
 
 
@@ -375,14 +386,14 @@ z80_byte da_codigo81(z80_byte codigo,z80_bit *inverse)
   else inverse->v=0;
 
   if (MACHINE_IS_ZX80_TYPE) {
-	//zx80
-	if (texto_artistico.v==1) return (codigo<64 ? caracteres_zx80[codigo] : '~');
-	else return (codigo<64 ? caracteres_zx80_no_artistic[codigo] : '~');
-	}
+    //zx80
+    if (texto_artistico.v==1) return (codigo<64 ? caracteres_zx80[codigo] : '~');
+    else return (codigo<64 ? caracteres_zx80_no_artistic[codigo] : '~');
+    }
   else {
-	//zx81
-	if (texto_artistico.v==1) return (codigo<64 ? caracteres_zx81[codigo] : '~');
-	else return (codigo<64 ? caracteres_zx81_no_artistic[codigo] : '~');
+    //zx81
+    if (texto_artistico.v==1) return (codigo<64 ? caracteres_zx81[codigo] : '~');
+    else return (codigo<64 ? caracteres_zx81_no_artistic[codigo] : '~');
   }
 
 }
@@ -400,388 +411,741 @@ z80_byte da_codigo81_solo_letras(z80_byte codigo,z80_bit *inverse)
 
   if (MACHINE_IS_ZX80_TYPE) {
         //zx80
-	return (codigo<64 ? caracteres_zx80_solo_letras[codigo] : ' ');
+    return (codigo<64 ? caracteres_zx80_solo_letras[codigo] : ' ');
         }
   else {
         //zx81
-	return (codigo<64 ? caracteres_zx81_solo_letras[codigo] : ' ');
+    return (codigo<64 ? caracteres_zx81_solo_letras[codigo] : ' ');
   }
 
 }
 
 z80_byte da_codigo_zx80_no_artistic(z80_byte codigo)
 {
-	return caracteres_zx80_no_artistic[codigo];
+    return caracteres_zx80_no_artistic[codigo];
 }
 
 z80_byte da_codigo_zx81_no_artistic(z80_byte codigo)
 {
-        return caracteres_zx81_no_artistic[codigo];
+    return caracteres_zx81_no_artistic[codigo];
 }
 
 
-
-//se usa solo para el estabilizador de imagen
-int video_zx8081_caracter_en_linea_actual=0;
-
-z80_bit video_zx8081_estabilizador_imagen;
-
-
-void generar_zx8081_vsync(void) {
-
-
-
-	//printf ("vsync total de zx81 t_estados: %d\n",t_estados);
-
-
-	t_scanline_draw=0;
-	t_scanline_draw_timeout=0;
-
-
-        //Cuadrar t_estados a cada linea multiple de 207
-        //Esto sirve para tener una imagen estable en horizontal....
-        //sino no habria manera posible de sincronizar la imagen en zx80 .. (en zx81 se ayuda de la nmi)
-	//lo ideal seria tener un contador de tiempo para la ULA separado del de la cpu... pero para no complicarlo mas,
-	//nos ayudamos del contador de tiempo de la cpu
-
-        int t_estados_en_linea=t_estados%screen_testados_linea;
-        t_estados -=t_estados_en_linea;
-
-
-
-
-}
-
-void generar_zx8081_horiz_sync(void) {
-
-
-                        if (video_zx8081_linecntr_enabled.v==1)
-                        	video_zx8081_linecntr++;
-
-
-                        //Cuadrar t_estados a cada linea multiple de 207
-                        //Esto sirve para tener una imagen estable en horizontal.... sino no hay manera
-
-                        if (video_zx8081_estabilizador_imagen.v) {
-                                int t_estados_en_linea=t_estados%screen_testados_linea;
-                                t_estados -=t_estados_en_linea;
-
-				//printf ("t_estados sobran: %d\n",t_estados_en_linea);
-                        }
-
-
-                        //siguiente linea
-
-                        video_zx8081_caracter_en_linea_actual=0;
-
-                        t_scanline_draw++;
-
-
-                        t_scanline_draw_timeout++;
-
-                        //si han pasado muchas lineas, resetear
-                        if (t_scanline_draw_timeout>=timeout_linea_vsync) {
-                                //printf ("Reset scanline por timeout. linea=%d\n",t_scanline_draw_timeout);
-                                generar_zx8081_vsync();
-                                video_zx8081_linecntr_enabled.v=1;
-                        }
-
-
-                       //Generar NMI si conviene
-                       if (MACHINE_IS_ZX81_TYPE) {
-                                 if (nmi_generator_active.v==1) {
-					generate_nmi();
-                                 }
-                       }
-
-}
 
 int da_amplitud_speaker_zx8081(void)
 {
-                                if (bit_salida_sonido_zx8081.v) return amplitud_speaker_actual_zx8081;
-                                else return -amplitud_speaker_actual_zx8081;
+    if (bit_salida_sonido_zx8081.v) return amplitud_speaker_actual_zx8081;
+    else return -amplitud_speaker_actual_zx8081;
 }
 
 
 //Establece tamanyo ram (sin contar ram packs) de zx80/81. Valor entre 1 y 16
 void set_zx8081_ramtop(z80_byte valor)
 {
-	if (valor<1 || valor>16) {
-		cpu_panic("Cannot set ZX80/81 RAM");
-	}
+    if (valor<1 || valor>16) {
+        cpu_panic("Cannot set ZX80/81 RAM");
+    }
 
-	ramtop_zx8081=16383+1024*valor;
+    ramtop_zx8081=16383+1024*valor;
 }
 
 
 void enable_chroma81(void)
 {
 
-	if (!MACHINE_IS_ZX8081) return;
+    if (!MACHINE_IS_ZX8081) return;
 
 
-	//en drivers stdout o curses, no habilitar colores, aunque dejamos si que dejamos habilitar las paginas de ram y el rainbow
-	if (!strcmp(scr_new_driver_name,"curses") || !strcmp(scr_new_driver_name,"stdout")) {
-		debug_printf (VERBOSE_WARN,"Chroma 81 is not supported on curses or stdout drivers");
-	}
-	else {
-		if (chroma81.v==0) screen_print_splash_text_center_no_if_previous(ESTILO_GUI_TINTA_NORMAL,ESTILO_GUI_PAPEL_NORMAL,"Enabling Chroma81 video mode");
-		chroma81.v=1;
-	}
+    //en drivers stdout o curses, no habilitar colores, aunque dejamos si que dejamos habilitar las paginas de ram y el rainbow
+    if (!strcmp(scr_new_driver_name,"curses") || !strcmp(scr_new_driver_name,"stdout")) {
+        debug_printf (VERBOSE_WARN,"Chroma 81 is not supported on curses or stdout drivers");
+    }
+    else {
+        if (chroma81.v==0) screen_print_splash_text_center_no_if_previous(ESTILO_GUI_TINTA_NORMAL,ESTILO_GUI_PAPEL_NORMAL,"Enabling Chroma81 video mode");
+        chroma81.v=1;
+    }
 
 
-        ram_in_8192.v=1;
-        enable_ram_in_49152();
-	enable_rainbow();
+    ram_in_8192.v=1;
+    enable_ram_in_49152();
+    enable_rainbow();
 }
 
 void disable_chroma81(void)
 {
-	chroma81.v=0;
+    chroma81.v=0;
 }
 
 
-void chroma81_return_mode1_colour(z80_int dir,z80_byte *colortinta,z80_byte *colorpapel)
+void chroma81_return_mode1_colour(z80_int dir,int *colortinta,int *colorpapel)
 {
-                        //1 attribute file
-			z80_byte c=peek_byte_no_time(dir|0x8000);
-                        *colortinta=c&15;
-                        *colorpapel=(c>>4)&15;
+    //1 attribute file
+    z80_byte c=peek_byte_no_time(dir|0x8000);
+    *colortinta=c&15;
+    *colorpapel=(c>>4)&15;
 }
 
 int color_es_chroma(void)
 {
-	return (chroma81.v && (chroma81_port_7FEF & 32) ? 1 : 0);
+    return (chroma81.v && (chroma81_port_7FEF & 32) ? 1 : 0);
+}
+
+
+
+
+void screen_store_scanline_char_zx8081(z80_byte byte_leido,z80_byte caracter,int inverse)
+{
+
+    zx80801_last_sprite_video_tinta=0;
+    zx80801_last_sprite_video_papel=15;
+
+
+
+    //Si modo chroma81 y lo ha activado
+
+    if (color_es_chroma() ) {
+        //ver modo
+        if ((chroma81_port_7FEF&16)!=0) {
+            //1 attribute file
+            chroma81_return_mode1_colour(reg_pc,&zx80801_last_sprite_video_tinta,&zx80801_last_sprite_video_papel);
+            //printf ("modo 1\n");
+        }
+        else {
+            //0 character code
+            //tablas colores van primero para los 64 normales y luego para los 64 inversos
+            if (inverse) {
+                caracter +=64;
+            }
+
+            z80_int d=caracter*8+0xc000;
+            d=d+(video_zx8081_lcntr&7);
+            z80_byte leido=peek_byte_no_time(d);
+            zx80801_last_sprite_video_tinta=leido&15;
+            zx80801_last_sprite_video_papel=(leido>>4)&15;
+
+            //printf ("modo 0\n");
+
+        }
+    }
+
+
+    zx80801_last_sprite_video=byte_leido;
+    return;
+
 }
 
 //Tratamiento de los gráficos zx81 al hacer fetch
 z80_byte fetch_opcode_zx81_graphics(void)
 {
 
-	z80_byte op;
+    z80_byte op;
 
     op=peek_byte_zx80_no_time(reg_pc&0x7fff);
 
-	if( (reg_pc&0x8000) ) {
+    if( (reg_pc&0x8000) ) {
+        //se esta ejecutando la zona de pantalla
 
-
-		//se esta ejecutando la zona de pantalla
 
         z80_byte caracter;
 
+        if ( (op & 64) || z80_halt_signal.v) {
+            //caracter=0;
+            //Otros caracteres no validos (y el HALT) generan video display a 0
 
-		if (op&64 || z80_halt_signal.v) {
-			caracter=0;
-			//Otros caracteres no validos (y el HALT) generan video display a 0
+            return op;
+        }
 
-			return op;
-
-		}
-
-		else {
-			caracter=op;
-			op=0;
-		}
-
-
-		//Si no esta el modo real zx8081, no hacer esto
-		if (rainbow_enabled.v==1) {
+        else {
+            //ejecutará NOP
+            caracter=op;
+            op=0;
+        }
 
 
-			z80_byte sprite;
-			int x;
-
-			int t_estados_en_linea=t_estados % screen_testados_linea;
+        z80_byte sprite;
 
 
-            //poner caracter en pantalla de video highmem
-            z80_bit caracter_inverse;
-            z80_int direccion_sprite;
+
+        //poner caracter en pantalla de video highmem
+        z80_bit caracter_inverse;
+        z80_int direccion_sprite;
 
 
-            if (caracter&128) {
-                    caracter_inverse.v=1;
-                    caracter=caracter&127;
-            }
-            else caracter_inverse.v=0;
-
-            //printf ("fetch caracter: %d\n",caracter);
-            int y=t_scanline_draw;
-
-            //TODO
-            y -=ZX8081_LINEAS_SUP_NO_USABLES;
-            //para evitar las lineas superiores
-            //TODO. cuadrar esto con valores de borde invisible superior
-
-            //Posible modo wrx, y excluir valores de I usados en chr$128 y udg
-            if (reg_i>=33 && reg_i!=0x31 && reg_i!=0x30 && wrx_present.v==0 && autodetect_wrx.v) {
-                //posible modo wrx
-                debug_printf(VERBOSE_INFO,"Autoenabling wrx so the program seems to need it (I register>32). Also enable 8K RAM in 2000H");
-                enable_wrx();
-
-                //algunos juegos requieren que este ram pack este presente antes de activar wrx... sino no funcionara
-                //pero igualmente, por si acaso, lo activamos aqui
-                ram_in_8192.v=1;
-
-            }
+        if (caracter&128) {
+            caracter_inverse.v=1;
+            caracter=caracter&127;
+        }
+        else caracter_inverse.v=0;
 
 
-            //Modos WRX
-            if (wrx_present.v==1 && reg_i>=32 ) {
 
-                //printf ("reg_i en zona WRX\n");
 
-                direccion_sprite=(reg_i<<8) | (reg_r_bit7 & 128) | ((reg_r) & 127);
+        //Posible modo wrx, y excluir valores de I usados en chr$128 y udg
+        if (reg_i>=33 && reg_i!=0x31 && reg_i!=0x30 && wrx_present.v==0 && autodetect_wrx.v) {
+            //posible modo wrx
+            debug_printf(VERBOSE_INFO,"Autoenabling wrx so the program seems to need it (I register>32). Also enable 8K RAM in 2000H");
+            enable_wrx();
 
-                if (video_zx8081_estabilizador_imagen.v==0) {
-                    x=(t_estados_en_linea)*2;
+            //algunos juegos requieren que este ram pack este presente antes de activar wrx... sino no funcionara
+            //pero igualmente, por si acaso, lo activamos aqui
+            ram_in_8192.v=1;
+
+        }
+
+
+        //Modos WRX
+        if (wrx_present.v==1 && reg_i>=32 ) {
+
+            //printf ("reg_i en zona WRX\n");
+
+            direccion_sprite=(reg_i<<8) | (reg_r_bit7 & 128) | ((reg_r) & 127);
+
+            sprite=memoria_spectrum[direccion_sprite];
+
+            if (caracter_inverse.v) sprite=sprite^255;
+
+        }
+
+
+        else {
+
+            //chr$128
+            if (reg_i==0x31) {
+                if (caracter_inverse.v) {
+                    //El bit de inverse es para acceder a los 64 caracteres siguientes
+                    caracter=caracter | 64;
+                    //Pero sigue indicando inverse
+                    //caracter_inverse.v=0;
+
                 }
-                else {
-                    //Estabilizador de imagen, para que no "tiemble"
-                    x=(video_zx8081_caracter_en_linea_actual+6)*8; //+offset_zx8081_t_coordx;
-                }
-
-                //printf ("direccion_sprite: %d\n",direccion_sprite);
-                sprite=memoria_spectrum[direccion_sprite];
-
-                if (caracter_inverse.v) sprite=sprite^255;
-
             }
 
+            //Otros interfaces que tambien hacen 128 caracteres aunque no siguen la norma del registro I,
+            //como el SD81 Booster de Alejandro Valero
+            if (caracter_inverse.v && force_zx81_chr_128.v) {
+                caracter=caracter | 64;
+            }
+
+
+            direccion_sprite=((reg_i&254)*256)+caracter*8+( (video_zx8081_lcntr) & 7);
+
+
+            //Obteniendo tipo de letra de rom de zxpand en el caso del zx80
+            if (zxpand_enabled.v && MACHINE_IS_ZX80_TYPE && direccion_sprite<8192) {
+                sprite=zxpand_memory_pointer[direccion_sprite];
+            }
 
             else {
+                sprite=memoria_spectrum[direccion_sprite];
+            }
 
-                //chr$128
-                if (reg_i==0x31) {
-                    if (caracter_inverse.v) {
-                        //El bit de inverse es para acceder a los 64 caracteres siguientes
-                        caracter=caracter | 64;
-                        //Pero sigue indicando inverse
-                        //caracter_inverse.v=0;
+            //aunque este en modo zxpand, la tabla de caracteres siempre sale de la rom principal
+            //por eso hacemos sprite=memoria_spectrum[direccion_sprite]; y zxpand rom esta en otro puntero de memoria
+            //sprite=peek_byte_zx80_no_time(direccion_sprite);
 
+            if (caracter_inverse.v) sprite=sprite^255;
+
+        }
+
+
+        screen_store_scanline_char_zx8081(sprite,caracter,caracter_inverse.v);
+
+
+        //Si no modo real video
+        if (rainbow_enabled.v==0) {
+            //Intentar autodetectar si hay que activar realvideo
+            if (autodetect_rainbow.v) {
+                if (MACHINE_IS_ZX80_TYPE) {
+                    //ZX80
+                    if (reg_i!=0x0e) {
+                        debug_printf(VERBOSE_INFO,"Autoenabling realvideo so the program seems to need it (I register on ZX80 != 0x0e)");
+                        enable_rainbow();
                     }
                 }
-
-                //Otros interfaces que tambien hacen 128 caracteres aunque no siguen la norma del registro I,
-                //como el SD81 Booster de Alejandro Valero
-                if (caracter_inverse.v && force_zx81_chr_128.v) {
-                    caracter=caracter | 64;
-                }
-
-
-                //TODO. Parche. Ajustar linea y linecntr. Para que no "salte"
-                //z80_byte cdflag=memoria_spectrum[0x403B];
-
-                //Quiza se deberia hacer esto solo cuando reg_i apunta a zona de ROM
-                //pero resulta que Manic miner y otros usan reg_i apuntando a ROM.. y por tanto aplicaria
-                //el ajuste para slow y se ve mal
-                //if ( machine_type==21 && (cdflag & 128) && video_zx8081_slow_adjust.v==1 && reg_i == 0x1e) {
-                //if ( machine_type==21 && (cdflag & 128) && video_zx8081_slow_adjust.v==1) {
-
-                if ( video_zx8081_lnctr_adjust.v==1) {
-                    direccion_sprite=((reg_i&254)*256)+caracter*8+( (video_zx8081_linecntr-1) & 7);
-                }
-
-                else {
-                    direccion_sprite=((reg_i&254)*256)+caracter*8+(video_zx8081_linecntr & 7);
-                }
-
-
-
-                if (video_zx8081_estabilizador_imagen.v==0) {
-                    x=t_estados_en_linea*2-24;
-                }
-
-                else {
-                    //Estabilizador de imagen, para que no "tiemble"
-                    x=(video_zx8081_caracter_en_linea_actual+6)*8; //+offset_zx8081_t_coordx;
-                }
-
-
-                //Obtener tipo de letra de rom original, haciendo shadow de los 4kb primeros a los segundos
-                //if (zxpand_enabled.v && MACHINE_IS_ZX80 && direccion_sprite<8192) sprite=memoria_spectrum[direccion_sprite&4095];
-
-                //Obteniendo tipo de letra de rom de zxpand en el caso del zx80
-                if (zxpand_enabled.v && MACHINE_IS_ZX80_TYPE && direccion_sprite<8192) sprite=zxpand_memory_pointer[direccion_sprite];
-
-                //printf ("direccion_sprite: %d\n",direccion_sprite);
-                else      sprite=memoria_spectrum[direccion_sprite];
-                //aunque este en modo zxpand, la tabla de caracteres siempre sale de la rom principal
-                //por eso hacemos sprite=memoria_spectrum[direccion_sprite]; y zxpand rom esta en otro puntero de memoria
-                //sprite=peek_byte_zx80_no_time(direccion_sprite);
-
-                if (caracter_inverse.v) sprite=sprite^255;
-
-            }
-
-            //ajustar para determinados juegos
-            x=x+offset_zx8081_t_coordx;
-
-
-
-            if (border_enabled.v==0) {
-                y=y-screen_borde_superior;
-                x=x-screen_total_borde_izquierdo;
-            }
-
-
-            //printf ("fetch y: %d x: %d\n",y,video_zx8081_caracter_en_linea_actual);
-            int totalancho=get_total_ancho_rainbow();
-
-            //valores negativos vienen por la derecha
-            if (x<0) {
-                x=totalancho-screen_total_borde_derecho-screen_total_borde_izquierdo+x;
-            }
-
-            //valores mayores por la derecha
-            if (x>=totalancho ) {
-                //x=x-totalancho+screen_total_borde_derecho+screen_total_borde_izquierdo-video_zx8081_decremento_x_cuando_mayor;
-                x=x-totalancho+screen_total_borde_derecho+screen_total_borde_izquierdo;
-            }
-
-
-            if (y>=0 && y<get_total_alto_rainbow() ) {
-
-                if (x>=0 && x<totalancho )  {
-
-                    //si linea no coincide con entrelazado, volvemos
-                    if (if_store_scanline_interlace(y) ) {
-                        screen_store_scanline_char_zx8081(x,y,sprite,caracter,caracter_inverse.v);
+                if (MACHINE_IS_ZX81_TYPE) {
+                    //ZX81
+                    if (reg_i!=0x1e) {
+                        debug_printf(VERBOSE_INFO,"Autoenabling realvideo so the program seems to need it (I register on ZX81 != 0x1e)");
+                        enable_rainbow();
                     }
-
-
                 }
+            }
 
+        }
+    }
+
+    return op;
+
+}
+
+
+
+void generar_zx80_hsync(void)
+{
+
+    if (!hsync_duration_counter) {
+        tv_enable_hsync();
+    }
+
+    hsync_duration_counter=48;
+
+
+}
+
+void ula_zx80_time_event(int delta)
+{
+
+    int i;
+
+    for (i=0;i<delta;i++) {
+
+        if (hsync_duration_counter) {
+            hsync_duration_counter--;
+            if (!hsync_duration_counter) {
+                tv_disable_hsync();
+            }
+        }
+
+
+        if (zx8081_vsync_generator.v) video_zx8081_lcntr=0;
+
+
+        tv_time_event(1);
+
+
+    }
+
+
+}
+
+//
+// Start waitmap code
+// Note: code borrowed from ZXSP emulator. Thanks!
+// But is not in use yet
+//
+int WAITMAP_POS = +1; // +1 wg. test position in Z80.run()
+int NMI_POS     = +2; // +2 = waitmap_pos+1 => max. 13 wait cycles
+
+int waitmap[WAITMAP_SIZE];
+int cc_hsync_period = 207;
+
+
+int cc_hsync_next=16;
+
+void clear_waitmap(void)
+{
+    memset(waitmap, 0, WAITMAP_SIZE);
+}
+
+void setup_waitmap(int cc_hsync)
+{
+        // when NMI is enabled then /NMI and /WAIT are asserted for 16cc at the same time as HSYNC.
+        // the Z80 emulation will use cc % 207 to peek into the waitmap[].
+        // the NMI will start at cc_nmi => waitmap[cc_nmi%207 to cc_nmi%207+15] must be set.
+
+        // the waitmap must be updated
+        // - when the NMI is enabled
+        // - when the cc timebase is shifted in videoFrameEnd()
+        // - when the HSYNC generator is restarted in interruptAtCycle()
+
+        cc_hsync += WAITMAP_SIZE;
+
+        cc_hsync %= WAITMAP_SIZE;
+
+        if (get_waitmap_value(cc_hsync) == 16) // quick test whether it is already set as required
+                return;
+        clear_waitmap(); // clear old wait positions
+
+        // circularly fill in 16cc delay for the first cc of the NMI pulse to 1cc for the last:
+        int i = 0;
+        for (; i < util_min(WAITMAP_SIZE - cc_hsync, 16); i++) {
+            //printf("valor %d\n",16-i);
+            int valor=16-i;
+            waitmap[cc_hsync + i] = valor;
+        }
+        for (; i < 16; i++) {
+            int valor=16-i;
+            waitmap[cc_hsync - WAITMAP_SIZE + i] = valor;
+            //printf("valor %d\n",16-i);
+        }
+
+
+    for (i=0;i<WAITMAP_SIZE;i++) {
+        //printf("Waitmap %3d: %d\n",i,waitmap[i]);
+    }
+
+
+}
+
+void reset_hsync_setup_waitmap(int cc, int dur)
+{
+        // reset the HSYNC counter.
+        // the reset input is activated by an INT acknowledge cycle of the cpu.
+        // the HSYNC counter is kept in reset while the INTACK signal is active.
+        // => the alignment of the NMI changes => the waitmap needs to be updated
+
+
+        cc_hsync_next = cc + dur + 16;
+
+        if (nmi_generator_active.v)
+        {
+                setup_waitmap(cc_hsync_next + WAITMAP_POS);
+        }
+}
+
+int get_waitmap_value(int pos)
+{
+    //TODO. no sumamos waitmap. no funciona bien
+    return 0;
+
+    return waitmap[pos % WAITMAP_SIZE];
+}
+
+//
+// End waitmap code
+//
+
+int delayed_hsync_after=0;
+int delayed_hsync_enable_for_states=0;
+
+void generate_zx81_delayed_hsync(int tiempo,int generate_after)
+{
+    delayed_hsync_enable_for_states=tiempo;
+    delayed_hsync_after=generate_after;
+
+    /*
+    printf("Definir delayed sync durante %d despues de %d. "
+            "ula_zx81_time_event_t_estados=%3d tv_x=%3d tv_y=%3d zx8081_vsync_generator.v=%d nmi_generator.v=%d\n",tiempo,generate_after,
+            ula_zx81_time_event_t_estados,tv_get_x(),tv_get_y(),zx8081_vsync_generator.v,nmi_generator_active.v);
+    */
+}
+
+void generar_zx81_hsync(int tiempo)
+{
+
+    //Si electron esta hacia la izquierda, no hacer hsync
+    if (tv_get_x()<100) return;
+
+
+    if (!hsync_duration_counter) {
+
+        //printf("Enable hsync con ula_zx81_time_event_t_estados=%3d tv_x=%3d tv_y=%3d zx8081_vsync_generator.v=%d nmi_generator.v=%d\n",
+        //    ula_zx81_time_event_t_estados,tv_get_x(),tv_get_y(),zx8081_vsync_generator.v,nmi_generator_active.v);
+
+        tv_enable_hsync();
+
+    }
+
+    hsync_duration_counter=tiempo;
+
+
+}
+
+
+
+void ula_zx81_time_event(int delta)
+{
+
+    int i;
+
+    for (i=0;i<delta;i++) {
+
+        ula_zx81_time_event_t_estados++;
+
+        if (delayed_hsync_after) {
+            delayed_hsync_after--;
+            if (!delayed_hsync_after) {
+
+                //printf("Generar delayed hsync. ula_zx81_time_event_t_estados=%3d tv_x=%3d tv_y=%3d zx8081_vsync_generator.v=%d nmi_generator.v=%d\n",
+                //    ula_zx81_time_event_t_estados,tv_get_x(),tv_get_y(),zx8081_vsync_generator.v,nmi_generator_active.v);
+
+                generar_zx81_hsync(delayed_hsync_enable_for_states);
+                video_zx8081_lcntr++;
+                ula_zx81_time_event_t_estados=0;
+            }
+        }
+
+
+        if (hsync_duration_counter) {
+            hsync_duration_counter--;
+            if (!hsync_duration_counter) {
+                tv_disable_hsync();
+                //printf("Fin hsync\n");
+            }
+        }
+
+        if (ula_zx81_time_event_t_estados>=screen_testados_linea) {
+            ula_zx81_time_event_t_estados -=screen_testados_linea;
+
+
+            if (nmi_generator_active.v) {
+                //printf("Generate nmi\n");
+                generate_nmi();
+                reset_hsync_setup_waitmap(t_estados+2,2);
             }
 
 
-			video_zx8081_caracter_en_linea_actual++;
-		}
+            //printf("hsync desde generator\n");
+            generar_zx81_hsync(16);
+            video_zx8081_lcntr++;
+
+        }
 
 
-		//Si no modo real video
-		else {
-			//Intentar autodetectar si hay que activar realvideo
-			if (autodetect_rainbow.v) {
-				if (MACHINE_IS_ZX80_TYPE) {
-					//ZX80
-					if (reg_i!=0x0e) {
-						debug_printf(VERBOSE_INFO,"Autoenabling realvideo so the program seems to need it (I register on ZX80 != 0x0e)");
-						enable_rainbow();
-					}
-				}
-				if (MACHINE_IS_ZX81_TYPE) {
-					//ZX81
-					if (reg_i!=0x1e) {
-						debug_printf(VERBOSE_INFO,"Autoenabling realvideo so the program seems to need it (I register on ZX81 != 0x1e)");
-						enable_rainbow();
-					}
-				}
-			}
+        if (zx8081_vsync_generator.v) {
+            video_zx8081_lcntr=0;
+        }
 
-		}
-	}
+        tv_time_event(1);
 
-	return op;
+    }
 
+
+}
+
+void zx81_enable_nmi_generator(void)
+{
+    if (hotswapped_zx80_to_zx81.v) return;
+
+    //printf("   nmi on   en t_estados %6d y: %4d\n",t_estados,tv_get_y());
+    nmi_generator_active.v=1;
+
+    int cc_hsync = hsync_duration_counter ? cc_hsync_next - 16 + cc_hsync_period : cc_hsync_next;
+    setup_waitmap(cc_hsync + WAITMAP_POS);
+
+}
+
+void zx81_disable_nmi_generator(void)
+{
+    //printf("   nmi off  en t_estados %6d y: %4d\n",t_estados,tv_get_y());
+    nmi_generator_active.v=0;
+
+    clear_waitmap();
+
+}
+
+
+//con vsync , voltaje 0v, color negro, este valor a 255
+
+void zx8081_set_video_voltage_sync(void)
+{
+    zx8081_ula_video_in_sync=1;
+}
+
+void zx8081_set_video_voltage_no_sync(void)
+{
+    zx8081_ula_video_in_sync=0;
+}
+
+int zx8081_is_video_voltage_in_sync(void)
+{
+    return (zx8081_ula_video_in_sync ? 1 : 0);
+}
+
+int zx8081_read_port_a0_low(z80_byte puerto_h)
+{
+
+    if (MACHINE_IS_ZX81_TYPE) {
+
+
+        //necesario? Manic y otros tiembla la imagen
+        //if (nmi_generator_active.v) {
+        //    generar_zx81_hsync(16);
+        //}
+        //testeado con demo sllc.81
+
+    }
+
+    z80_byte valor;
+
+    //Solo se lanzan vsync cuando el nmi generator está off. Si no fuese así, se pretendería enviar vsync
+    //en algunos juegos cuando se lee el teclado y el electrón está en la zona del borde superior o inferior
+    //Eso pasaba en Mazogs por ejemplo
+    if (nmi_generator_active.v==0) {
+        tv_enable_vsync();
+        zx8081_vsync_generator.v=1;
+        //printf("Set vsync generator tv_y=%d\n",tv_get_y() );
+        zx8081_set_video_voltage_sync();
+
+        if (zx8081_detect_vsync_sound.v) {
+            //si hay vsync en zonas no habituales (principio o fin) asumimos que puede generar sonido
+            int y=tv_get_y();
+
+            //maximo 5 segundos activos desde ultima deteccion de sonido
+            if (y>50 && y<200) zx8081_detect_vsync_sound_counter_debe_incrementar=1;
+        }
+
+    }
+
+    if (MACHINE_IS_ZX81_TYPE && nmi_generator_active.v)
+    {
+        int d = get_waitmap_value((t_estados + 2 + WAITMAP_POS) % WAITMAP_SIZE);
+        t_estados += d;
+    }
+
+
+
+
+    /*
+    if (nmi_generator_active.v==0 && hsync_generator_active.v) {
+        hsync_generator_active.v=0;
+        //printf("hsync generator off en t_scanline_draw=%d t_estados: %d\n",t_scanline_draw,t_estados);
+    }
+    */
+
+
+    //printf("Disabling the HSYNC generator t_scanline_draw=%d\n",t_scanline_draw);
+
+    //printf("Disabling the HSYNC generator on t-state %d t-states %d scanline_draw %d contador_segundo %d\n",
+    //    t_estados % screen_testados_linea,t_estados,t_scanline_draw,contador_segundo);
+
+    modificado_border.v=1;
+
+
+    //y ponemos a low la salida del altavoz
+    bit_salida_sonido_zx8081.v=0;
+
+    set_value_beeper_on_array(da_amplitud_speaker_zx8081() );
+
+
+    if (zx8081_vsync_sound.v) {
+        //solo resetea contador de silencio cuando esta activo el vsync sound - beeper
+        reset_beeper_silence_detection_counter();
+    }
+
+    //Teclado
+
+    //probamos a enviar lo mismo que con teclado de spectrum
+    valor=lee_puerto_teclado(puerto_h);
+
+/*
+Bit  Expl.
+0-4  Keyboard column bits (0=Pressed)
+5    Not used             (1)
+6    Display Refresh Rate (0=60Hz, 1=50Hz)
+7    Cassette input       (0=Normal, 1=Pulse)
+*/
+    //decimos que no hay pulso de carga. 50 Hz refresco
+
+    valor = (valor & 31) | (32+64);
+
+
+    //printf ("valor: %d\n",valor);
+
+    int leer_cinta_real=0;
+
+    if (realtape_inserted.v && realtape_playing.v) leer_cinta_real=1;
+
+    if (audio_can_record_input()) {
+        if (audio_is_recording_input) {
+            leer_cinta_real=1;
+        }
+    }
+
+    if (leer_cinta_real) {
+        if (realtape_get_current_bit_playing()) {
+            valor=valor|128;
+            //printf ("1 ");
+        }
+        else {
+            valor=(valor & (255-128));
+            //printf ("0 ");
+        }
+    }
+
+    return valor;
+
+
+}
+
+void zx8081_out_any_port_video_stuff(void)
+{
+
+    if (MACHINE_IS_ZX81_TYPE) {
+
+        generar_zx81_hsync(16);
+
+    }
+
+
+
+    //printf("Enabling the HSYNC generator t_scanline_draw=%d\n",t_scanline_draw);
+
+    /*
+    if (hsync_generator_active.v==0) {
+        hsync_generator_active.v=1;
+    }
+    */
+
+
+    if (zx8081_vsync_generator.v) {
+
+        //printf("Disable vsync con ula_zx81_time_event_t_estados=%3d tv_x=%3d tv_y=%3d zx8081_vsync_generator.v=%d nmi_generator.v=%d\n",
+        //    ula_zx81_time_event_t_estados,tv_get_x(),tv_get_y(),zx8081_vsync_generator.v,nmi_generator_active.v);
+
+
+        if (MACHINE_IS_ZX81_TYPE) {
+            //Para que la imagen esté centrada
+            ula_zx81_time_event_t_estados=0;
+            reset_hsync_setup_waitmap(t_estados+2,2);
+        }
+
+        tv_disable_vsync();
+        zx8081_vsync_generator.v=0;
+        zx8081_set_video_voltage_no_sync();
+    }
+
+    if (MACHINE_IS_ZX81_TYPE && nmi_generator_active.v)
+    {
+        int d = get_waitmap_value((t_estados + 2 + WAITMAP_POS) % WAITMAP_SIZE);
+        t_estados += d;
+    }
+
+    modificado_border.v=1;
+
+
+    //reseteamos contador de deteccion de modo fast-pantalla negra. Para modo no-realvideo
+    video_fast_mode_next_frame_black=0;
+
+
+    //y ponemos a high la salida del altavoz
+    bit_salida_sonido_zx8081.v=1;
+
+    set_value_beeper_on_array(da_amplitud_speaker_zx8081() );
+
+
+    if (zx8081_vsync_sound.v) {
+        //solo resetea contador de silencio cuando esta activo el vsync sound - beeper
+        reset_beeper_silence_detection_counter();
+    }
+
+
+}
+
+
+void zx8081_timer_vsync_detection(void)
+{
+    if (zx8081_detect_vsync_sound.v) {
+
+        //para que solo se tengan en cuenta los vsync 1 por cada segundo
+        //y un maximo de x segundos
+        if (zx8081_detect_vsync_sound_counter_debe_incrementar) {
+            if (zx8081_detect_vsync_sound_counter<10) {
+                zx8081_detect_vsync_sound_counter++;
+            }
+            debug_printf(VERBOSE_DEBUG,"Detect vsync sound. Counter=%d",zx8081_detect_vsync_sound_counter);
+        }
+        else {
+
+            if (zx8081_detect_vsync_sound_counter>0) {
+                zx8081_detect_vsync_sound_counter--;
+                debug_printf(VERBOSE_DEBUG,"Detect vsync sound. Counter=%d",zx8081_detect_vsync_sound_counter);
+            }
+
+        }
+
+        zx8081_detect_vsync_sound_counter_debe_incrementar=0;
+
+        //printf("counter: %d\n",zx8081_detect_vsync_sound_counter);
+    }
 }

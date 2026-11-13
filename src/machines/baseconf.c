@@ -21,6 +21,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include "cpu.h"
 #include "baseconf.h"
@@ -32,75 +33,1352 @@
 #include "ula.h"
 #include "operaciones.h"
 #include "zxevo.h"
+#include "mmc.h"
+#include "betadisk.h"
+#include "timer.h"
 
 
-//Si la sd esta activa o no
+// Estado de alimentación SD escrito por el firmware en el puerto 77h.
 int baseconf_sd_enabled=1;
 
+/* Presencia de la interfaz SD de BaseConf, controlada por el emulador. */
+z80_bit baseconf_sd_interface_enabled={0};
+
+// Estado de selección de chip de la tarjeta SD.
 int baseconf_sd_cs=0;
 
-//Direcciones donde estan cada pagina de rom. 32 paginas de 16 kb
+// Punteros a las 32 páginas de ROM de 16 KiB.
 z80_byte *baseconf_rom_mem_table[32];
 
-//Direcciones donde estan cada pagina de ram, en paginas de 16 kb
-z80_byte *baseconf_ram_mem_table[256];
+// Punteros a las 256 páginas de RAM de 16 KiB.
+z80_byte *baseconf_ram_mem_table[BASECONF_RAM_PAGES];
 
-
-//Direcciones actuales mapeadas, bloques de 16 kb
+// Punteros a las cuatro páginas de 16 KiB visibles por la CPU.
 z80_byte *baseconf_memory_paged[4];
 
+// Números de página resueltos para las cuatro ventanas de la CPU.
+z80_byte baseconf_memory_segments[4]; //OK NO ZSF
 
-//Numeros de bloques de memoria asignados
-z80_byte baseconf_memory_segments[4];
+// Tipo de cada ventana: cero para ROM y valor distinto de cero para RAM.
+z80_byte baseconf_memory_segments_type[4]; //OK NO ZSF
 
-//Tipos de bloques de memoria asignados
-//0: rom. otra cosa: ram
-z80_byte baseconf_memory_segments_type[4];
+/*
+ * BaseConf tiene dos conjuntos de cuatro registros de gestión de memoria.
+ * El bit 4 de #7FFD selecciona el conjunto visible para la CPU. Se mantiene
+ * su contenido separado de baseconf_memory_segments[], que describe las
+ * cuatro páginas resueltas y es usado por los cores de memoria y debug.
+ *
+ * El bit 7 de los flags habilita la sustitución de los bits de página desde
+ * #7FFD; el bit 6 selecciona RAM. Los números de página se guardan sin invertir.
+ */
+// Números de página programados en los dos bancos de registros MMU.
+z80_byte baseconf_mmu_pages[8];   //OK ZSF
+// Banderas de tipo y sustitución de página de cada registro MMU.
+z80_byte baseconf_mmu_flags[8];  //OK ZSF
+// Fuente de 2 KiB escribible por la CPU para los modos de texto.
+static z80_byte baseconf_text_font[2048];
+// Señal que activa la ROM TR-DOS y sus puertos shadow.
+int baseconf_dos_signal;  //OK ZSF
+/* Estado del Beta Disk virtual de PentEvo. El firmware guarda el servicio
+   de RAM-disk en la página RAM FE y lo selecciona en lugar del FDC físico. */
+// Máscara de unidades Beta Disk cuyo medio procede del RAM-disk.
+z80_byte baseconf_beta_drive_virtual; //OK ZSF
+// Número de unidad Beta Disk seleccionado actualmente.
+z80_byte baseconf_beta_drive_selected; //OK ZSF
+// Indica que la ventana ROM está sustituida por el servicio TR-DOS en RAM.
+int baseconf_trdos_emulation_active; //OK ZSF
+// Últimos valores de los cuatro puertos de DOS extendido.
+z80_byte baseconf_extended_dos_ports[4]; //OK ZSF
+// Entradas RGB de la paleta programable de dieciséis colores.
 
-z80_byte baseconf_last_port_77;
 
-z80_byte baseconf_shadow_mode_port_77;
+// Último valor escrito en el puerto 77 de vídeo y turbo.
+z80_byte baseconf_last_port_77; //OK ZSF
+// Último valor escrito en el puerto 77 de la interfaz SD.
+z80_byte baseconf_last_port_sd_77;
+// Bits de control shadow del puerto 77, separados de los de vídeo.
+z80_byte baseconf_shadow_mode_port_77; //OK ZSF
+// Último valor escrito en el puerto BF de configuración.
+z80_byte baseconf_last_port_bf; //OK ZSF
+// Último valor escrito en EFF7 de vídeo, memoria y velocidad.
+z80_byte baseconf_last_port_eff7; //OK ZSF
+// Último valor escrito en el puerto BD de breakpoint NMI.
+z80_byte baseconf_last_port_bd;
+// Último valor escrito en el puerto BE de control NMI.
+z80_byte baseconf_last_port_be;
+// Último valor escrito en el puerto FF de vídeo.
+z80_byte baseconf_last_port_ff;
+// Último valor escrito en el puerto 57 de Beta Disk.
+z80_byte baseconf_last_port_57;
+// Índice CMOS seleccionado mediante DFF7.
+z80_byte baseconf_last_port_dff7;
+// Último dato de CMOS leído o escrito mediante BFF7.
+z80_byte baseconf_last_port_bff7;
+// Último valor escrito en el puerto 7FFD de paginación Spectrum.
+z80_byte baseconf_last_port_7ffd;
 
-z80_byte baseconf_last_port_bf;
 
-z80_byte baseconf_last_port_eff7;
+// Últimos valores escritos en los cuatro puertos de DOS extendido.
+z80_byte baseconf_last_port_extended_dos[4];
 
-//ver Xpeccy - http://github.com/samstyle/Xpeccy Baseconf ports and memory maping is in ./src/libxpeccy/hardware/pentevo.c
+// Último valor escrito en el puerto FF7 del gestor de memoria.
+z80_byte baseconf_last_port_ff7; //OK ZSF
+// Último valor escrito en el puerto 7F7 del gestor de memoria.
+z80_byte baseconf_last_port_7f7; //OK ZSF
+// Último valor escrito en el puerto BF7 del gestor de memoria.
+z80_byte baseconf_last_port_bf7; //OK ZSF
 
-int baseconf_shadow_ports_available(void)
+
+z80_int baseconf_palette[BASECONF_PALETTE_ENTRIES]; //OK ZSF
+/* Paleta inicial tras un hard reset: copia las primeras 16 entradas de
+   initial_prism_palette_zero (prism.c). Cada valor es RGB444 (0xRGB).
+   Orden Spectrum en cada fila: negro, azul, rojo, magenta, verde, cian,
+   amarillo y blanco. La primera fila usa intensidad 7 (normal) y la
+   segunda intensidad 15 (brillante). */
+static const z80_int baseconf_palette_default[16]={
+        0,7,1792,1799,112,119,1904,1911,
+        0,15,3840,3855,240,255,4080,4095
+};
+// Índice de color actual del borde de cuatro bits.
+z80_byte baseconf_border_colour;
+// Color del borde guardado antes de entrar en el servicio NMI.
+static z80_byte baseconf_nmi_saved_border_colour;
+// Dirección M1 donde se intercepta la entrada del servicio NMI.
+static z80_int baseconf_nmi_breakpoint;
+// Indica que la ROM de servicio NMI está activa.
+static int baseconf_nmi_active;
+// Marca una entrada NMI pendiente de completar tras el fetch.
+static int baseconf_nmi_entry_pending;
+// Número de fetches pendientes para detectar la salida del servicio NMI.
+static int baseconf_nmi_exit_countdown;
+// Marca una NMI solicitada desde el puerto BF.
+static int baseconf_nmi_from_bf_pending;
+// Evita repetir la entrega de la NMI solicitada desde BF.
+static int baseconf_nmi_from_bf_delivery;
+// Tipo de extensión AVR seleccionado en las celdas CMOS F0-FF.
+static z80_byte baseconf_cmos_extension_type;
+// Bytes pendientes del teclado PS/2 expuesto por la extensión AVR 2.
+static z80_byte baseconf_ps2_fifo[128];
+// Posición de lectura en la cola de códigos PS/2.
+static int baseconf_ps2_fifo_read;
+// Posición de escritura en la cola de códigos PS/2.
+static int baseconf_ps2_fifo_write;
+// Número de bytes pendientes en la cola de códigos PS/2.
+static int baseconf_ps2_fifo_count;
+// Estado anterior de las ocho filas de la matriz Spectrum.
+static z80_byte baseconf_ps2_previous_rows[8]={0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff};
+// Segundo de reloj ya aplicado al registro de actualización del RTC.
+static time_t baseconf_rtc_ultimo_segundo_actualizado=(time_t)-1;
+
+/* Registro de modos del AVR, leído en F0 tras seleccionar la extensión 3.
+   En la máquina real, el AVR cambia estos modos desde el teclado PS/2:
+   Scroll Lock alterna TV/VGA (LED encendido = VGA) y, según el manual de
+   BaseConf, Shift+Scroll Lock selecciona la temporización de 60 Hz.
+   Algunas versiones del firmware recorren con Scroll Lock ocho combinaciones:
+   alternan TV/VGA en cada pulsación y cambian entre Pentagon, 60 Hz, 48K y
+   128K cada dos pulsaciones. La secuencia depende del firmware del AVR.
+   Escribir 3 en F0-FF solo selecciona la consulta de este registro; no cambia
+   el modo de vídeo.
+   Bit 0: salida de vídeo, 0=TV, 1=VGA.
+   Bit 1: salida de audio, 0=beeper/Covox, 1=tape out.
+   Bits 2 y 3: reservados.
+   Bits 5 y 4: tiempos de pantalla, 00=Pentagon, 01=60 Hz,
+   10=Spectrum 48K, 11=Spectrum 128K.
+   Bits 6 y 7: reservados. El valor inicial 31H indica 128K VGA. */
+z80_byte baseconf_avr_modes_register=0x31;
+
+/* El firmware del AVR expone estas identificaciones mediante los registros
+   F0-FF del RTC Gluk. Los bytes 12 y 13 contienen la fecha empaquetada como
+   año(6 bits), mes(4 bits) y día(5 bits); los dos últimos son el CRC del
+   firmware y EVO Reset Service no los muestra. */
+// Identificación de la versión BaseConf expuesta por la extensión CMOS cero.
+static const z80_byte baseconf_version[16]={
+        'Z','X','E','v','o','T','S','&','B','A','S','E',0x81,0x34,0xff,0xff
+};
+// Identificación de AVR Boot expuesta por la extensión CMOS uno.
+static const z80_byte baseconf_avr_boot_version[16]={
+        'Z','X','E','v','o','A','V','R','B','o','o','t',0x37,0x18,0xff,0xff
+};
+
+static z80_byte baseconf_change_ram_page_7ffd(z80_byte value);
+static z80_byte baseconf_change_rom_page_trdos(z80_byte value);
+void baseconf_ps2_scan_keyboard(void);
+
+// Reinicia la extensión PS/2 compartida por BaseConf y TSConf.
+void baseconf_ps2_reset(void)
 {
+    int i;
+    baseconf_cmos_extension_type=0;
+    baseconf_ps2_fifo_read=0;
+    baseconf_ps2_fifo_write=0;
+    baseconf_ps2_fifo_count=0;
+    for (i=0;i<8;i++) baseconf_ps2_previous_rows[i]=0xff;
+}
 
-        if (baseconf_last_port_bf&1) {
-                //0: if 1 then enable shadow ports. 0 after reset.
-                return 1;
-        }
-        if ((baseconf_shadow_mode_port_77&2)==0) {
-                //Enable shadow mode ports of the memory manager's permission.
-                return 1;
-        }
+// Vacía las teclas PS/2 pendientes y sincroniza la matriz tras abrir el menú.
+void baseconf_ps2_clear_fifo(void)
+{
+    const z80_byte rows[8]={puerto_65278,puerto_65022,puerto_64510,puerto_63486,
+                             puerto_61438,puerto_57342,puerto_49150,puerto_32766};
+    int i;
+    baseconf_ps2_fifo_read=0;
+    baseconf_ps2_fifo_write=0;
+    baseconf_ps2_fifo_count=0;
+    for (i=0;i<8;i++) baseconf_ps2_previous_rows[i]=rows[i];
+}
 
+// Comprueba si la unidad Beta seleccionada usa RAM-disk; devuelve 1 si está activa.
+static int baseconf_beta_virtual_drive_active(void)
+{
+    /* #13BD contiene un bit por unidad; #FF selecciona la unidad en bits 0-1. */
+    if (!(baseconf_beta_drive_virtual &
+          (1 << (baseconf_beta_drive_selected & 3)))) return 0;
+
+    /* EVO Reset Service deja A virtual aunque indique "Ramdisk: NONE".
+       En ese caso, si ZEsarUX tiene un TRD insertado, usarlo como disco
+       físico. El directorio del ramdisk comienza en la página F4. */
+    if (trd_enabled.v && baseconf_ram_mem_table[0xf4][0]==0) return 0;
+
+    return 1;
+}
+
+// Devuelve el estado Beta Disk virtual junto con la unidad seleccionada.
+z80_byte baseconf_read_beta_system_port(void)
+{
+    /* EVO-DOS virtual sondea INTRQ y DRQ; no hay un WD1793 físico aquí. */
+    return 0xc0 | (baseconf_beta_drive_selected & 0x3f);
+}
+
+// Atiende un acceso al puerto FDC virtual y devuelve 1 si activa EVO-DOS en RAM.
+int baseconf_beta_fdc_access(z80_int puerto)
+{
+    z80_byte bajo=puerto&0xff;
+    if (bajo!=0x1f && bajo!=0x3f && bajo!=0x5f &&
+        bajo!=0x7f && bajo!=0xff)
         return 0;
+    if (!baseconf_dos_signal || !baseconf_beta_virtual_drive_active() ||
+        baseconf_nmi_active || baseconf_trdos_emulation_active ||
+        reg_pc>=0x4000 || baseconf_memory_segments_type[0] ||
+        !(baseconf_memory_segments[0]&1))
+        return 0;
+
+    /* El siguiente M1 tras un acceso al FDC virtual se obtiene de RAM FE. */
+    baseconf_trdos_emulation_active=1;
+    baseconf_set_memory_pages();
+    return 1;
+}
+
+// Actualiza DOS, NMI y traps antes del fetch en direccion; sin retorno.
+void baseconf_pre_opcode_fetch(z80_int direccion)
+{
+    int mapa=(puerto_32765&16) ? 4 : 0;
+    int segmento=direccion>>14;
+
+    /* El emulador de cinta de EVO instala un breakpoint hardware
+        (normalmente #0556, entrada del cargador de la ROM de 48K). La
+        página RAM FF se conecta al aceptar la NMI, después de terminar
+        la instrucción cuyo M1 disparó el breakpoint. */
+    if (!baseconf_nmi_active && (baseconf_last_port_bf&0x10) &&
+        direccion==baseconf_nmi_breakpoint) {
+            generate_nmi();
+    }
+
+    /* A9 permite salir de DOS cuando la ejecución ha pasado a RAM. */
+    if (baseconf_dos_signal && direccion>=0x4000 &&
+        (baseconf_shadow_mode_port_77&2)) {
+            baseconf_dos_signal=0;
+            baseconf_set_memory_pages();
+    }
+
+    /* Un M1 en #3Dxx vuelve a entrar en DOS cuando la sustitución está
+        habilitada para la ventana MMU actual. */
+    if (!baseconf_dos_signal && (direccion&0x3f00)==0x3d00 &&
+        (baseconf_mmu_flags[mapa+segmento]&128)) {
+            baseconf_dos_signal=1;
+            baseconf_set_memory_pages();
+    }
+
+    /* EVO-DOS conserva los puntos de transferencia de sectores de
+        TR-DOS. Si EVO Reset Service no ha seleccionado una unidad virtual,
+        se atienden con el TRD insertado desde el menú de ZEsarUX. */
+    if (baseconf_dos_signal && !baseconf_beta_virtual_drive_active())
+            betadisk_handle_trdos_traps();
+}
+
+// Completa la entrada o salida NMI tras el fetch; entrada/salida: opcode; sin retorno.
+void baseconf_post_opcode_fetch(z80_byte *opcode)
+{
+    /* BaseConf inyecta por hardware un NOP en 0066 y conecta la página FF
+        después de ese primer M1. El opcode de 0067 ya se obtiene de la
+        página residente. */
+    if (baseconf_nmi_entry_pending) {
+            *opcode=0;
+            baseconf_nmi_entry_pending=0;
+            baseconf_nmi_active=1;
+            baseconf_set_memory_pages();
+            return;
+    }
+
+    /* OUT (#BE),A solicita retirar la página FF después del segundo M1.
+        RETN aporta exactamente los dos fetches ED y 45. */
+    if (baseconf_nmi_active && baseconf_nmi_exit_countdown) {
+            baseconf_nmi_exit_countdown--;
+            if (!baseconf_nmi_exit_countdown) {
+                    baseconf_nmi_active=0;
+                    /* El servicio usa el puerto del borde para restaurar la
+                       paleta y termina seleccionando el color cero. */
+                    baseconf_border_colour=baseconf_nmi_saved_border_colour;
+                    out_254=(out_254&~7) | (baseconf_border_colour&7);
+                    modificado_border.v=1;
+                    /* El modo rainbow dibuja el borde desde los cambios
+                       registrados por T-estado, no desde el color actual. */
+                    if (rainbow_enabled.v) {
+                            int posicion=t_estados;
+                            if (pentagon_timing.v) posicion-=2;
+                            else posicion &= ~3;
+                            if (posicion>=0 && posicion<CURRENT_FULLBORDER_ARRAY_LENGTH)
+                                    fullbuffer_border[posicion]=baseconf_border_colour;
+                    }
+                    baseconf_set_memory_pages();
+            }
+    }
+}
+
+// Prepara el servicio NMI y guarda el borde; sin parámetros ni retorno.
+void baseconf_handle_nmi(void)
+{
+    /* Tanto la tecla NMI como el breakpoint hardware preparan la entrada al
+        servicio residente. El mapeo se hará tras leer el NOP de 0066. */
+    baseconf_nmi_entry_pending=1;
+    baseconf_nmi_exit_countdown=0;
+    /* El servicio solicita otra NMI con #BF al continuar. En esa segunda
+       entrada se conserva el color anterior al servicio, no el del menú. */
+    if (!baseconf_nmi_from_bf_delivery)
+            baseconf_nmi_saved_border_colour=baseconf_border_colour;
+    baseconf_nmi_from_bf_delivery=0;
+}
+
+// Muestrea el teclado PS/2 y entrega la NMI pendiente al terminar el frame; sin retorno.
+void baseconf_check_pending_nmi(void)
+{
+    /* Registrar las pulsaciones antes de que el software lea el FIFO evita
+       perder teclas breves entre dos consultas del juego. */
+    baseconf_ps2_scan_keyboard();
+    /* La NMI solicitada por #BF llega con el siguiente pulso INT aunque
+       las interrupciones enmascarables estén deshabilitadas. */
+    if (baseconf_nmi_from_bf_pending) {
+            baseconf_nmi_from_bf_pending=0;
+            baseconf_nmi_from_bf_delivery=1;
+            generate_nmi();
+    }
+}
+
+// Comprueba la protección de escritura en direccion; devuelve 1 si se puede escribir.
+int baseconf_memory_write_allowed(z80_int direccion)
+{
+    int mapa=(puerto_32765&16) ? 4 : 0;
+
+    /* La protección read-only de #xBF7 no actúa en la primera ventana
+        cuando EFF7.bit3 o una NMI han conectado directamente una RAM. */
+    if (direccion<0x4000 &&
+        ((baseconf_last_port_eff7&8) || baseconf_nmi_active)) return 1;
+
+    return (baseconf_mmu_flags[mapa+(direccion>>14)]&32)==0;
+}
+
+// Lee el registro de configuración indicado por puerto_h; devuelve su valor.
+z80_byte baseconf_read_config_port(z80_byte puerto_h)
+{
+    int i;
+    z80_byte value=0;
+
+    if ((puerto_h&0xf8)==0) {
+            value=baseconf_mmu_pages[puerto_h&7]^255;
+            return value;
+    }
+
+    switch (puerto_h) {
+        case 0x08:
+                for (i=7;i>=0;i--) value=(value<<1) | ((baseconf_mmu_flags[i]>>6)&1);
+                return value;
+        case 0x09:
+                for (i=7;i>=0;i--) value=(value<<1) | ((baseconf_mmu_flags[i]>>7)&1);
+                return value;
+        case 0x0a:
+                return puerto_32765;
+        case 0x0b:
+                return baseconf_last_port_eff7;
+        case 0x0c:
+                /* a14.a9.a8.0.b3..b0, con el bit 4 indicando el estado DOS. */
+                return ((baseconf_shadow_mode_port_77&0x40)<<1) |
+                       ((baseconf_shadow_mode_port_77&3)<<5) |
+                       (baseconf_dos_signal ? 0x10 : 0) |
+                       (baseconf_last_port_77&0x0f);
+        case 0x0d: {
+                /* Los bits de color leídos tienen el mismo formato invertido
+                   que los datos escritos en #FF; 2 y 3 no están definidos. */
+                z80_int color=baseconf_palette[baseconf_border_colour&15];
+                z80_byte r=(color>>8)&15;
+                z80_byte g=(color>>4)&15;
+                z80_byte b=color&15;
+                z80_byte componentes=((g&4)<<5) | ((r&4)<<4) |
+                        ((b&4)<<3) | ((g&8)<<1) |
+                        ((r&8)>>2) | ((b&8)>>3);
+                return (~componentes&0xf3) | 0x0c;
+        }
+        case 0x0f:
+                return baseconf_border_colour&15;
+        case 0x13:
+                return baseconf_beta_drive_virtual;
+        case 0x10:
+                return baseconf_nmi_breakpoint&0xff;
+        case 0x11:
+                return baseconf_nmi_breakpoint>>8;
+        case 0x12:
+                for (i=7;i>=0;i--) value=(value<<1) | ((baseconf_mmu_flags[i]>>5)&1);
+                return value;
+        default:
+                return 0xff;
+    }
+}
+
+// Lee el puerto de DOS extendido indicado por puerto_l; devuelve su valor.
+z80_byte baseconf_read_extended_dos_port(z80_byte puerto_l)
+{
+    switch (puerto_l) {
+        case 0x2f: return baseconf_extended_dos_ports[0];
+        case 0x4f: return baseconf_extended_dos_ports[1];
+        case 0x6f: return baseconf_extended_dos_ports[2];
+        case 0x8f: return baseconf_extended_dos_ports[3];
+        default: return 0xff;
+    }
+}
+
+// Añade un byte a la cola PS/2 si queda espacio; sin retorno.
+static void baseconf_ps2_enqueue(z80_byte value)
+{
+    if (zxvision_key_not_sent_emulated_mach()) return;
+    if (baseconf_ps2_fifo_count==(int)sizeof(baseconf_ps2_fifo)) return;
+    baseconf_ps2_fifo[baseconf_ps2_fifo_write]=value;
+    baseconf_ps2_fifo_write=(baseconf_ps2_fifo_write+1)%sizeof(baseconf_ps2_fifo);
+    baseconf_ps2_fifo_count++;
+}
+
+// Envía una flecha PS/2: direction 0=izquierda, 1=derecha, 2=abajo, 3=arriba; pressed indica pulsación o liberación.
+void baseconf_ps2_cursor_event(int direction,int pressed)
+{
+    static const z80_byte codes[4]={0x6b,0x74,0x72,0x75};
+    if (baseconf_cmos_extension_type!=2 || direction<0 || direction>3) return;
+    baseconf_ps2_enqueue(0xe0);
+    if (!pressed) baseconf_ps2_enqueue(0xf0);
+    baseconf_ps2_enqueue(codes[direction]);
+}
+
+// Envía una tecla de función al FIFO PS/2 si la extensión está activa.
+void baseconf_ps2_function_event(int function,int pressed)
+{
+    static const z80_byte codes[10]={0x05,0x06,0x04,0x0c,0x03,0x0b,0x83,0x0a,0x01,0x09};
+    if (baseconf_cmos_extension_type!=2 || function<1 || function>10) return;
+    if (!pressed) baseconf_ps2_enqueue(0xf0);
+    baseconf_ps2_enqueue(codes[function-1]);
+}
+
+// Detecta cambios de la matriz y genera códigos PS/2 set 2; sin retorno.
+void baseconf_ps2_scan_keyboard(void)
+{
+    static const z80_byte scan_codes[8][5]={
+        {0x12,0x1a,0x22,0x21,0x2a},
+        {0x1c,0x1b,0x23,0x2b,0x34},
+        {0x15,0x1d,0x24,0x2d,0x2c},
+        {0x16,0x1e,0x26,0x25,0x2e},
+        {0x45,0x46,0x3e,0x3d,0x36},
+        {0x4d,0x44,0x43,0x3c,0x35},
+        {0x5a,0x4b,0x42,0x3b,0x33},
+        {0x29,0x11,0x3a,0x31,0x32}
+    };
+    const z80_byte rows[8]={puerto_65278,puerto_65022,puerto_64510,puerto_63486,
+                             puerto_61438,puerto_57342,puerto_49150,puerto_32766};
+    z80_byte cursor_changed=((baseconf_ps2_previous_rows[3]^rows[3])&0x10) |
+                             ((baseconf_ps2_previous_rows[4]^rows[4])&0x1c);
+    int cursor_shift=!(rows[0]&1) || !(baseconf_ps2_previous_rows[0]&1);
+    int row,col;
+
+    if (baseconf_cmos_extension_type!=2) {
+        for (row=0;row<8;row++) baseconf_ps2_previous_rows[row]=rows[row];
+        return;
+    }
+
+    for (row=0;row<8;row++) {
+        z80_byte changed=(baseconf_ps2_previous_rows[row]^rows[row])&0x1f;
+        for (col=0;col<5;col++) {
+            z80_byte code=scan_codes[row][col];
+            int extended=0;
+            if (!(changed&(1<<col))) continue;
+            /* Las flechas de ZEsarUX llegan como Caps Shift + 5/6/7/8. */
+            if (cursor_shift && cursor_changed && row==0 && col==0) continue;
+            if (cursor_shift && row==3 && col==4) { code=0x6b; extended=1; }
+            if (cursor_shift && row==4 && col==4) { code=0x72; extended=1; }
+            if (cursor_shift && row==4 && col==3) { code=0x75; extended=1; }
+            if (cursor_shift && row==4 && col==2) { code=0x74; extended=1; }
+            if (extended) baseconf_ps2_enqueue(0xe0);
+            if (rows[row]&(1<<col)) baseconf_ps2_enqueue(0xf0);
+            baseconf_ps2_enqueue(code);
+        }
+        baseconf_ps2_previous_rows[row]=rows[row];
+    }
+}
+
+// Extrae un código PS/2 del FIFO del AVR; devuelve FFH si no hay teclas.
+static z80_byte baseconf_ps2_read(void)
+{
+    z80_byte value;
+    baseconf_ps2_scan_keyboard();
+    if (!baseconf_ps2_fifo_count) return 0xff;
+    value=baseconf_ps2_fifo[baseconf_ps2_fifo_read];
+    baseconf_ps2_fifo_read=(baseconf_ps2_fifo_read+1)%sizeof(baseconf_ps2_fifo);
+    baseconf_ps2_fifo_count--;
+    return value;
+}
+
+// Lee la celda CMOS seleccionada y sus extensiones AVR; devuelve el byte obtenido.
+z80_byte baseconf_read_cmos(void)
+{
+    z80_byte indice=zxevo_last_port_dff7;
+
+    if (indice<=0x0d) {
+        //printf("BaseConf RTC read register %02XH\n",indice);
+    }
+
+    /* El RTC Gluk devuelve la fecha y hora local en BCD. */
+    if (indice==0x00 || indice==0x02 || indice==0x04 ||
+        indice==0x06 || indice==0x07 || indice==0x08 || indice==0x09) {
+            time_t tiempo=time(NULL);
+            struct tm fecha=*localtime(&tiempo);
+            int valor;
+
+            switch (indice) {
+            case 0x00: valor=fecha.tm_sec; break;
+            case 0x02: valor=fecha.tm_min; break;
+            case 0x04: valor=fecha.tm_hour; break;
+            case 0x06: valor=fecha.tm_wday+1; break;
+            case 0x07: valor=fecha.tm_mday; break;
+            case 0x08: valor=fecha.tm_mon+1; break;
+            default:   valor=fecha.tm_year%100; break;
+            }
+
+        return ((valor/10)<<4) | (valor%10);
+    }
+
+    switch (indice) {
+        /* Registro A: estado de actualización del RTC. Devolver 00H indica
+           que la fecha y la hora se pueden leer sin esperar. */
+        case 0x0a: return 0x00;
+
+        /* Registro B: configuración del formato horario. El valor 02H
+           selecciona datos en BCD y formato de 24 horas. */
+        case 0x0b: return 0x02;
+
+        /* Registro C: el bit 4 indica que el RTC ha terminado de actualizar
+           la fecha y la hora. Se activa una sola vez por cada nuevo segundo,
+           ya que la lectura del registro reconoce y limpia este flag.
+           Parece que Reset Service necesita esto o si no, no aparece el reloj
+        */
+        case 0x0c: {
+            time_t segundo_actual=time(NULL);
+
+            if (segundo_actual!=baseconf_rtc_ultimo_segundo_actualizado) {
+                baseconf_rtc_ultimo_segundo_actualizado=segundo_actual;
+                return 0x10;
+            }
+
+            return 0x00;
+        }
+
+        /* Registro D: estado de validez del RTC. El bit 7 a uno indica que
+           la RAM respaldada y la fecha/hora contienen datos válidos. */
+        case 0x0d: return 0x80;
+    }
+
+    /* El bit 7 del registro C cambia F0-FF a EEPROM normal. */
+    if (indice<0xf0 || (zxevo_nvram[0x0c]&0x80))
+        return zxevo_nvram[indice];
+
+    if (baseconf_cmos_extension_type==0)
+        return baseconf_version[indice&0x0f];
+    if (baseconf_cmos_extension_type==1)
+        return baseconf_avr_boot_version[indice&0x0f];
+    if (baseconf_cmos_extension_type==2)
+        return baseconf_ps2_read();
+    if (baseconf_cmos_extension_type==3 && indice==0xf0)
+        return baseconf_avr_modes_register;
+
+    return 0xff;
+}
+
+// Escribe valor en la celda CMOS seleccionada o elige extensión AVR; sin retorno.
+void baseconf_write_cmos(z80_byte valor)
+{
+    z80_byte indice=zxevo_last_port_dff7;
+
+    if (indice>=0xf0 && !(zxevo_nvram[0x0c]&0x80)) {
+        /* Las implementaciones antiguas aceptan la selección del tipo
+            desde cualquiera de los aliases F0-FF. */
+        baseconf_cmos_extension_type=valor;
+        return;
+    }
+
+    zxevo_nvram[indice]=valor;
 }
 
 
+
+// Velocidad de CPU aplicada por última vez, en décimas de MHz.
+static int baseconf_cpu_speed_selected=70;
+// Raster AVR aplicado a los tiempos del emulador.
+static int baseconf_timing_raster_applied=-1;
+// Multiplicador de CPU aplicado a los tiempos del emulador.
+static int baseconf_timing_speed_applied=-1;
+
+// Aplica la geometría temporal del raster AVR; force obliga a recalcularla.
+void baseconf_update_timing(int force)
+{
+    int raster=(baseconf_avr_modes_register>>4)&3;
+    int testados_linea;
+
+    if (!force && raster==baseconf_timing_raster_applied &&
+        cpu_turbo_speed==baseconf_timing_speed_applied) return;
+
+    baseconf_timing_raster_applied=raster;
+    baseconf_timing_speed_applied=cpu_turbo_speed;
+    pentagon_timing.v=(raster==0);
+
+    screen_invisible_borde_superior=8;
+    screen_borde_superior=56;
+    screen_total_borde_inferior=56;
+    screen_invisible_borde_derecho=96;
+    testados_linea=224;
+
+    if (raster==0) {
+        screen_invisible_borde_superior=16;
+        screen_borde_superior=64;
+        screen_total_borde_inferior=48;
+    }
+    else if (raster==1 || raster==3) {
+        // El modo AVR de 60 Hz aún no se emula: se usan los tiempos de 128K.
+        screen_invisible_borde_superior=7;
+        screen_invisible_borde_derecho=104;
+        testados_linea=228;
+    }
+
+    screen_testados_linea=testados_linea*cpu_turbo_speed;
+    screen_set_video_params_indices();
+    inicializa_tabla_contend();
+    original_timer_sleep_machine=20000;
+    set_emulator_speed();
+}
+
+
+// Aplica la velocidad de CPU indicada por los puertos BaseConf; sin parámetros ni retorno.
+void baseconf_set_cpu_speed(void)
+{
+    int nueva_velocidad;
+
+    if (baseconf_last_port_77&0x08) {
+        nueva_velocidad=140;
+    }
+    else if (baseconf_last_port_eff7&0x10) {
+        nueva_velocidad=35;
+    }
+    else {
+        nueva_velocidad=70;
+    }
+
+    if (nueva_velocidad==baseconf_cpu_speed_selected) return;
+
+    baseconf_cpu_speed_selected=nueva_velocidad;
+    if (nueva_velocidad==35) {
+        //printf("BaseConf CPU speed selected: 3.5 MHz\n");
+    }
+    else if (nueva_velocidad==70) {
+        //printf("BaseConf CPU speed selected: 7 MHz\n");
+    }
+    else {
+        //printf("BaseConf CPU speed selected: 14 MHz\n");
+    }
+
+    cpu_turbo_speed=nueva_velocidad/35;
+    cpu_set_turbo_speed();
+}
+
+//Ver Xpeccy: los puertos y el mapa de memoria BaseConf están en ./src/libxpeccy/hardware/pentevo.c
+//http://github.com/samstyle/Xpeccy
+
+// Comprueba si los puertos shadow están visibles; devuelve 1 si se puede acceder.
+int baseconf_shadow_ports_available(void)
+{
+
+    /* Un fetch M1 en #3Dxx activa DOS, exponiendo tanto la ROM TR-DOS
+        como los puertos shadow de configuración. */
+    if (baseconf_dos_signal) return 1;
+
+    if (baseconf_last_port_bf&1) {
+        //Si vale 1 habilita los puertos shadow. Vale 0 después de reset.
+        return 1;
+    }
+    if ((baseconf_shadow_mode_port_77&2)==0) {
+        //Habilita el permiso de los puertos shadow del gestor de memoria.
+        return 1;
+    }
+
+    return 0;
+}
+
+
+// Punto auxiliar de prueba para direccion; actualmente no realiza acciones ni devuelve valor.
 void lee_byte_evo_aux(z80_int direccion GCC_UNUSED)
 {
         //TODO: funcion que se usa en el core baseconf de testing
 }
 
+// Copia valor a la fuente de texto si direccion está redirigida; sin retorno.
+void baseconf_write_memory_aux(z80_int direccion,z80_byte valor)
+{
+    /* BF.bit2 redirige cada escritura de memoria de la CPU a los 2 KB
+        de RAM de fuente de texto, además de a la memoria mapeada normal. */
+    if (baseconf_last_port_bf&4) {
+        baseconf_text_font[direccion&2047]=valor;
+    }
+}
+
+// Combina los bits de los puertos de vídeo y devuelve el identificador de modo.
+z80_byte baseconf_get_video_mode(void)
+{
+    return (baseconf_last_port_eff7&0x20) |
+        ((baseconf_last_port_eff7&1)<<1) |
+        (baseconf_last_port_77&7);
+}
+
+// Muestra el modo de vídeo nuevo si difiere de anterior; sin retorno.
+static void baseconf_show_video_mode_change(z80_byte anterior)
+{
+    if (anterior!=baseconf_get_video_mode()) {
+        modificado_border.v=1;
+        char mensaje[256];
+        snprintf(mensaje,sizeof(mensaje),"Setting video mode %s",baseconf_get_video_mode_string());
+        screen_print_splash_text_center_no_if_previous(ESTILO_GUI_TINTA_NORMAL,ESTILO_GUI_PAPEL_NORMAL,mensaje);
+    }
+}
+
+// Comprueba el modo de vídeo actual; devuelve 1 si es un modo de texto.
+int baseconf_text_mode_active(void)
+{
+    z80_byte mode=baseconf_get_video_mode();
+    return mode==6 || mode==7;
+}
+
+// Convierte el índice colour de BaseConf al índice de color de ZEsarUX; devuelve este último.
+static z80_int baseconf_get_palette_colour(z80_byte colour)
+{
+    return PRISM_INDEX_FIRST_COLOR+baseconf_palette[colour&15];
+}
+
+// Lee indice de la paleta BaseConf; devuelve su valor RGB.
+z80_int baseconf_get_palette_entry(z80_byte indice)
+{
+    return baseconf_palette[indice&15];
+}
+
+/* Todos los modos BaseConf se renderizan en un área activa de 640x400.
+   Se mantiene escalado entero: 256x192 -> 512x384, 320x200 -> 640x400 y
+   640x200 -> 640x400. El área sin usar se convierte en border adicional. */
+// Dibuja colour en (x,y), con escalas scale_x/scale_y y offsets offset_x/offset_y; sin retorno.
+static void baseconf_putpixel_scaled(int x,int y,z80_int colour,
+                                    int scale_x,int scale_y,
+                                    int offset_x,int offset_y)
+{
+    int dx,dy;
+    int output_x=offset_x+x*scale_x;
+    int output_y=offset_y+y*scale_y;
+
+    for (dy=0;dy<scale_y;dy++)
+            for (dx=0;dx<scale_x;dx++)
+                    scr_putpixel_zoom(output_x+dx,output_y+dy,colour);
+}
+
+// Escribe en offset_x/offset_y y width/height la geometría del modo actual; sin retorno.
+static void baseconf_get_mode_geometry(int *offset_x,int *offset_y,
+                                       int *width,int *height)
+{
+    z80_byte mode=baseconf_get_video_mode();
+
+    if (mode==0x13 || mode==0x23 || mode==3) {
+            *width=512;
+            *height=384;
+            *offset_x=(640-*width)/2;
+            *offset_y=(400-*height)/2;
+    }
+    else {
+            *width=640;
+            *height=400;
+            *offset_x=0;
+            *offset_y=0;
+    }
+}
+
+// Dibuja colour en (x,y) usando el zoom global; sin retorno.
+static void baseconf_putpixel_absolute(int x,int y,z80_int colour)
+{
+    int dx,dy;
+    int px=x*zoom_x;
+    int py=y*zoom_y;
+
+    for (dy=0;dy<zoom_y;dy++)
+        for (dx=0;dx<zoom_x;dx++)
+            scr_putpixel(px+dx,py+dy,colour);
+}
+
+// Dibuja el borde del modo BaseConf actual; sin parámetros ni retorno.
+static void screen_baseconf_refresca_border(void)
+{
+    int x,y,offset_x,offset_y,width,height;
+    int left,top,right,bottom;
+    int total_width,total_height;
+    z80_int colour=baseconf_get_palette_colour(baseconf_border_colour);
+
+    baseconf_get_mode_geometry(&offset_x,&offset_y,&width,&height);
+    total_width=BASECONF_DISPLAY_WIDTH+
+            (BASECONF_LEFT_BORDER_NO_ZOOM+BASECONF_RIGHT_BORDER_NO_ZOOM)*border_enabled.v;
+    total_height=BASECONF_DISPLAY_HEIGHT+
+            (BASECONF_TOP_BORDER_NO_ZOOM+BASECONF_BOTTOM_BORDER_NO_ZOOM)*border_enabled.v;
+
+    left=BASECONF_LEFT_BORDER_NO_ZOOM*border_enabled.v+offset_x;
+    top=BASECONF_TOP_BORDER_NO_ZOOM*border_enabled.v+offset_y;
+    right=left+width;
+    bottom=top+height;
+
+    for (y=0;y<top;y++)
+        for (x=0;x<total_width;x++)
+                baseconf_putpixel_absolute(x,y,colour);
+
+    for (y=bottom;y<total_height;y++)
+        for (x=0;x<total_width;x++)
+                baseconf_putpixel_absolute(x,y,colour);
+
+    for (y=top;y<bottom;y++) {
+        for (x=0;x<left;x++)
+                baseconf_putpixel_absolute(x,y,colour);
+        for (x=right;x<total_width;x++)
+                baseconf_putpixel_absolute(x,y,colour);
+        }
+}
+
+// Actualiza el color del borde con puerto y value; sin retorno.
+void baseconf_set_border_colour(z80_int puerto,z80_byte value)
+{
+    /* A3 está invertido y proporciona el cuarto bit de color del border. */
+    baseconf_border_colour=(value&7) | ((~puerto)&8);
+}
+
+// Devuelve el índice de color actual del borde BaseConf.
+z80_byte baseconf_get_border_colour(void)
+{
+    return baseconf_border_colour;
+}
+
+/* ALCO: 256x192, un color de 4 bits por píxel. Cuatro flujos de bytes
+   entrelazados ocupan las dos páginas de pantalla Spectrum adyacentes. */
+// Dibuja la pantalla completa en modo ALCO; sin parámetros ni retorno.
+void screen_baseconf_refresca_alco_mode(void)
+{
+    int x,y;
+    int vpage=(puerto_32765&8) ? 7 : 5;
+
+    for (y=0;y<192;y++) {
+        int line=((y&0xc0)<<5) | ((y&7)<<8) | ((y&0x38)<<2);
+        for (x=0;x<256;x++) {
+            int adr=line+(x>>3);
+            int page=vpage;
+            z80_byte value;
+
+            if ((x&6)==0 || (x&6)==4) page^=1;
+            if (x&4) adr+=0x2000;
+            value=baseconf_ram_mem_table[page][adr];
+            if (x&1) value=((value&0x38)>>3) | ((value&0x80)>>4);
+            else value=(value&7) | ((value&0x40)>>3);
+            baseconf_putpixel_scaled(x,y,baseconf_get_palette_colour(value),
+                                    2,2,64,8);
+        }
+    }
+}
+
+// Dibuja la pantalla completa en modo ATM EGA; sin parámetros ni retorno.
+void screen_baseconf_refresca_ega_mode(void)
+{
+    int x,y;
+    int vpage=(puerto_32765&8) ? 7 : 5;
+
+    /* ATM EGA es un display packed de 320x200. Cada byte describe
+        los colores de dos píxeles adyacentes; los cuatro flujos de bytes
+        alternan entre las páginas de vídeo vpage y vpage^4. */
+    for (y=0;y<200;y++) {
+        for (x=0;x<320;x++) {
+            int sx=x;
+            int pair=sx&~1;
+            int adr=y*40+(sx>>3);
+            int page=vpage;
+            z80_byte value;
+
+            switch (pair&7) {
+            case 0:
+                    page=vpage^4;
+                    break;
+            case 2:
+                    break;
+            case 4:
+                    page=vpage^4;
+                    adr+=0x2000;
+                    break;
+            default: /* pair 6 */
+                    adr+=0x2000;
+                    break;
+            }
+
+            value=baseconf_ram_mem_table[page][adr];
+            if (sx&1) value=((value&0x38)>>3) | ((value&0x80)>>4);
+            else value=(value&7) | ((value&0x40)>>3);
+            baseconf_putpixel_scaled(x,y,baseconf_get_palette_colour(value),
+                                    2,2,0,0);
+        }
+    }
+}
+
+/* ATM hardware multicolor es un bitmap de 640x200 con un byte de atributos
+   por cada grupo de ocho píxeles de alta resolución. */
+// Dibuja la pantalla completa en modo multicolor ATM; sin parámetros ni retorno.
+void screen_baseconf_refresca_atm_multicolor_mode(void)
+{
+    int x,y;
+    int vpage=(puerto_32765&8) ? 7 : 5;
+
+    for (y=0;y<200;y++) {
+        for (x=0;x<640;x++) {
+            int sx=x;
+            int adr=y*40+(sx>>4);
+            int half=(sx&8) ? 0x2000 : 0;
+            z80_byte pixels=baseconf_ram_mem_table[vpage][adr+half];
+            z80_byte attr=baseconf_ram_mem_table[vpage^4][adr+half];
+            z80_byte ink=(attr&7) | ((attr&0x40)>>3);
+            z80_byte paper=((attr&0x38)>>3) | ((attr&0x80)>>4);
+            baseconf_putpixel_scaled(x,y,baseconf_get_palette_colour(
+                    (pixels&(0x80>>(sx&7))) ? ink : paper),1,2,0,0);
+        }
+    }
+}
+
+// Dibuja la pantalla completa en modo de texto ATM; sin parámetros ni retorno.
+void screen_baseconf_refresca_atm_text_mode(void)
+{
+    int x,y;
+    int vpage=(puerto_32765&8) ? 7 : 5;
+
+    for (y=0;y<200;y++) {
+        int row=y>>3;
+        int font_line=y&7;
+        for (x=0;x<640;x++) {
+            int sx=x;
+            int column=sx>>3;
+            int adr=0x1c0+row*64+(column>>1);
+            z80_byte caracter,attr;
+
+            if (column&1) {
+                caracter=baseconf_ram_mem_table[vpage][adr+0x2000];
+                attr=baseconf_ram_mem_table[vpage^4][adr+1];
+            }
+            else {
+                caracter=baseconf_ram_mem_table[vpage][adr];
+                attr=baseconf_ram_mem_table[vpage^4][adr^0x2000];
+            }
+            z80_byte font=baseconf_text_font[caracter*8+font_line];
+            z80_byte ink=(attr&7) | ((attr&0x40)>>3);
+            z80_byte paper=((attr&0x38)>>3) | ((attr&0x80)>>4);
+            baseconf_putpixel_scaled(x,y,baseconf_get_palette_colour(
+                    (font&(0x80>>(sx&7))) ? ink : paper),1,2,0,0);
+        }
+    }
+}
+
+// Dibuja la pantalla completa en modo multicolor ZX; sin parámetros ni retorno.
+void screen_baseconf_refresca_hw_multicolor_mode(void)
+{
+    int x,y;
+    int vpage=(puerto_32765&8) ? 7 : 5;
+    z80_byte *screen=baseconf_ram_mem_table[vpage];
+
+    /* El atributo de cada grupo 8x1 está 8 KB después del bitmap,
+       con la misma disposición no lineal. BRIGHT (bit 6) es común
+       a INK y PAPER, como en los atributos Spectrum. */
+    for (y=0;y<192;y++) {
+        int adr_line=((y&0xc0)<<5) | ((y&7)<<8) | ((y&0x38)<<2);
+        for (x=0;x<256;x++) {
+            int adr=adr_line+(x>>3);
+            z80_byte value=screen[adr];
+            z80_byte attr=screen[adr+0x2000];
+            z80_byte ink=(attr&7) | ((attr&0x40)>>3);
+            z80_byte paper=(attr&0x78)>>3;
+            //printf("%d %d\n",ink,paper);
+            baseconf_putpixel_scaled(x,y,baseconf_get_palette_colour(
+                    (value&(0x80>>(x&7))) ? ink : paper),2,2,64,8);
+        }
+    }
+}
+
+// Dibuja la pantalla completa en modo de texto EVO; sin parámetros ni retorno.
+void screen_baseconf_refresca_text_mode(void)
+{
+    int x,y;
+    int vpage=(puerto_32765&8) ? 7 : 5;
+    z80_byte *text=baseconf_ram_mem_table[vpage+3];
+
+    /* El texto PentEvo es de 80x25 caracteres, por tanto 640x200 píxeles. */
+    for (y=0;y<200;y++) {
+        int row=y>>3;
+        int font_line=y&7;
+        for (x=0;x<640;x++) {
+            int half_pixel=x;
+            int column=half_pixel>>3;
+            int font_x=half_pixel&7;
+            int adr=0x1c0+row*64+(column>>1);
+            z80_byte caracter,atributo;
+
+            if (column&1) {
+                caracter=text[adr+0x1000];
+                atributo=text[adr+0x2001];
+            }
+            else {
+                caracter=text[adr];
+                atributo=text[adr+0x3000];
+            }
+
+            z80_byte font=baseconf_text_font[caracter*8+font_line];
+            z80_byte ink=(atributo&7)+((atributo&0x40) ? 8 : 0);
+            z80_byte paper=((atributo>>3)&7)+((atributo&0x80) ? 8 : 0);
+            baseconf_putpixel_scaled(x,y,baseconf_get_palette_colour(
+                    (font&(0x80>>font_x)) ? ink : paper),1,2,0,0);
+        }
+    }
+}
+
+/* Devuelve el color de un pixel de la linea activa actual. El calculo es el
+   mismo que usa el render de frame completo, pero permite almacenarlo cuando
+   termina cada scanline. */
+// Obtiene el color del píxel (x,y) del modo indicado por mode; devuelve índice de paleta.
+static z80_int baseconf_get_scanline_pixel(z80_byte mode,int x,int y)
+{
+    int vpage=(puerto_32765&8) ? 7 : 5;
+    z80_byte value,attr,ink,paper;
+
+    switch (mode) {
+    //Modo 13H, ALCO 256x192: obtiene cada color de 4 bits de las dos paginas de VRAM entrelazadas.
+    case 0x13: {
+        int adr=((y&0xc0)<<5) | ((y&7)<<8) | ((y&0x38)<<2) | (x>>3);
+        int page=vpage;
+        if ((x&6)==0 || (x&6)==4) page^=1;
+        if (x&4) adr+=0x2000;
+        value=baseconf_ram_mem_table[page][adr];
+        if (x&1) value=((value&0x38)>>3) | ((value&0x80)>>4);
+        else value=(value&7) | ((value&0x40)>>3);
+        return baseconf_get_palette_colour(value);
+    }
+
+    //Modo 00H, ATM EGA 320x200: reconstruye cada color de 4 bits desde cuatro planos de VRAM entrelazados.
+    case 0: {
+        int pair=x&~1;
+        int adr=y*40+(x>>3);
+        int page=vpage;
+        switch (pair&7) {
+        case 0: page=vpage^4; break;
+        case 2: break;
+        case 4: page=vpage^4; adr+=0x2000; break;
+        default: adr+=0x2000; break;
+        }
+        value=baseconf_ram_mem_table[page][adr];
+        if (x&1) value=((value&0x38)>>3) | ((value&0x80)>>4);
+        else value=(value&7) | ((value&0x40)>>3);
+        return baseconf_get_palette_colour(value);
+    }
+
+    //Modo 23H, ZX hardware multicolor: usa un byte por grupo para seleccionar ink o paper en cada pixel.
+    case 0x23: {
+        int adr=((y&0xc0)<<5) | ((y&7)<<8) | ((y&0x38)<<2) | (x>>3);
+        value=baseconf_ram_mem_table[vpage][adr];
+        attr=baseconf_ram_mem_table[vpage][adr+0x2000];
+        ink=(attr&7) | ((attr&0x40)>>3);
+        paper=(attr&0x78)>>3;
+        return baseconf_get_palette_colour((value&(0x80>>(x&7))) ? ink : paper);
+    }
+
+    //Modo 02H, ATM hardware multicolor 640x200: lee bitmap y atributo de paginas de VRAM separadas.
+    case 2: {
+        int adr=y*40+(x>>4);
+        int half=(x&8) ? 0x2000 : 0;
+        value=baseconf_ram_mem_table[vpage][adr+half];
+        attr=baseconf_ram_mem_table[vpage^4][adr+half];
+        ink=(attr&7) | ((attr&0x40)>>3);
+        paper=((attr&0x38)>>3) | ((attr&0x80)>>4);
+        return baseconf_get_palette_colour((value&(0x80>>(x&7))) ? ink : paper);
+    }
+
+    //Modo 06H, ATM text 640x200: obtiene el caracter y atributo entrelazados y consulta la fuente activa.
+    case 6: {
+        int column=x>>3;
+        int adr=0x1c0+(y>>3)*64+(column>>1);
+        z80_byte caracter;
+        if (column&1) {
+            caracter=baseconf_ram_mem_table[vpage][adr+0x2000];
+            attr=baseconf_ram_mem_table[vpage^4][adr+1];
+        }
+        else {
+            caracter=baseconf_ram_mem_table[vpage][adr];
+            attr=baseconf_ram_mem_table[vpage^4][adr^0x2000];
+        }
+        value=baseconf_text_font[caracter*8+(y&7)];
+        ink=(attr&7) | ((attr&0x40)>>3);
+        paper=((attr&0x38)>>3) | ((attr&0x80)>>4);
+        return baseconf_get_palette_colour((value&(0x80>>(x&7))) ? ink : paper);
+    }
+
+    //Modo 07H, EVO text 640x200: obtiene caracter y atributo de cuatro zonas de una misma pagina de VRAM.
+    case 7: {
+        z80_byte *text=baseconf_ram_mem_table[vpage+3];
+        int column=x>>3;
+        int adr=0x1c0+(y>>3)*64+(column>>1);
+        z80_byte caracter;
+        if (column&1) {
+            caracter=text[adr+0x1000];
+            attr=text[adr+0x2001];
+        }
+        else {
+            caracter=text[adr];
+            attr=text[adr+0x3000];
+        }
+        value=baseconf_text_font[caracter*8+(y&7)];
+        ink=(attr&7) | ((attr&0x40)>>3);
+        paper=((attr&0x38)>>3) | ((attr&0x80)>>4);
+        return baseconf_get_palette_colour((value&(0x80>>(x&7))) ? ink : paper);
+    }
+
+    //Modo 03H o desconocido, ZX standard: combina el bitmap Spectrum con su atributo de celda 8x8.
+    default: {
+        z80_byte *screen=get_base_mem_pantalla();
+        int adr=screen_addr_table[y<<5]+(x>>3);
+        int adr_attr=6144+(y>>3)*32+(x>>3);
+        value=screen[adr];
+        attr=screen[adr_attr];
+        if (scr_refresca_sin_colores.v) attr=56;
+        else if (scr_refresca_show_attribute_grid.v) {
+            attr=56+((((y>>3)+(x>>3))&1) ? 64 : 0);
+        }
+        ink=(attr&7)+((attr&64) ? 8 : 0);
+        paper=((attr>>3)&7)+((attr&64) ? 8 : 0);
+        if ((attr&128) && estado_parpadeo.v) {
+            z80_byte aux=ink;
+            ink=paper;
+            paper=aux;
+        }
+        return baseconf_get_palette_colour((value&(0x80>>(x&7))) ? ink : paper);
+    }
+    }
+}
+
+/* El scanline de video comienza en display, continua por el border derecho,
+   retrace y termina en el border izquierdo de la linea siguiente. Se guarda
+   este ultimo tramo para dibujarlo al principio del siguiente scanline. */
+// Colores del borde izquierdo aplazados desde el scanline anterior.
+static z80_byte baseconf_border_left_next[BASECONF_DISPLAY_WIDTH+2*BASECONF_LEFT_BORDER_NO_ZOOM];
+// Indica si el búfer de borde izquierdo aplazado contiene datos válidos.
+static int baseconf_border_left_next_valid=0;
+
+// Registra el borde de la línea actual en el búfer rainbow; sin parámetros ni retorno.
+void baseconf_store_scanline_rainbow_border(void)
+{
+    //Color del border resultante en cada T-estado del scanline actual.
+    z80_byte state_colour[MAX_STATES_LINE];
+
+    //Color de border heredado del final del scanline anterior.
+    z80_byte colour=screen_border_last_color;
+
+    //Modo de video BaseConf activo durante este scanline.
+    z80_byte mode=baseconf_get_video_mode();
+
+    //Indica si el modo utiliza el area activa ancha de 640 pixeles.
+    int wide_mode=(mode==0 || mode==2 || mode==6 || mode==7);
+
+    //Numero de scanlines activos del modo: 200 en modos anchos o 192 en modos ZX.
+    int source_height=wide_mode ? 200 : 192;
+
+    //Numero de scanlines de border superior dentro de las 288 lineas visibles.
+    int top_border=(288-source_height)/2;
+
+    //Primer scanline del core que corresponde al frame visible de BaseConf.
+    int visible_start=screen_indice_inicio_pant-top_border;
+
+    //Posicion vertical del scanline actual dentro de las 288 lineas visibles.
+    int visible_y=t_scanline_draw-visible_start;
+
+    //Posicion vertical dentro del area activa; es negativa en el border superior.
+    int active_y=t_scanline_draw-screen_indice_inicio_pant;
+
+    //Ancho total en pixeles del rainbow buffer, incluyendo border si esta habilitado.
+    int total_width=get_total_ancho_rainbow();
+
+    //Ancho del border izquierdo: 40 pixeles en modos anchos y 104 en modos ZX.
+    int left_width=wide_mode ? 40 : 104;
+
+    //Coordenada X donde comienza el border derecho.
+    int right_start=total_width-left_width;
+
+    //Indice del primer T-estado del scanline actual en fullbuffer_border.
+    int line_start=t_scanline*screen_testados_linea;
+
+    //Primer T-estado del retrace, despues del display y del border derecho.
+    int pre_retrace=screen_testados_indice_borde_derecho*cpu_turbo_speed;
+
+    //Primer T-estado posterior al retrace, correspondiente al border izquierdo siguiente.
+    int post_retrace_start=screen_testados_linea-
+                           (screen_total_borde_izquierdo/2)*cpu_turbo_speed;
+
+    //Cantidad total de T-estados que contiene el scanline actual.
+    int line_states=screen_testados_linea;
+
+    //Contadores para pixeles, T-estados y duplicado vertical del scanline.
+    int x,state,duplicate;
+
+    if (pre_retrace>line_states) pre_retrace=line_states;
+    if (post_retrace_start<pre_retrace) post_retrace_start=pre_retrace;
+    if (post_retrace_start>=line_states) post_retrace_start=line_states-1;
+
+    for (state=0;state<line_states;state++) {
+        z80_byte change=fullbuffer_border[line_start+state];
+        if (change!=255) colour=change;
+        state_colour[state]=colour;
+    }
+    screen_border_last_color=colour;
+    //printf("color %d\n",colour);
+
+    //BaseConf genera 288 scanlines visibles, que se duplican verticalmente hasta 576.
+    if (visible_y>=0 && visible_y<288) {
+        int output_y=visible_y*2;
+        int central_line=(active_y>=0 && active_y<source_height);
+
+        for (x=0;x<total_width;x++) {
+            z80_byte raw_colour;
+            if (central_line && x>=left_width && x<right_start) continue;
+
+            if (x<left_width) {
+                if (baseconf_border_left_next_valid) {
+                    raw_colour=baseconf_border_left_next[(x*total_width)/left_width];
+                }
+                else raw_colour=state_colour[0];
+            }
+            else {
+                int position=x-left_width;
+                int length=total_width-left_width;
+                state=(position*pre_retrace)/length;
+                if (state>=pre_retrace) state=pre_retrace-1;
+                raw_colour=state_colour[state];
+            }
+
+            for (duplicate=0;duplicate<2;duplicate++)
+                rainbow_buffer[(output_y+duplicate)*total_width+x]=
+                    baseconf_get_palette_colour(raw_colour);
+        }
+    }
+
+    for (x=0;x<total_width;x++) {
+        state=post_retrace_start+(x*(line_states-post_retrace_start))/total_width;
+        if (state>=line_states) state=line_states-1;
+        baseconf_border_left_next[x]=state_colour[state];
+    }
+    baseconf_border_left_next_valid=1;
+}
+
+// Registra la imagen de la línea actual en el búfer rainbow; sin parámetros ni retorno.
+void baseconf_store_scanline_rainbow_display(void)
+{
+    //Modo de video BaseConf activo durante este scanline.
+    z80_byte mode=baseconf_get_video_mode();
+
+    //Indica si el modo utiliza una resolucion horizontal de 320 o 640 pixeles.
+    int wide_mode=(mode==0 || mode==2 || mode==6 || mode==7);
+
+    //Ancho logico en pixeles de la imagen generada por el modo actual.
+    int source_width;
+    if (!wide_mode) source_width=256;
+    else if (mode==0) source_width=320;
+    else source_width=640;
+
+    //Alto logico del area activa: 200 scanlines en modos anchos o 192 en modos ZX.
+    int source_height=wide_mode ? 200 : 192;
+
+    //Numero de scanlines de border superior dentro de las 288 lineas visibles.
+    int top_border=(288-source_height)/2;
+
+    //Posicion vertical del scanline actual dentro del area activa.
+    int active_y=t_scanline_draw-screen_indice_inicio_pant;
+
+    //Factor entero horizontal: duplica los modos de 256 y 320, pero mantiene los de 640.
+    int scale_x=(source_width==640) ? 1 : 2;
+
+    //Ancho que ocupa el area activa despues de aplicar el escalado horizontal.
+    int display_width=source_width*scale_x;
+
+    //Ancho total del rainbow buffer, incluyendo el border cuando esta habilitado.
+    int total_width=get_total_ancho_rainbow();
+
+    //Desplazamiento horizontal necesario para centrar el area activa en el buffer.
+    int offset_x=(total_width-display_width)/2;
+
+    //Linea de destino, incluyendo el border o el centrado, y el duplicado vertical.
+    int output_y=(border_enabled.v ? top_border*2 :
+                   (BASECONF_DISPLAY_HEIGHT-source_height*2)/2)+active_y*2;
+
+    //Contadores para los pixeles de origen y su duplicado vertical.
+    int x,duplicate;
+
+    if (active_y<0 || active_y>=source_height) return;
+
+    /* Sin border, los modos de 512x384 no ocupan todo el display de 640x400.
+       Se limpia una vez por frame el espacio sobrante para que no conserve
+       pixeles del frame anterior. */
+    if (!border_enabled.v && active_y==0) {
+        int position;
+        z80_int border_colour=baseconf_get_palette_colour(baseconf_border_colour);
+        for (position=0;position<total_width*BASECONF_DISPLAY_HEIGHT;position++)
+            rainbow_buffer[position]=border_colour;
+    }
+
+    for (x=0;x<source_width;x++) {
+        z80_int colour=baseconf_get_scanline_pixel(mode,x,active_y);
+        int output_x=offset_x+x*scale_x;
+        for (duplicate=0;duplicate<2;duplicate++) {
+            z80_int *pixel=&rainbow_buffer[(output_y+duplicate)*total_width+output_x];
+            pixel[0]=colour;
+            if (scale_x==2) pixel[1]=colour;
+        }
+    }
+}
+
+// Recalcula el mapa de memoria tras un reset de CPU; sin parámetros ni retorno.
 void baseconf_reset_cpu(void)
 {
 
 
     //TODO. Que otros puertos de baseconf se ponen a 0 en el reset?
 
-
-
-
     baseconf_set_memory_pages();
-    //baseconf_set_sizes_display();
 }
 
+// Construye los punteros a páginas ROM y RAM; sin parámetros ni retorno.
 void baseconf_init_memory_tables(void)
 {
 	debug_printf (VERBOSE_DEBUG,"Initializing BaseConf memory pages");
@@ -119,54 +1397,73 @@ void baseconf_init_memory_tables(void)
 		puntero +=16384;
 	}
 
-
-
-
 }
 
 
 
+// Resuelve la MMU y actualiza las cuatro ventanas de memoria de CPU; sin parámetros ni retorno.
 void baseconf_set_memory_pages(void)
 {
 
-        int i=0;
+    int i=0;
+    int mapa=(puerto_32765&16) ? 4 : 0;
 
-        for (i=0;i<4;i++) {
-                z80_byte pagina=baseconf_memory_segments[i];
-                z80_byte pagina_es_ram=baseconf_memory_segments_type[i];
+    for (i=0;i<4;i++) {
+        z80_byte flags=baseconf_mmu_flags[mapa+i];
+        z80_byte pagina=baseconf_mmu_pages[mapa+i];
+        z80_byte pagina_es_ram=flags&64;
 
-                if ((baseconf_shadow_mode_port_77&1)==0) {
-                        //A8: if 0, then disable the memory manager. In each window processor is installed the last page of ROM. 0 after reset.
-                        pagina=255;
-                        pagina_es_ram=0;
-                }
-
-                if (baseconf_last_port_eff7&8) {
-                        /* 3: When placing a 1 in box # 0000 .. # 3FFF forces the zero page RAM.
-                        This bit has priority over all other ways to switch the memory page in the window.
-                        Value after reset - 0.
-                        */
-
-                       if (i==0) {
-                               pagina=0;
-                               pagina_es_ram=1;
-                       }
-                }
-
-                //TODO: A9: If 0 then "force" the inclusion of TR-DOS and the shadow ports. 0 after reset.
-
-                if (pagina_es_ram) {
-                        baseconf_memory_paged[i]=baseconf_ram_mem_table[pagina];
-                        debug_paginas_memoria_mapeadas[i]=pagina;
-                }
-                else {
-                        pagina=pagina & 31;
-                        baseconf_memory_paged[i]=baseconf_rom_mem_table[pagina];
-                        debug_paginas_memoria_mapeadas[i]=DEBUG_PAGINA_MAP_ES_ROM+pagina;
-                }
-
-                //printf ("segmento %d pagina %d\n",i,pagina);
+        /* El bit 7 de #xFF7 no significa página 7. Hace que los bits
+            bajos de la página seleccionada sigan dinámicamente #7FFD. */
+        if (flags&128) {
+                if (pagina_es_ram) pagina=baseconf_change_ram_page_7ffd(pagina);
+                else pagina=baseconf_change_rom_page_trdos(pagina);
         }
+
+        if ((baseconf_shadow_mode_port_77&1)==0) {
+                //A8: si vale 0 deshabilita el gestor de memoria. En cada ventana de la CPU se instala la última página de ROM. Vale 0 después de reset.
+                pagina=255;
+                pagina_es_ram=0;
+        }
+
+        /* EFF7.bit3 tiene prioridad sobre la MMU en la primera
+            ventana de 16K y expone allí la página RAM 0. */
+        if ((baseconf_last_port_eff7&8) && i==0) {
+                pagina=0;
+                pagina_es_ram=1;
+        }
+        else if (i==0 && baseconf_nmi_active) {
+                pagina=0xff;
+                pagina_es_ram=1;
+        }
+        else if (i==0 && baseconf_trdos_emulation_active) {
+                pagina=0xfe;
+                pagina_es_ram=1;
+        }
+
+        //TODO: A9: si vale 0 fuerza la inclusión de TR-DOS y los puertos shadow. Vale 0 después de reset.
+
+        if (pagina_es_ram) {
+            baseconf_memory_paged[i]=baseconf_ram_mem_table[pagina];
+            debug_paginas_memoria_mapeadas[i]=pagina;
+        }
+        else {
+            pagina=pagina & 31;
+            /* Compatibilidad temporal con imágenes flash cuyas posiciones
+                lógicas bajas de ROM están guardadas ocho posiciones después. */
+            if (pagina<8 && baseconf_rom_mem_table[pagina][0]==0xff &&
+                baseconf_rom_mem_table[pagina+8][0]!=0xff) {
+                    baseconf_memory_paged[i]=baseconf_rom_mem_table[pagina+8];
+            }
+            else baseconf_memory_paged[i]=baseconf_rom_mem_table[pagina];
+            debug_paginas_memoria_mapeadas[i]=DEBUG_PAGINA_MAP_ES_ROM+pagina;
+        }
+
+        baseconf_memory_segments[i]=pagina;
+        baseconf_memory_segments_type[i]=pagina_es_ram;
+
+        //printf ("segmento %d pagina %d\n",i,pagina);
+    }
 
 
 
@@ -176,204 +1473,318 @@ void baseconf_set_memory_pages(void)
 }
 
 
+// Reinicia CPU, RAM y registros BaseConf al estado de encendido; sin parámetros ni retorno.
 void baseconf_hard_reset(void)
 {
 
-  debug_printf(VERBOSE_DEBUG,"BaseConf Hard reset cpu");
+    debug_printf(VERBOSE_DEBUG,"BaseConf Hard reset cpu");
 
-  //Asignar bloques memoria
-  baseconf_memory_segments[0]=baseconf_memory_segments[1]=baseconf_memory_segments[2]=baseconf_memory_segments[3]=255;
-  baseconf_memory_segments_type[0]=baseconf_memory_segments_type[1]=baseconf_memory_segments_type[2]=baseconf_memory_segments_type[3]=0;
+    //Asignar bloques memoria
+    int i;
+    for (i=0;i<8;i++) {
+        baseconf_mmu_pages[i]=255;
+        baseconf_mmu_flags[i]=0;
+    }
+    for (i=0;i<2048;i++) baseconf_text_font[i]=0;
+    baseconf_dos_signal=1;
+    baseconf_beta_drive_virtual=0;
+    baseconf_beta_drive_selected=0;
+    baseconf_trdos_emulation_active=0;
+    for (i=0;i<4;i++) baseconf_extended_dos_ports[i]=0;
+    for (i=0;i<16;i++) baseconf_palette[i]=baseconf_palette_default[i];
+    baseconf_border_colour=0;
+    baseconf_nmi_saved_border_colour=0;
+    baseconf_border_left_next_valid=0;
+    modificado_border.v=1;
+    baseconf_nmi_breakpoint=0;
+    baseconf_nmi_active=0;
+    baseconf_nmi_entry_pending=0;
+    baseconf_nmi_exit_countdown=0;
+    baseconf_nmi_from_bf_pending=0;
+    baseconf_nmi_from_bf_delivery=0;
+    zxevo_nemo_ide_reset();
+    baseconf_ps2_reset();
+    baseconf_rtc_ultimo_segundo_actualizado=(time_t)-1;
 
 
-  reset_cpu();
+    reset_cpu();
 
 
-	int i;
+    //Borrar toda memoria ram
+    int d;
+    z80_byte *puntero;
 
-
-       //Borrar toda memoria ram
-        int d;
-        z80_byte *puntero;
-
-        for (i=0;i<BASECONF_RAM_PAGES;i++) {
-                puntero=baseconf_ram_mem_table[i];
-                for (d=0;d<16384;d++,puntero++) {
-                        *puntero=0;
-                }
+    for (i=0;i<BASECONF_RAM_PAGES;i++) {
+        puntero=baseconf_ram_mem_table[i];
+        for (d=0;d<16384;d++,puntero++) {
+                *puntero=0;
         }
-baseconf_last_port_77=0;
-baseconf_shadow_mode_port_77=0;
-baseconf_last_port_bf=0;
-baseconf_last_port_eff7=0;
+    }
+    /* El valor de reset hardware se codifica internamente como 0x83: A14=1 y
+    los bits de datos 1:0=11. En ZEsarUX ambas partes se guardan por separado.
+    Esto selecciona el modo de vídeo ZX normal dejando A8/A9 a cero. */
+    baseconf_last_port_77=3;
+    baseconf_shadow_mode_port_77=0x40;
+    baseconf_last_port_bf=0;
+    baseconf_last_port_eff7=0;
 
-        baseconf_set_memory_pages();
+    baseconf_last_port_bd=0;
+    baseconf_last_port_be=0;
+    baseconf_last_port_ff=0;
+    baseconf_last_port_57=0;
+    baseconf_last_port_sd_77=0;
+    baseconf_last_port_dff7=0;
+    baseconf_last_port_bff7=0;
+    baseconf_last_port_7ffd=0;
+    for (i=0;i<4;i++) baseconf_last_port_extended_dos[i]=0;
+    baseconf_last_port_ff7=0;
+    baseconf_last_port_7f7=0;
+    baseconf_last_port_bf7=0;
+    baseconf_cpu_speed_selected=-1;
+    baseconf_set_cpu_speed();
+    baseconf_sd_enabled=1;
+    baseconf_sd_cs=1;
+
+    baseconf_set_memory_pages();
+
+    baseconf_update_timing(0);
 
 }
 
 //Cambia el valor de entrada de numero de pagina ram segun :
 /*
-for RAM - in the window there is a substitution under 3 or 6 bits (depending on the mode of ZX Spectrum 128k or pentagon 1024k)
-page numbers are not inverse bits from port # 7FFD.
+Para RAM, en la ventana hay una sustitución de 3 o 6 bits, dependiendo del
+modo ZX Spectrum 128K o Pentagon 1024K. Los números de página no son los bits
+invertidos del puerto #7FFD.
 */
-z80_byte baseconf_change_ram_page_7ffd(z80_byte value)
+// Sustituye bits de value según 7FFD y el modo 128K/Pentagon; devuelve página RAM.
+static z80_byte baseconf_change_ram_page_7ffd(z80_byte value)
 {
 
-/*
-baseconf_last_port_eff7;
-2: off for a 1 - mode ZX Spectrum 128k, otherwise - mode pentagon 1024k.
-Value after reset - 0.
-*/
-        //printf ("adjusting ram to bits port 7ffdh\n");
+    /*
+    baseconf_last_port_eff7;
+    2: con un 1 selecciona modo ZX Spectrum 128K; en caso contrario, modo
+    Pentagon 1024K. Su valor después de reset es 0.
+    */
+    //printf ("adjusting ram to bits port 7ffdh\n");
 
-        if (baseconf_last_port_eff7&4) {
-                //paginacion 128k
-                value=value&(255-7);
-                value=value | (puerto_32765&7);
-        }
-        else {
-                //paginacion pentagon 1024k. 6 bits
-                z80_byte ram_entra=(puerto_32765&7) | ((puerto_32765>>2)&(8+16+32));
-                value=value&(255-63);
-                value=value|ram_entra;
-        }
+    if (baseconf_last_port_eff7&4) {
+        //paginacion 128k
+        value=value&(255-7);
+        value=value | (puerto_32765&7);
+    }
+    else {
+        //paginacion pentagon 1024k. 6 bits
+        z80_byte ram_entra=(puerto_32765&7) | ((puerto_32765>>2)&(8+16+32));
+        value=value&(255-63);
+        value=value|ram_entra;
+    }
 
-        return value;
+    return value;
 }
 
 //Cambia el valor de entrada de numero de pagina rom segun:
 /*
-For ROM - there is a substitution LSB page numbers signal the inclusion of TR-DOS (1 if the TR-DOS included).
-In addition, there is the inclusion of the shadow of ports and TR-DOS («log in TR-DOS »), if in this box will code execution with the offset # 3Dxx.
+Para ROM, hay una sustitución del LSB del número de página que indica la
+inclusión de TR-DOS: vale 1 cuando TR-DOS está incluido. También se incluyen
+los puertos shadow y TR-DOS al ejecutar código con offset #3Dxx en esta ventana.
 */
 
-z80_byte baseconf_change_rom_page_trdos(z80_byte value)
+// Sustituye el bit bajo de value según la señal DOS; devuelve página ROM.
+static z80_byte baseconf_change_rom_page_trdos(z80_byte value)
 {
-        value=value&254;
-        if ((baseconf_shadow_mode_port_77&2)==0) {
-                //printf ("TODO: If 0 then -force- the inclusion of TR-DOS and the shadow ports. 0 after reset\n");
-                /*
-                A9: If 0 then "force" the inclusion of TR-DOS and the shadow ports. 0 after reset.
-                */
-
-               value=value|1; // no estoy seguro de esto
-        }
-        return value;
+    value=value&254;
+    if (baseconf_dos_signal) value|=1;
+    return value;
 }
 
+// Aplica valor al puerto BaseConf indicado por puerto; sin retorno.
 void baseconf_out_port(z80_int puerto,z80_byte valor)
 {
 
         z80_byte puerto_h=puerto>>8;
+        z80_byte puerto_l=puerto&0xff;
 
 
+
+
+
+        /* La revisión de 2014 usa 00BD/01BD para el breakpoint. Las
+           revisiones nuevas lo trasladan a 10BD/11BD y añaden 13BD para
+           marcar las unidades RAM-disk. Se admiten ambas interfaces. */
+        if ((puerto&0x00ff)==0xbd &&
+            ((puerto_h&0xfc)==0x10 || puerto_h<=1)) {
+                baseconf_last_port_bd=valor;
+                int extended_register=(puerto_h&0xfc)==0x10 ?
+                                      (puerto_h&3) : puerto_h;
+                if (extended_register==0) {
+                        baseconf_nmi_breakpoint=(baseconf_nmi_breakpoint&0xff00)|valor;
+                }
+                else if (extended_register==1) {
+                        baseconf_nmi_breakpoint=(baseconf_nmi_breakpoint&0x00ff)|(valor<<8);
+                }
+                else if (extended_register==3) {
+                        baseconf_beta_drive_virtual=valor&0x0f;
+                        baseconf_set_memory_pages();
+                }
+        }
+
+        /* OUT #xxBE sale del modo TR-DOS virtual de inmediato; la NMI
+           restaura el mapeo después de dos ciclos M1. */
+        else if ((puerto&0x00ff)==0xbe) {
+                baseconf_last_port_be=valor;
+                if (baseconf_nmi_active) baseconf_nmi_exit_countdown=2;
+                else if (baseconf_trdos_emulation_active) {
+                        baseconf_trdos_emulation_active=0;
+                        baseconf_set_memory_pages();
+                }
+        }
+
+        else if (puerto_l==0x1f || puerto_l==0x3f ||
+                 puerto_l==0x5f || puerto_l==0x7f) {
+                baseconf_beta_fdc_access(puerto);
+        }
+
+        /* #xxFF siempre selecciona la unidad Beta Disk. Con A14 a cero,
+           la misma escritura actualiza además la paleta. */
+        else if ((puerto&0x00ff)==0xff && baseconf_shadow_ports_available()) {
+                baseconf_last_port_ff=valor;
+                baseconf_beta_drive_selected=valor;
+                if (!(baseconf_shadow_mode_port_77&0x40)) {
+                        z80_int inverted_value=(~valor)&0xff;
+                        z80_int inverted_port=(~puerto)&0xffff;
+                        int r=((inverted_value&0x02)<<2) |
+                              ((inverted_value&0x40)>>4) |
+                              ((inverted_port&0x0200)>>8) |
+                              ((inverted_port&0x4000)>>14);
+                        int g=((inverted_value&0x10)>>1) |
+                              ((inverted_value&0x80)>>5) |
+                              ((inverted_port&0x1000)>>11) |
+                              ((inverted_port&0x8000)>>15);
+                        int b=((inverted_value&0x01)<<3) |
+                              ((inverted_value&0x20)>>3) |
+                              ((inverted_port&0x0100)>>7) |
+                              ((inverted_port&0x2000)>>13);
+                        z80_int palette_colour=(r<<8)+(g<<4)+b;
+                        baseconf_palette[baseconf_border_colour]=palette_colour;
+                        modificado_border.v=1;
+
+                        //Los mismos colores que máquina Prism
+                }
+                baseconf_set_memory_pages();
+                baseconf_beta_fdc_access(puerto);
+        }
+
+        else if (baseconf_shadow_ports_available() &&
+                 (puerto_l==0x2f || puerto_l==0x4f ||
+                  puerto_l==0x6f || puerto_l==0x8f)) {
+                baseconf_last_port_extended_dos[(puerto_l-0x2f)>>5]=valor;
+                baseconf_extended_dos_ports[(puerto_l-0x2f)>>5]=valor;
+        }
 
         //xxBFH
-        //Enable shadow mode ports write permission in ROM.
-        if ( (puerto&0x00FF)==0xBF ) {
+        //Habilita en ROM el permiso de escritura de los puertos shadow.
+        else if ( (puerto&0x00FF)==0xBF ) {
+               /* El flanco descendente del bit 3 solicita una NMI. El
+                  servicio la usa al continuar el programa interrumpido. */
+               if ((baseconf_last_port_bf&8) && !(valor&8))
+                       baseconf_nmi_from_bf_pending=1;
                baseconf_last_port_bf=valor;
-
                baseconf_set_memory_pages();
         }
 
         //xx77H
         else if ( (puerto&0x00FF)==0x77 && baseconf_shadow_ports_available() ) {
+               z80_byte video_anterior=baseconf_get_video_mode();
                 baseconf_shadow_mode_port_77=puerto_h;
                baseconf_last_port_77=valor;
+               baseconf_set_cpu_speed();
 
                baseconf_set_memory_pages();
+               baseconf_show_video_mode_change(video_anterior);
         }
 
         else if (puerto==0xEFF7) {
+                z80_byte video_anterior=baseconf_get_video_mode();
                 //printf ("setting port EFF7 value\n");
                 baseconf_last_port_eff7=valor;
+                baseconf_set_cpu_speed();
                 baseconf_set_memory_pages();
+                baseconf_show_video_mode_change(video_anterior);
         }
 
 
         //xFF7H
-        //The memory manager pages.
+        //Páginas del gestor de memoria.
         else if ( (puerto&0x0FFF)==0xFF7 && baseconf_shadow_ports_available() ) {
+                 z80_byte es_ram=valor&64;
+                 z80_byte pagina=(valor^255)&(es_ram ? 63 : 31);
+                 z80_byte segmento=(puerto_h>>6)+((puerto_32765&16) ? 4 : 0);
 
+                 baseconf_last_port_ff7=valor;
 
-
-                  z80_byte pagina=valor ^ 255;
-                         z80_byte es_ram=valor & 64;
-
-
-
-                      z80_byte segmento=puerto_h>>6;
-                     if (es_ram==0) {
-                           pagina=pagina&31;
-                         if (valor&128) pagina=baseconf_change_rom_page_trdos(pagina);
-                  }
-
-                  else {
-                                pagina=pagina&63;
-                                if (valor&128) pagina=baseconf_change_ram_page_7ffd(pagina);
-                 }
-
-                 baseconf_memory_segments[segmento]=pagina;
-                 baseconf_memory_segments_type[segmento]=es_ram;
-
+                 baseconf_mmu_pages[segmento]=pagina;
+                 baseconf_mmu_flags[segmento]=valor&0xC0;
 
                baseconf_set_memory_pages();
         }
-        /*Out port baseconf port FFF7H value 40H. PC=03AAH
+        /*Salida puerto BaseConf FFF7H valor 40H. PC=03AAH
 segmento 0 pagina 24
 segmento 1 pagina 64
 segmento 2 pagina 255
 segmento 3 pagina 63
-Out port baseconf port F7F7H value BFH. PC=03AFH  -> BF=10 111111 -> pagina invertida=64... o sea que solo hay que pillar bits inferiores?
+Salida puerto BaseConf F7F7H valor BFH. PC=03AFH -> BF=10 111111 -> pagina invertida=64... o sea que solo hay que pillar bits inferiores?
 segmento 0 pagina 24
 segmento 1 pagina 64
 segmento 2 pagina 255
 segmento 3 pagina 64
-Out port baseconf port 3FF7H value 06H. PC=84C0H
+Salida puerto BaseConf 3FF7H valor 06H. PC=84C0H
 segmento 0 pagina 25
 segmento 1 pagina 64
 segmento 2 pagina 255
 segmento 3 pagina 64
-Out port baseconf port DEF7H value EFH. PC=31BCH
-Baseconf reading port BEF7H
-baseconf reading nvram register EFH
-Out port baseconf port 3FF7H value 3FH. PC=84D7H
+Salida puerto BaseConf DEF7H valor EFH. PC=31BCH
+BaseConf leyendo puerto BEF7H
+BaseConf leyendo registro NVRAM EFH
+Salida puerto BaseConf 3FF7H valor 3FH. PC=84D7H
 segmento 0 pagina 0
 
 */
 
         //x7F7H
-        //The memory manager pages. All ram access. Port not in ATM2
+        //Páginas del gestor de memoria. Todo acceso a RAM. Puerto no presente en ATM2.
         else if ( (puerto&0x0FFF)==0x7F7 && baseconf_shadow_ports_available() ) {
-                z80_byte pagina=valor ^ 255;
-                z80_byte es_ram=1;
+                z80_byte pagina=valor^255;
+                z80_byte segmento=(puerto_h>>6)+((puerto_32765&16) ? 4 : 0);
 
-                z80_byte segmento=puerto_h>>6;
+                baseconf_last_port_7f7=valor;
 
-
-                if (valor&128) pagina=baseconf_change_ram_page_7ffd(pagina);
-
-                baseconf_memory_segments[segmento]=pagina;
-                baseconf_memory_segments_type[segmento]=es_ram;
-
+                baseconf_mmu_pages[segmento]=pagina;
+                /* #x7F7 proporciona los ocho bits invertidos de página, pero no
+                   modifica el flag de sustitución establecido antes por #xFF7. */
+                baseconf_mmu_flags[segmento] |=64;
 
                baseconf_set_memory_pages();
         }
 
-        else if (puerto==0x7ffd) {
-                //mapeamos ram y rom , pero sin habilitando memory manager
-                //baseconf_shadow_ports |=1;
+        //xBF7H: protección de escritura para la ventana MMU seleccionada.
+        else if ( (puerto&0x0FFF)==0xBF7 && baseconf_shadow_ports_available() ) {
+                z80_byte segmento=(puerto_h>>6)+((puerto_32765&16) ? 4 : 0);
+                baseconf_last_port_bf7=valor;
+                baseconf_mmu_flags[segmento] &=~32;
+                if (valor&1) baseconf_mmu_flags[segmento] |=32;
+        }
 
-                //ram
-                baseconf_memory_segments[3]=valor&7;
-                baseconf_memory_segments_type[3]=1;
+        /* La FPGA decodifica el byte bajo #FC/#FD y exige A15=0.
+           Usar sólo A15/A1 también paginaba RAM al escribir en Nemo IDE.
+           OUT (#FD),A sigue siendo válido cuando A15 de A es cero. */
+        else if ((puerto&0x80fe)==0x00fc) {
+                /* En modo de paginación 128K el bit 5 bloquea las escrituras
+                   posteriores a #7FFD hasta reset. Las escrituras MMU mediante
+                   #xFF7/#x7F7 continúan disponibles. */
+                if ((baseconf_last_port_eff7&4) && (puerto_32765&32)) return;
 
-                //rom
-                baseconf_memory_segments[0] &=254;
-                if (valor&16) baseconf_memory_segments[0] |= 1;
-                baseconf_memory_segments_type[0]=0;
-
-
+                baseconf_last_port_7ffd=valor;
                 puerto_32765=valor;
 
                 baseconf_set_memory_pages();
@@ -383,60 +1794,278 @@ segmento 0 pagina 0
 
         //Puertos NVRAM.
 	else if (puerto==0xeff7 && !baseconf_shadow_ports_available() ) puerto_eff7=valor;
-	else if (puerto==0xdff7 && !baseconf_shadow_ports_available() ) zxevo_last_port_dff7=valor;
-        else if (puerto==0xdef7 && baseconf_shadow_ports_available() ) zxevo_last_port_dff7=valor;
+	else if (puerto==0xdff7 && !baseconf_shadow_ports_available() ) {
+		baseconf_last_port_dff7=valor;
+		zxevo_last_port_dff7=valor;
+	}
+        else if (puerto==0xdef7 && baseconf_shadow_ports_available() ) {
+                baseconf_last_port_dff7=valor;
+                zxevo_last_port_dff7=valor;
+        }
 
 
 	else if (puerto==0xbff7 && !baseconf_shadow_ports_available() ) {
-						//Si esta permitida la escritura
-						if (puerto_eff7&128) zxevo_nvram[zxevo_last_port_dff7]=valor;
+		baseconf_last_port_bff7=valor;
+		/* En BaseConf #EFF7 es el registro de configuración guardado en
+		   baseconf_last_port_eff7. Usar aquí el puerto_eff7 genérico dejaba
+		   permanentemente deshabilitado el acceso CMOS no-shadow. */
+		if (baseconf_last_port_eff7&128) {
+			baseconf_write_cmos(valor);
+		}
 	}
 
         else if (puerto==0xbef7 && baseconf_shadow_ports_available() ) {
-                        //Note: In the shadow mode port # BEF7 available regardless of bit 7 port # EFF7.
-		 zxevo_nvram[zxevo_last_port_dff7]=valor;
+                 baseconf_last_port_bff7=valor;
+                        //En modo shadow el puerto #BEF7 está disponible independientemente del bit 7 de #EFF7.
+		 baseconf_write_cmos(valor);
 					}
         else if ( (puerto&0x00FF)==0x77 ) {
-                printf ("Record: control signal CS to SD-card unemulated\n");
+                if (!baseconf_sd_interface_enabled.v) return;
+                baseconf_last_port_sd_77=valor;
+                baseconf_sd_enabled=valor&1;
+                baseconf_sd_cs=(valor&2) ? 1 : 0;
+                mmc_cs(baseconf_sd_cs ? 0xff : 0xfe);
+        }
+
+        else if ( (puerto&0x00FF)==0x57 ) {
+                if (!baseconf_sd_interface_enabled.v) return;
+                baseconf_last_port_57=valor;
+                if (baseconf_sd_enabled && !baseconf_sd_cs) mmc_write(valor);
         }
 
         else {
-                printf ("unhandled out port %04XH value %02XH\n",puerto,valor);
+                //printf ("unhandled out port %04XH value %02XH\n",puerto,valor);
                 //sleep(1);
         }
 }
 
 
-void screen_baseconf_refresca_pantalla(void)
+
+
+//Refresco pantalla sin rainbow
+// Dibuja la pantalla ZX estándar sin rainbow; sin parámetros ni retorno.
+void baseconf_refresca_pantalla_no_rainbow_standard_48k(void)
 {
+    int x,y,bit;
+    z80_int direccion,dir_atributo;
+    z80_byte byte_leido;
+    int color=0;
+    int fila;
+    //int zx,zy;
 
-	/*
-	//Como spectrum clasico
-
-	//modo clasico. sin rainbow
-	if (rainbow_enabled.v==0) {
-        screen_baseconf_refresca_border();
-        z80_byte modo_video=baseconf_get_video_mode_display();
+    z80_byte attribute,ink,paper,bright,flash,aux;
 
 
-        //printf ("modo video: %d\n",modo_video );
-        if (modo_video==0) scr_baseconf_refresca_pantalla_zxmode_no_rainbow();
-        if (modo_video==1) scr_baseconf_refresca_pantalla_16c_256c_no_rainbow(1);
-        if (modo_video==2) scr_baseconf_refresca_pantalla_16c_256c_no_rainbow(2);
-        if (modo_video==3) screen_baseconf_refresca_text_mode();
 
-	}
+    z80_byte *screen=get_base_mem_pantalla();
 
-	else {
-	//modo rainbow - real video
-        if (baseconf_si_render_spritetile_rapido.v) baseconf_fast_tilesprite_render();
+    //printf ("dpy=%x ventana=%x gc=%x image=%x\n",dpy,ventana,gc,image);
+    z80_byte x_hi;
 
-        screen_baseconf_refresca_rainbow();
-	}
-*/
+    for (y=0;y<192;y++) {
+
+        direccion=screen_addr_table[(y<<5)];
+
+
+        fila=y/8;
+        dir_atributo=6144+(fila*32);
+        for (x=0,x_hi=0;x<32;x++,x_hi +=8) {
+
+
+
+            byte_leido=screen[direccion];
+            attribute=screen[dir_atributo];
+
+
+
+            if (scr_refresca_sin_colores.v) {
+                attribute=56;
+
+
+            }
+
+            else {
+                if (scr_refresca_show_attribute_grid.v) {
+                    int cuad=(fila+x)%2;
+                    if (cuad) attribute=56+64;
+                    else attribute=56;
+                }
+            }
+
+
+            ink=attribute &7;
+            paper=(attribute>>3) &7;
+            bright=(attribute) &64;
+            flash=(attribute)&128;
+            if (flash) {
+                //intercambiar si conviene
+                if (estado_parpadeo.v) {
+                        aux=paper;
+                        paper=ink;
+                        ink=aux;
+                }
+            }
+
+            if (bright) {
+                ink +=8;
+                paper +=8;
+            }
+
+            for (bit=0;bit<8;bit++) {
+
+                color= ( byte_leido & 128 ? ink : paper );
+
+
+                baseconf_putpixel_scaled(x_hi+bit,y,
+                                         baseconf_get_palette_colour(color),
+                                         2,2,64,8);
+
+                byte_leido=byte_leido<<1;
+            }
+
+
+
+            direccion++;
+            dir_atributo++;
+        }
+
+    }
+
 }
 
 
 
 
 
+// Activa los mensajes de diagnóstico al elegir un modo de vídeo.
+static int debug_video_mode=0;
+
+//Refresco pantalla sin rainbow
+// Elige y dibuja el modo BaseConf sin rainbow; sin parámetros ni retorno.
+void baseconf_refresca_pantalla_no_rainbow(void)
+{
+
+
+    z80_byte baseconf_mode=baseconf_get_video_mode();
+    if (baseconf_mode==0x13) {
+        if (debug_video_mode) printf("BaseConf video mode 13H: ALCO 16 colour, pixels 256x192 -> 512x384, border L/R=104 T/B=96\n");
+        screen_baseconf_refresca_alco_mode();
+        return;
+    }
+    if (baseconf_mode==0) {
+        if (debug_video_mode) printf("BaseConf video mode 00H: ATM EGA, pixels 320x200 -> 640x400, border L/R=40 T/B=88\n");
+        screen_baseconf_refresca_ega_mode();
+        return;
+    }
+    if (baseconf_mode==0x23) {
+        if (debug_video_mode) printf("BaseConf video mode 23H: ZX hardware multicolor, pixels 256x192 -> 512x384, border L/R=104 T/B=96\n");
+        screen_baseconf_refresca_hw_multicolor_mode();
+        return;
+    }
+    if (baseconf_mode==2) {
+        if (debug_video_mode) printf("BaseConf video mode 02H: ATM hardware multicolor, pixels 640x200 -> 640x400, border L/R=40 T/B=88\n");
+        screen_baseconf_refresca_atm_multicolor_mode();
+        return;
+    }
+    if (baseconf_mode==6) {
+        if (debug_video_mode) printf("BaseConf video mode 06H: ATM text, pixels 640x200 -> 640x400, border L/R=40 T/B=88\n");
+        screen_baseconf_refresca_atm_text_mode();
+        return;
+    }
+    if (baseconf_mode==7) {
+        if (debug_video_mode) printf("BaseConf video mode 07H: EVO text, pixels 640x200 -> 640x400, border L/R=40 T/B=88\n");
+        screen_baseconf_refresca_text_mode();
+        return;
+    }
+    if (baseconf_mode==3) {
+        if (debug_video_mode) printf("BaseConf video mode 03H: standard ZX, pixels 256x192 -> 512x384, border L/R=104 T/B=96\n");
+    }
+    else {
+        if (debug_video_mode) printf("BaseConf video mode %02XH: unknown, using standard ZX renderer, pixels 256x192 -> 512x384, border L/R=104 T/B=96\n",
+                baseconf_mode);
+    }
+
+    baseconf_refresca_pantalla_no_rainbow_standard_48k();
+}
+
+
+// Descripción del modo ALCO de 256 por 192 píxeles.
+char *baseconf_videomode_string_13="ALCO 16 colour 256x192";
+// Descripción del modo ATM EGA de 320 por 200 píxeles.
+char *baseconf_videomode_string_0="ATM EGA 320x200";
+// Descripción del modo multicolor ZX de 256 por 192 píxeles.
+char *baseconf_videomode_string_23="ZX hardware multicolor 256x192";
+// Descripción del modo multicolor ATM de 640 por 200 píxeles.
+char *baseconf_videomode_string_2="ATM hardware multicolor 640x200";
+// Descripción del modo de texto ATM de 640 por 200 píxeles.
+char *baseconf_videomode_string_6="ATM text 640x200";
+// Descripción del modo de texto EVO de 640 por 200 píxeles.
+char *baseconf_videomode_string_7="EVO text 640x200";
+// Descripción del modo gráfico estándar ZX de 256 por 192 píxeles.
+char *baseconf_videomode_string_3="Standard ZX 256x192";
+// Búfer para describir un modo de vídeo no reconocido.
+char baseconf_videomode_string_unk[200]="";
+
+
+// Devuelve una descripción del modo de vídeo actual.
+char *baseconf_get_video_mode_string(void)
+{
+    z80_byte baseconf_mode=baseconf_get_video_mode();
+
+    switch (baseconf_mode) {
+        case 0x13:
+            return baseconf_videomode_string_13;
+        break;
+
+        case 0x00:
+            return baseconf_videomode_string_0;
+        break;
+
+        case 0x23:
+            return baseconf_videomode_string_23;
+        break;
+
+        case 0x02:
+            return baseconf_videomode_string_2;
+        break;
+
+        case 0x06:
+            return baseconf_videomode_string_6;
+        break;
+
+        case 0x07:
+            return baseconf_videomode_string_7;
+        break;
+
+        case 0x03:
+            return baseconf_videomode_string_3;
+        break;
+
+        default:
+            sprintf(baseconf_videomode_string_unk,"BaseConf video mode %02XH: unknown, using standard ZX renderer 256x192",baseconf_mode);
+            return baseconf_videomode_string_unk;
+        break;
+
+    }
+
+
+    //Por si acaso aunque no hace falta
+    return baseconf_videomode_string_unk;
+
+
+}
+
+// Refresca pantalla y borde usando rainbow o dibujo completo; sin parámetros ni retorno.
+void baseconf_refresca_pantalla(void)
+{
+    if (rainbow_enabled.v) {
+        scr_refresca_pantalla_rainbow_comun();
+    }
+    else {
+        baseconf_refresca_pantalla_no_rainbow();
+        if (modificado_border.v) {
+            screen_baseconf_refresca_border();
+            modificado_border.v=0;
+        }
+    }
+}

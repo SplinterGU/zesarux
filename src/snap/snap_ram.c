@@ -61,6 +61,9 @@ int snapshots_in_ram_first_element=0;
 //total de elementos en la lista
 int snapshots_in_ram_total_elements=0;
 
+//total de tamaño ocupado. Para estadisticas
+z80_64bit snapshots_in_ram_total_size=0;
+
 //indice del elemento a escribir. Se podria deducir mediante el primero y el total, pero asi es mas facil usarlo
 int snapshots_in_ram_index_to_write=0;
 
@@ -95,6 +98,80 @@ int snapshot_in_ram_rewind_cuantos_pasado=0;
 //char snapshot_in_ram_pending_message_footer_message[1000];
 
 z80_bit snapshot_in_ram_enabled={0};
+
+//Habilitar snapshots a cada inervalo de tiempo
+z80_bit snapshot_in_ram_timer_enabled={0};
+
+
+
+struct s_snaps_ram_cache snaps_ram_cache[SNAPS_RAM_CACHE_TOTAL];
+
+//contador de "tiempo" para saber en cada entrada de cache cual es mas antigua usada
+int snaps_ram_cache_cuando_acceso=0;
+
+void snaps_ram_cache_init(void)
+{
+    int i;
+    for (i=0;i<SNAPS_RAM_CACHE_TOTAL;i++) {
+        snaps_ram_cache[i].usado=0;
+    }
+}
+
+int snaps_ram_cache_search(int snapshot)
+{
+    int i;
+
+    for (i=0;i<SNAPS_RAM_CACHE_TOTAL;i++) {
+        if (snaps_ram_cache[i].usado && snaps_ram_cache[i].snapshot==snapshot) {
+            //printf("return snap cache preview %d at %d\n",snapshot,i);
+            snaps_ram_cache[i].ultimo_acceso=snaps_ram_cache_cuando_acceso++;
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+void snaps_ram_cache_add(int snapshot,int *buffer_intermedio,int alto)
+{
+    //buscar si hay uno libre
+    int i;
+    int libre=0;
+
+    for (i=0;i<SNAPS_RAM_CACHE_TOTAL;i++) {
+        if (snaps_ram_cache[i].usado==0) {
+            //printf("found free snap cache preview at pos %d\n",i);
+            libre=1;
+            break;
+        }
+    }
+
+    if (!libre) {
+        //buscar el mas antiguo y reemplazarlo
+        //asumimos el primero por ejemplo
+        int id_mas_antiguo=0;
+        unsigned int cuando_acceso=snaps_ram_cache[0].ultimo_acceso;
+
+        for (i=0;i<SNAPS_RAM_CACHE_TOTAL;i++) {
+            if (snaps_ram_cache[i].ultimo_acceso<cuando_acceso) {
+                id_mas_antiguo=i;
+                cuando_acceso=snaps_ram_cache[i].ultimo_acceso;
+            }
+        }
+        //printf("Freeing snap cache preview %d accessed %d\n",id_mas_antiguo,cuando_acceso);
+        free(snaps_ram_cache[id_mas_antiguo].memoria);
+        i=id_mas_antiguo;
+    }
+
+
+    //printf("Adding snap cache preview %d at pos %d\n",snapshot,i);
+    snaps_ram_cache[i].memoria=buffer_intermedio;
+    snaps_ram_cache[i].snapshot=snapshot;
+    snaps_ram_cache[i].ultimo_acceso=snaps_ram_cache_cuando_acceso++;
+    snaps_ram_cache[i].alto=alto;
+    snaps_ram_cache[i].usado=1;
+
+}
 
 
 //Crea un snapshot en ram y retorna puntero asociado a dicha memoria asignada
@@ -139,6 +216,8 @@ void snapshots_in_ram_reset(void)
     snapshots_in_ram_total_elements=0;
     snapshots_in_ram_index_to_write=0;
     snapshot_in_ram_rewind_initialized=0;
+
+    snaps_ram_cache_init();
 }
 
 //Meter un snapshot en elemento de la lista
@@ -152,6 +231,8 @@ void snapshot_to_ram_element(int indice)
 
     snapshots_in_ram[indice].memoria=puntero;
     snapshots_in_ram[indice].longitud=longitud;
+
+    snapshots_in_ram_total_size +=longitud;
 
     //fecha grabacion
     //agregar hora, minutos, segundos
@@ -180,20 +261,12 @@ int snapshot_increment_index(int indice)
 
 
 //Agregar snapshot en siguiente elemento de la lista
-void snapshot_add_in_ram(void)
+void snapshot_add_in_ram_save(void)
 {
-    if (snapshot_in_ram_enabled.v==0) return;
-
-    //Hacerlo 1 vez cada 50 frames
-    snapshot_in_ram_frames_counter++;
-
-    if ((snapshot_in_ram_frames_counter %50)!=0) return;
-
-    snapshot_in_ram_interval_seconds_counter++;
-
-    if (snapshot_in_ram_interval_seconds_counter<snapshot_in_ram_interval_seconds) return;
-
-    snapshot_in_ram_interval_seconds_counter=0;
+    if (snapshot_in_ram_enabled.v==0) {
+        debug_printf(VERBOSE_ERR,"Snapshots in RAM are not enabled. Go to menu Snapshot->Snapshots to RAM and enable it");
+        return;
+    }
 
     //Indice de donde escribir el snapshot
     int indice_a_escribir;
@@ -203,6 +276,8 @@ void snapshot_add_in_ram(void)
         z80_byte *memoria_liberar;
         memoria_liberar=snapshots_in_ram[snapshots_in_ram_first_element].memoria;
         debug_printf (VERBOSE_DEBUG,"Freeing oldest snapshot because the list is full");
+
+        snapshots_in_ram_total_size -=snapshots_in_ram[snapshots_in_ram_first_element].longitud;
         free(memoria_liberar);
 
         //Y el primero avanza
@@ -229,6 +304,27 @@ void snapshot_add_in_ram(void)
 
     snapshot_in_ram_rewind_cuantos_pasado++;
 
+}
+
+//Agregar snapshot en siguiente elemento de la lista, por timer
+void snapshot_add_in_ram(void)
+{
+    if (snapshot_in_ram_enabled.v==0) return;
+
+    if (snapshot_in_ram_timer_enabled.v==0) return;
+
+    //Hacerlo 1 vez cada 50 frames
+    snapshot_in_ram_frames_counter++;
+
+    if ((snapshot_in_ram_frames_counter %50)!=0) return;
+
+    snapshot_in_ram_interval_seconds_counter++;
+
+    if (snapshot_in_ram_interval_seconds_counter<snapshot_in_ram_interval_seconds) return;
+
+    snapshot_in_ram_interval_seconds_counter=0;
+
+    snapshot_add_in_ram_save();
 }
 
 //Retorna un indice a elemento snapshot dentro de la lista
@@ -284,10 +380,6 @@ int snapshot_in_ram_load(int posicion)
 
     load_zsf_snapshot_file_mem(NULL,puntero_memoria,longitud,0,0);
 
-                    //z80_byte *temp_puntero;
-                    //int temp_temp_longitud;
-                //    load_zsf_snapshot_file_mem(NULL,temp_puntero,temp_temp_longitud,0);
-                //}
 
     return 0;
 

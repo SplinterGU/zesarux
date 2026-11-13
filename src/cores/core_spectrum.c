@@ -58,6 +58,8 @@
 #include "pd765.h"
 #include "tsconf.h"
 #include "tbblue.h"
+#include "baseconf.h"
+#include "scorpion.h"
 
 #include "scrstdout.h"
 #include "settings.h"
@@ -74,6 +76,8 @@
 #include "plus3dos_handler.h"
 #include "zeng_online_client.h"
 #include "if1.h"
+#include "video_chips_common.h"
+#include "atmturbo.h"
 
 z80_byte byte_leido_core_spectrum;
 
@@ -96,25 +100,25 @@ int si_siguiente_sonido(void)
 {
 
 	if (MACHINE_IS_PRISM) {
-/*
-Si son 525 scanlines:
-525/5*3=315
+        /*
+        Si son 525 scanlines:
+        525/5*3=315
 
-0/1.6=0 mod 5=0
-1/1.6=0 mod 5=1
-2/1.6=1
-3/1.6=1
-4/1.6=2
+        0/1.6=0 mod 5=0
+        1/1.6=0 mod 5=1
+        2/1.6=1
+        3/1.6=1
+        4/1.6=2
 
-5/1.6=3
-6/1.6=3
-7/1,6=4
-8/1.6=4
-9/1.6=5
+        5/1.6=3
+        6/1.6=3
+        7/1,6=4
+        8/1.6=4
+        9/1.6=5
 
-10/1.6=6
-Hacer mod 5 y escoger 0,2,4 (de cada 5 coger 3)
-*/
+        10/1.6=6
+        Hacer mod 5 y escoger 0,2,4 (de cada 5 coger 3)
+        */
 		int resto=t_scanline%5;
 		if (resto==0 || resto==2 || resto==4) return 1;
 		else return 0;
@@ -140,29 +144,7 @@ void t_scanline_next_border(void)
 }
 */
 
-void t_scanline_next_fullborder(void)
-{
-    //resetear buffer border
 
-    int i;
-
-    //No si esta desactivado en tbblue
-    if (MACHINE_IS_TBBLUE && tbblue_store_scanlines_border.v==0) return;
-
-    //a 255
-    //for (i=0;i<CURRENT_FULLBORDER_ARRAY_LENGTH;i++) fullbuffer_border[i]=255;
-    //mas rapido con memset
-    memset(fullbuffer_border,255,CURRENT_FULLBORDER_ARRAY_LENGTH);
-
-	//Resetear buffer border para prism
-	if (MACHINE_IS_PRISM) {
-		for (i=0;i<CURRENT_PRISM_BORDER_BUFFER;i++) prism_ula2_border_colour_buffer[i]=65535;
-	}
-
-	//printf ("max buffer border : %d\n",i);
-
-
-}
 
 
 void interrupcion_si_despues_lda_ir(void)
@@ -187,8 +169,29 @@ void interrupcion_si_despues_lda_ir(void)
 
 
 
+//Linea (t_scanline_draw) a la que corresponde el valor actual de last_x_atributo.
+//Permite distinguir un cambio de linea real de dos syncs consecutivos en la misma celda
+static int rainbow_ultima_linea_almacenada=-1;
+
+//Celdas pre-latcheadas del principio de la linea SIGUIENTE.
+//Cuando un poke a pantalla aterriza justo despues de cruzar el final de linea (t_estados ya en la
+//linea siguiente pero t_scanline_draw aun sin avanzar), no podemos escribir en scanline_buffer
+//porque aun contiene la linea anterior pendiente de renderizar. Guardamos aqui los pares
+//(pixel,atributo) de las primeras celdas con la memoria PREVIA a la escritura, y se vuelcan
+//al buffer cuando se detecta el cambio de linea
+#define RAINBOW_PENDING_MAX 16
+static z80_byte rainbow_pending_prefix[RAINBOW_PENDING_MAX*2];
+static int rainbow_pending_count=0;
+static int rainbow_pending_linea=-1;
+
 void core_spectrum_store_rainbow_current_atributes(void)
 {
+
+	//Offset en T-estados del prefetch de la ULA respecto al modelo t%linea==0 -> celda 0.
+	//En el modelo de zesarux el instante 0 de cada linea ya corresponde al inicio del fetch
+	//de la ULA (la contencion 128k empieza en 14361 y el paper en 14364 = linea 63*228),
+	//por lo que no debe aplicarse offset adicional (se probo con 8 y no mejoraba)
+#define ULA_PREFETCH_OFFSET_TSTATES 0
 
 	//No hacer esto en tbblue
 	if (MACHINE_IS_TBBLUE && tbblue_store_scanlines.v==0) return;
@@ -201,16 +204,16 @@ void core_spectrum_store_rainbow_current_atributes(void)
 
 
 	//Si no vamos a refrescar pantalla (framedrop), no tiene sentido almacenar nada en el buffer
-/*
-Sin saltar frame aqui, tenemos por ejemplo
-./zesarux --realvideo --frameskip 4  --vo null --exit-after 10
-15 % cpu
-tiempo de proceso en 10 segundos: user	0m1.498s
+    /*
+    Sin saltar frame aqui, tenemos por ejemplo
+    ./zesarux --realvideo --frameskip 4  --vo null --exit-after 10
+    15 % cpu
+    tiempo de proceso en 10 segundos: user	0m1.498s
 
-Saltando frame aqui,
-12% cpu
-tiempo de proceso en 10 segundos: user	0m1.239s
-*/
+    Saltando frame aqui,
+    12% cpu
+    tiempo de proceso en 10 segundos: user	0m1.239s
+    */
     if (next_frame_skip_render_scanlines) {
         //if ((t_estados/screen_testados_linea)>310) printf ("-Not storing rainbow buffer as framescreen_saltar is %d or manual frameskip\n",framescreen_saltar);
         //if ((temp_xx_veces % 50)==0 && ((t_estados % screen_testados_linea)>1640)) printf("Skipping core_spectrum_store_rainbow_current_atributes due to framedrop. scanline %d\n",t_scanline_draw);
@@ -228,7 +231,15 @@ tiempo de proceso en 10 segundos: user	0m1.239s
     //como esto es muy costoso, hacemos que se guardan los atributos leidos desde el opcode anterior hasta este
     if (rainbow_enabled.v) {
         if (t_scanline_draw>=screen_indice_inicio_pant && t_scanline_draw<screen_indice_fin_pant) {
-            int atributo_pos=(t_estados % screen_testados_linea)/4;
+            //Sumamos el offset de prefetch de la ULA: latch de cada celda unos T-estados antes de mostrarse
+            int tiempo_ula=t_estados;
+            if (MACHINE_IS_MICRODIGITAL_TK90X_TK95_ULA_MICRODIGITAL) {
+                // La pantalla Microdigital empieza 95 T despues del inicio de la linea 64 (50 Hz) o 38 (60 Hz).
+                tiempo_ula-=95*cpu_turbo_speed;
+            }
+            int atributo_pos=((tiempo_ula % screen_testados_linea)+ULA_PREFETCH_OFFSET_TSTATES)/4;
+            //Proteccion contra desbordamiento del buffer cerca del final de linea (zona border)
+            if (atributo_pos>=SCANLINEBUFFER_ONE_ARRAY_LENGTH/2) atributo_pos=SCANLINEBUFFER_ONE_ARRAY_LENGTH/2-1;
             z80_byte *screen_atributo=get_base_mem_pantalla_attributes();
             z80_byte *screen_pixel=get_base_mem_pantalla();
 
@@ -248,33 +259,95 @@ tiempo de proceso en 10 segundos: user	0m1.239s
 
             int dir_pixel=screen_addr_table[(t_scanline_draw-screen_indice_inicio_pant)*32];
 
-            //si hay cambio de linea, empezamos con el 0
-            //puede parecer que al cambiar de linea nos perdemos el ultimo atributo de pantalla hasta el primero de la linea
-            //siguiente, pero eso es imposible, dado que eso sucede desde el ciclo 128 hasta el 228 (zona de borde)
-            // y no hay ningun opcode que tarde 100 ciclos
-            if (last_x_atributo>atributo_pos) last_x_atributo=0;
+            //Cambio de linea: reiniciamos el puntero de celda SOLO cuando t_scanline_draw avanza.
+            //Antes se reiniciaba cuando last_x_atributo>atributo_pos, pero desde que el buffer se
+            //sincroniza en cada escritura a pantalla (poke_byte_spectrum_sync_rainbow) pueden llegar
+            //dos syncs dentro de la misma celda de 4 T-estados (ej: los dos bytes de un PUSH).
+            //El reset erroneo a 0 releia toda la linea desde la celda 0 con la memoria ya modificada,
+            //aplicando retroactivamente los atributos nuevos a celdas que la ULA ya habia leido
+            //(columnas de atributos incorrectos en efectos multicolor tipo Nirvana)
+            if (t_scanline_draw!=rainbow_ultima_linea_almacenada) {
+                rainbow_ultima_linea_almacenada=t_scanline_draw;
+                last_x_atributo=0;
+
+                //Si hay celdas pre-latcheadas de esta linea (poke tras cruzar el final de la anterior),
+                //volcarlas al buffer: contienen los valores previos a esa escritura
+                if (rainbow_pending_count>0) {
+                    if (rainbow_pending_linea==t_scanline_draw) {
+                        memcpy(scanline_buffer,rainbow_pending_prefix,rainbow_pending_count*2);
+                        last_x_atributo=rainbow_pending_count;
+                    }
+                    rainbow_pending_count=0;
+                }
+            }
+
+            //Si ya hemos almacenado hasta atributo_pos en esta linea, no hay nada que hacer.
+            //Sucede con un segundo sync dentro de la misma celda de 4 T-estados, o con un poke
+            //justo despues de cruzar el final de linea (t_estados ya esta en la linea siguiente
+            //pero t_scanline_draw aun no ha avanzado): en ese caso NO hay que tocar el buffer,
+            //que aun contiene la linea anterior pendiente de renderizar
+            if (last_x_atributo<=atributo_pos) {
+
                 dir_atributo += last_x_atributo;
                 dir_pixel +=last_x_atributo;
 
-            //Puntero al buffer de atributos
-            z80_byte *puntero_buffer;
-            puntero_buffer=&scanline_buffer[last_x_atributo*2];
+                //Puntero al buffer de atributos
+                z80_byte *puntero_buffer;
+                puntero_buffer=&scanline_buffer[last_x_atributo*2];
 
-            for (;last_x_atributo<=atributo_pos;last_x_atributo++) {
-                //printf ("last_x_atributo: %d atributo_pos: %d\n",last_x_atributo,atributo_pos);
-                last_ula_pixel=screen_pixel[dir_pixel];
-                last_ula_attribute=screen_atributo[dir_atributo];
+                for (;last_x_atributo<=atributo_pos;last_x_atributo++) {
+                    //printf ("last_x_atributo: %d atributo_pos: %d\n",last_x_atributo,atributo_pos);
+                    last_ula_pixel=screen_pixel[dir_pixel];
+                    last_ula_attribute=screen_atributo[dir_atributo];
 
-                //realmente en este array guardamos tambien atributo cuando estamos en la zona de border,
-                //nos da igual, lo hacemos por no complicarlo
-                //debemos tambien suponer que atributo_pos nunca sera mayor o igual que ATRIBUTOS_ARRAY_LENGTH
-                //esto debe ser asi dado que atributo_pos=(t_estados % screen_testados_linea)/4;
+                    //realmente en este array guardamos tambien atributo cuando estamos en la zona de border,
+                    //nos da igual, lo hacemos por no complicarlo
+                    //debemos tambien suponer que atributo_pos nunca sera mayor o igual que ATRIBUTOS_ARRAY_LENGTH
+                    //esto debe ser asi dado que atributo_pos=(t_estados % screen_testados_linea)/4;
 
-                *puntero_buffer++=last_ula_pixel;
-                *puntero_buffer++=last_ula_attribute;
-                dir_atributo++;
-                dir_pixel++;
+                    *puntero_buffer++=last_ula_pixel;
+                    *puntero_buffer++=last_ula_attribute;
+                    dir_atributo++;
+                    dir_pixel++;
+                }
             }
+
+            //Poke tras cruzar el final de linea: t_estados ya esta en la linea siguiente pero
+            //t_scanline_draw aun no ha avanzado (fin_scanline se ejecuta al acabar el opcode).
+            //No podemos tocar scanline_buffer (linea anterior pendiente de renderizar), pero si
+            //debemos capturar las primeras celdas de la linea siguiente ANTES de la escritura,
+            //porque la ULA ya las habria leido. Se vuelcan al detectar el cambio de linea
+            else if ((int)(tiempo_ula/screen_testados_linea)>t_scanline) {
+                int linea_sig=t_scanline_draw+1;
+                if (linea_sig>=screen_indice_inicio_pant && linea_sig<screen_indice_fin_pant) {
+
+                    int dir_atributo_sig;
+                    if (timex_si_modo_8x1()) {
+                        dir_atributo_sig=screen_addr_table[(linea_sig-screen_indice_inicio_pant)*32];
+                    }
+                    else {
+                        dir_atributo_sig=(linea_sig-screen_indice_inicio_pant)/8;
+                        dir_atributo_sig *=32;
+                    }
+
+                    int dir_pixel_sig=screen_addr_table[(linea_sig-screen_indice_inicio_pant)*32];
+
+                    //Si el pending era de otra linea (stale por frameskip), descartarlo
+                    if (rainbow_pending_linea!=linea_sig) {
+                        rainbow_pending_count=0;
+                        rainbow_pending_linea=linea_sig;
+                    }
+
+                    int i;
+                    for (i=rainbow_pending_count;i<=atributo_pos && i<RAINBOW_PENDING_MAX;i++) {
+                        rainbow_pending_prefix[i*2]=screen_pixel[dir_pixel_sig+i];
+                        rainbow_pending_prefix[i*2+1]=screen_atributo[dir_atributo_sig+i];
+                    }
+                    if (i>rainbow_pending_count) rainbow_pending_count=i;
+                }
+            }
+
+            //else: segundo sync dentro de la misma celda de 4 T-estados: nada que hacer
 
             //Siguiente posicion se queda en last_x_atributo
 
@@ -329,7 +402,11 @@ void core_spectrum_fin_frame_pantalla(void)
 
     int linea_estados=t_estados/screen_testados_linea;
 
-    while (linea_estados<312) {
+    int total_lineas=312;
+
+    if (machine_60hz.v) total_lineas=262;
+
+    while (linea_estados<total_lineas) {
         audio_send_stereo_sample(audio_valor_enviar_sonido_izquierdo,audio_valor_enviar_sonido_derecho);
         //audio_send_mono_sample(audio_valor_enviar_sonido_izquierdo);
                             linea_estados++;
@@ -341,6 +418,10 @@ void core_spectrum_fin_frame_pantalla(void)
 
 
     t_estados -=screen_testados_total;
+
+    if (MACHINE_IS_BASECONF) baseconf_update_timing(0);
+    if (MACHINE_IS_BASECONF) baseconf_check_pending_nmi();
+    if (MACHINE_IS_TSCONF) baseconf_ps2_scan_keyboard();
 
     //Para paperboy, thelosttapesofalbion0 y otros que hacen letras en el border, para que no se desplacen en diagonal
     //t_estados=0;
@@ -375,6 +456,10 @@ void core_spectrum_fin_frame_pantalla(void)
             }
         }
 
+        /* ATM2+ permite bloquear la INT de cuadro mediante D5 de #77. */
+        if (MACHINE_IS_ATM_TURBO2PLUS_TURBO3 && !atmturbo2plus_interrupts_enabled())
+            interrupcion_maskable_generada.v=0;
+
         //TSConf lo gestiona mediante interrupciones de frame
         if (MACHINE_IS_TSCONF) interrupcion_maskable_generada.v=0;
 
@@ -389,7 +474,9 @@ void core_spectrum_fin_frame_pantalla(void)
         //en el Spectrum la INT comienza en el scanline 248, 0T
         //Pero en Pentagon la interrupción debe dispararse en el scanline 239 (contando desde 0), y 320 pixel clocks (o 160 T estados) tras comenzar dicho scanline
         //La generamos en pentagon desde otro sitio del bucle
-        if (MACHINE_IS_PENTAGON) interrupcion_maskable_generada.v=0;
+        if (MACHINE_IS_PENTAGON ||
+            (MACHINE_IS_SCORPION_GMX && scorpion_gmx_uses_pentagon_timing()))
+            interrupcion_maskable_generada.v=0;
 
 
     }
@@ -409,11 +496,11 @@ void core_spectrum_fin_frame_pantalla(void)
     if (debug_registers) scr_debug_registers();
 
     contador_parpadeo--;
-        //printf ("Parpadeo: %d estado: %d\n",contador_parpadeo,estado_parpadeo.v);
-        if (!contador_parpadeo) {
-                contador_parpadeo=16;
-                toggle_flash_state();
-        }
+    //printf ("Parpadeo: %d estado: %d\n",contador_parpadeo,estado_parpadeo.v);
+    if (!contador_parpadeo) {
+            contador_parpadeo=16;
+            toggle_flash_state();
+    }
 
 
     if (!interrupcion_timer_generada.v) {
@@ -435,6 +522,9 @@ void core_spectrum_fin_frame_pantalla(void)
     //snapshot en ram
     snapshot_add_in_ram();
 
+    if (MACHINE_IS_TSCONF || MACHINE_IS_TBBLUE) {
+        video_chips_common_init_used_sprites_in_frame();
+    }
 
 }
 
@@ -452,6 +542,10 @@ void core_spectrum_fin_scanline(void)
         audio_valor_enviar_sonido_izquierdo +=da_output_ay_izquierdo();
         audio_valor_enviar_sonido_derecho +=da_output_ay_derecho();
 
+        if (audio_nagra_effect.v) {
+            //Nota para beeper se gestiona independiente porque el silencio en beeper no es 0 y al multiplicar por el coseno, generaria un pitido en silencio
+            audio_apply_nagra_effect();
+        }
 
         if (beeper_enabled.v) {
             if (beeper_real_enabled==0) {
@@ -515,6 +609,11 @@ void core_spectrum_fin_scanline(void)
                     audio_valor_enviar_sonido_derecho=audio_change_top_speed_sound(audio_valor_enviar_sonido_derecho);
                 }
             }
+        }
+
+        if (audio_nagra_effect.v) {
+            //Siguiente ciclo nagra
+            audio_apply_nagra_effect_next();
         }
 
         //Ajustar volumen
@@ -638,6 +737,10 @@ void core_spectrum_fin_scanline(void)
 
 void core_spectrum_handle_interrupts(void)
 {
+    // La espera de MAGIC no debe sacar a la CPU de HALT ni alterar las flags.
+    if (MACHINE_IS_SCORPION && interrupcion_non_maskable_generada.v &&
+        !scorpion_nmi_ram_fetch_seen() && !interrupcion_maskable_generada.v) return;
+
     debug_fired_interrupt=1;
 
     z80_adjust_flags_interrupt_block_opcode();
@@ -653,7 +756,9 @@ void core_spectrum_handle_interrupts(void)
 
 
 
-    if (interrupcion_non_maskable_generada.v) {
+    // En Scorpion, MAGIC queda pendiente hasta el siguiente M1 desde RAM.
+    if (interrupcion_non_maskable_generada.v &&
+        (!MACHINE_IS_SCORPION || scorpion_nmi_ram_fetch_seen())) {
         debug_anota_retorno_step_nmi();
         //printf ("generada nmi\n");
         interrupcion_non_maskable_generada.v=0;
@@ -668,6 +773,7 @@ void core_spectrum_handle_interrupts(void)
         }
 
         else {
+            if (MACHINE_IS_BASECONF) baseconf_handle_nmi();
             push_valor(reg_pc,PUSH_VALUE_TYPE_NON_MASKABLE_INTERRUPT);
         }
 
@@ -677,7 +783,7 @@ void core_spectrum_handle_interrupts(void)
         iff1.v=0;
         //printf ("Calling NMI with pc=0x%x\n",reg_pc);
 
-        //Otros 6 estados
+        //Otros 6 estados. Ajuste de T-estados. TODO: no sé si es correcto
         t_estados += 6;
 
         //Total NMI: NMI WAIT 14 estados + NMI CALL 12 estados
@@ -685,8 +791,8 @@ void core_spectrum_handle_interrupts(void)
 
         //printf ("generada nmi pc=%04XH\n",reg_pc);
 
-        //temp
 
+        //Ajuste de T-estados. TODO: no sé si es correcto
         t_estados -=15;
 
         if (superupgrade_enabled.v) {
@@ -697,21 +803,26 @@ void core_spectrum_handle_interrupts(void)
             superupgrade_set_memory_pages();
         }
 
+        /*
+
+        Esto no tiene sentido, es codigo historico incorrecto
+
+
 
         //Al recibir nmi tiene que poner paginacion normal. Luego ya saltara por autotrap de diviface
         if (diviface_enabled.v) {
             //Chapuza para el atic atac versión con sonido. Si ha saltado por nmi generada por registro 2, no cambiar mapeo actual
             //Esto sucede porque asumimos que todos los divmmc mapean en post, pero divmmc nmi desde tbblue puede mapear en pre
             //Si el bit 1 del registro BB esta activo
-            /*
-                0x02 (02) => Reset
-                bit 2 = Generate divmmc nmi (write zero to clear) **
 
-                0xBB (187) => Divmmc Entry Points 1
-                (R/W) (soft reset = 0xCD)
+            //    0x02 (02) => Reset
+            //    bit 2 = Generate divmmc nmi (write zero to clear) **
 
-                bit 1 = 1 to enable automap on address 0x0066 (instruction fetch + button, instant)
-            */
+            //    0xBB (187) => Divmmc Entry Points 1
+            //    (R/W) (soft reset = 0xCD)
+
+            //   bit 1 = 1 to enable automap on address 0x0066 (instruction fetch + button, instant)
+
             if (MACHINE_IS_TBBLUE && (tbblue_registers[2]&4)) {
             //if (MACHINE_IS_TBBLUE && (tbblue_registers[0xBB]&2)) {
             }
@@ -724,6 +835,10 @@ void core_spectrum_handle_interrupts(void)
 
             }
         }
+
+        */
+
+
 
         generate_nmi_prepare_fetch();
 
@@ -758,7 +873,8 @@ void core_spectrum_handle_interrupts(void)
     //justo despues de EI no debe generar interrupcion (incluso aunque antes del EI ya estuvieran habilitadas las interrupciones)
     //tampoco se puede generar en medio de un refetch de prefijo DD o FD
     //e interrupcion nmi tiene prioridad
-    if (interrupcion_maskable_generada.v && byte_leido_core_spectrum!=251 && !core_refetch) {
+    if (interrupcion_maskable_generada.v && byte_leido_core_spectrum!=251 && !core_refetch &&
+        !(MACHINE_IS_TSCONF && tsconf_vdos_interrupt_blocked())) {
 
         //printf ("Lanzada interrupcion spectrum normal\n");
 
@@ -838,7 +954,9 @@ void core_spectrum_handle_interrupts_pentagon(void)
             //Pero en Pentagon la interrupción debe dispararse en el scanline 239 (contando desde 0), y 320 pixel clocks (o 160 T estados) tras comenzar dicho scanline
             //A los 160 estados
             int t_est_linea=t_estados % screen_testados_linea;
-            if (t_est_linea>=pentagon_inicio_interrupt) {
+            int inicio_int=pentagon_inicio_interrupt;
+            if (MACHINE_IS_SCORPION_GMX) inicio_int*=cpu_turbo_speed;
+            if (t_est_linea>=inicio_int) {
                 //printf ("Int Pentagon\n");
                 //printf ("scanline %d t_estados %d\n",t_estados/screen_testados_linea,t_estados);
 
@@ -885,8 +1003,8 @@ void core_spectrum_ciclo_fetch(void)
 
 #ifdef DEBUG_SECOND_TRAP_STDOUT
 
-        //Para poder debugar rutina que imprima texto. Util para aventuras conversacionales
-        //hay que definir este DEBUG_SECOND_TRAP_STDOUT manualmente en compileoptions.h despues de ejecutar el configure
+    //Para poder debugar rutina que imprima texto. Util para aventuras conversacionales
+    //hay que definir este DEBUG_SECOND_TRAP_STDOUT manualmente en compileoptions.h despues de ejecutar el configure
 
 	scr_stdout_debug_print_char_routine();
 
@@ -935,7 +1053,7 @@ void core_spectrum_ciclo_fetch(void)
     //Si la cpu está detenida por señal HALT o WAIT, o estamos en modo zeng online slave y con modo streaming, reemplazar opcode por NOP
     // Nota: durante un breve intervalo de tiempo al crear una room (con streaming activo) y unirse como master, se cumple que esta conectado,
     //master=0 y streaming=1 por tanto la emulacion genera nops durante unos instantes
-    if (z80_halt_signal.v || z80_wait_signal.v || (zeng_online_connected.v && zeng_online_i_am_master.v==0 && created_room_streaming_mode) ) {
+    if (z80_halt_signal.v || z80_wait_signal.v || paused_cpu_emulation.v || (zeng_online_connected.v && zeng_online_i_am_master.v==0 && created_room_streaming_mode) ) {
         byte_leido_core_spectrum=0;
     }
     else {
@@ -972,6 +1090,7 @@ void core_spectrum_ciclo_fetch(void)
 #endif
 
     int delta_t_estados=t_estados-t_estados_antes_opcode;
+    if (MACHINE_IS_TSCONF) tsconf_dma_advance(delta_t_estados*4/cpu_turbo_speed);
 
     //if (!core_refetch) duracion_ultimo_opcode=delta_t_estados;
     //else duracion_ultimo_opcode +=delta_t_estados;
@@ -1057,25 +1176,7 @@ void cpu_core_loop_spectrum(void)
 
 
     if (tap_load_detect()) {
-        //si estamos en pausa, no hacer nada
-        if (!tape_pause) {
-            audio_playing.v=0;
-
-            draw_tape_text();
-
-            tap_load();
-            all_interlace_scr_refresca_pantalla();
-
-            //audio_playing.v=1;
-            timer_reset();
-        }
-
-        else {
-            core_spectrum_store_rainbow_current_atributes();
-            //generamos nada. como si fuera un NOP
-            contend_read( reg_pc, 4 );
-
-        }
+        tape_trap_load_spectrum();
     }
 
     else if (tap_save_detect()) {
@@ -1092,6 +1193,7 @@ void cpu_core_loop_spectrum(void)
     else {
         if (esperando_tiempo_final_t_estados.v==0) {
             TIMESENSOR_ENTRY_PRE(TIMESENSOR_ID_core_spectrum_ciclo_fetch);
+            if (MACHINE_IS_TSCONF) tsconf_update_dos_signal(reg_pc);
             //printf("antes ciclo fetch PC=%XH\n",reg_pc);
             core_spectrum_ciclo_fetch();
             //printf("despues ciclo fetch PC=%XH\n",reg_pc);
@@ -1107,7 +1209,8 @@ void cpu_core_loop_spectrum(void)
 
 
     //En pentagon, disparar interrupcion antes del final de frame
-    if (MACHINE_IS_PENTAGON) {
+    if (MACHINE_IS_PENTAGON ||
+        (MACHINE_IS_SCORPION_GMX && scorpion_gmx_uses_pentagon_timing())) {
         core_spectrum_handle_interrupts_pentagon();
     }
 
@@ -1136,7 +1239,13 @@ void cpu_core_loop_spectrum(void)
 
 
     //A final de cada scanline
-    if ( (t_estados/screen_testados_linea)>t_scanline  ) {
+    int tiempo_ula=t_estados;
+    if (MACHINE_IS_MICRODIGITAL_TK90X_TK95_ULA_MICRODIGITAL) {
+        // La pantalla Microdigital empieza 95 T despues del inicio de la linea 64 (50 Hz) o 38 (60 Hz).
+        tiempo_ula-=95*cpu_turbo_speed;
+    }
+
+    if ( (tiempo_ula/screen_testados_linea)>t_scanline || t_estados>=screen_testados_total ) {
         TIMESENSOR_ENTRY_PRE(TIMESENSOR_ID_core_spectrum_fin_scanline);
         core_spectrum_fin_scanline();
         TIMESENSOR_ENTRY_POST(TIMESENSOR_ID_core_spectrum_fin_scanline);

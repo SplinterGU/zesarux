@@ -44,6 +44,7 @@
 #include "hilow_datadrive.h"
 #include "pd765.h"
 #include "superupgrade.h"
+#include "joystick.h"
 
 /*
 
@@ -190,6 +191,21 @@ token_parser_textos_indices tpti_variables[]={
     {TPI_V_ROM,"ROM"},
 
     {TPI_V_PD765_PCN,"PD765PCN"},
+
+    {TPI_V_TSTATES,"TSTATES"},
+
+    {TPI_V_VARIABLE0,"VAR0"},
+    {TPI_V_VARIABLE1,"VAR1"},
+    {TPI_V_VARIABLE2,"VAR2"},
+    {TPI_V_VARIABLE3,"VAR3"},
+    {TPI_V_VARIABLE4,"VAR4"},
+    {TPI_V_VARIABLE5,"VAR5"},
+    {TPI_V_VARIABLE6,"VAR6"},
+    {TPI_V_VARIABLE7,"VAR7"},
+    {TPI_V_VARIABLE8,"VAR8"},
+    {TPI_V_VARIABLE9,"VAR9"},
+
+    {TPI_V_MOUSE_LEFT,"MOUSELEFT"},
 
 
     {TPI_FIN,""}
@@ -364,10 +380,12 @@ int exp_par_is_number(char *texto,int *final)
     /*
     Expresiones admitidas:
     numero decimal: 0123456789
-    numero hexadecimal: 0123456789ABCDEFH
+    numero hexadecimal: 0123456789ABCDEFH ,  0xAAA, $AAA
     numero binario: 01%
     numero ascii "A" o 'a'
      */
+
+    //printf("Inicio exp_par_is_number. texto=[%s]\n",texto);
 
     //Primero probar ascii
     if (texto[0]=='"' || texto[0]=='\'') {
@@ -382,29 +400,55 @@ int exp_par_is_number(char *texto,int *final)
 
     //Tendra que empezar con numero o hexa, si no, error
     int esletra=0;
-    if (!exp_par_is_hexadigit(texto[0],&esletra)) {
-        //printf ("numero no empieza con hexadigito\n");
-        return -1;
+
+    int es_prefijo_hexa=0;
+
+
+
+    //Si empieza por 0x o $, es hexadecimal tambien
+    if (texto[0]=='$') es_prefijo_hexa=1;
+    else if (texto[0]=='0') {
+        if (texto[1]=='x' || texto[1]=='X') es_prefijo_hexa=2;
+    }
+
+    if (!es_prefijo_hexa) {
+
+
+        if (!exp_par_is_hexadigit(texto[0],&esletra)) {
+            //printf ("numero no empieza con hexadigito\n");
+            return -1;
+        }
+
     }
 
     //Parseamos hasta encontrar sufijo, si lo hay
-    int i;
-    for (i=0;texto[i];i++) {
+
+
+    int i=es_prefijo_hexa;
+    int hay_digito_hexa=0;
+
+    for (;texto[i];i++) {
         if (letra_minuscula(texto[i])=='h' || texto[i]=='%') {
+            if (es_prefijo_hexa && !hay_digito_hexa) return -1;
             *final=i+1;
             return 1;
         }
         if (!exp_par_is_hexadigit(texto[i],&esletra)) break;
+        hay_digito_hexa=1;
 
     }
 
     //final pero sin letra de sufijo
 
     //esletra?
-    if (esletra) {
-        //printf ("Habia letra hexa pero sin sufijo hexa. no es numero\n");
+    if (es_prefijo_hexa && !hay_digito_hexa) return -1;
+
+    if (esletra && !es_prefijo_hexa) {
+        //printf ("Habia letra hexa pero sin sufijo o prefijo hexa. no es numero. i=%d texto[i]=%d\n",i,texto[i]);
         return 0;
     }
+
+    //printf("Final exp_par_is_number i=%d texto[i]=%d\n",i,texto[i]);
 
     *final=i;
     return 1;
@@ -417,7 +461,7 @@ int exp_par_is_token_parser_textos_indices(char *texto,token_parser_textos_indic
 {
     //printf ("llamando a exp_par_is_token_parser_textos_indices con texto [%s]\n",texto);
 
-    int i=0;
+    //int i=0;
 
     while (textos_indices->indice!=TPI_FIN) {
         //printf ("i %d\n",i);
@@ -425,7 +469,7 @@ int exp_par_is_token_parser_textos_indices(char *texto,token_parser_textos_indic
             //printf ("es texto %s indice %d\n",textos_indices->texto,textos_indices->indice);
             return textos_indices->indice;
         }
-        i++;
+        //i++;
         textos_indices++;
     }
 
@@ -1171,6 +1215,21 @@ int exp_par_calculate_numvarreg(token_parser *token)
                 case TPI_V_SCANLINE: return t_scanline_draw; break;
 
 
+                case TPI_V_VARIABLE0: return debug_user_variables[0]; break;
+                case TPI_V_VARIABLE1: return debug_user_variables[1]; break;
+                case TPI_V_VARIABLE2: return debug_user_variables[2]; break;
+                case TPI_V_VARIABLE3: return debug_user_variables[3]; break;
+                case TPI_V_VARIABLE4: return debug_user_variables[4]; break;
+                case TPI_V_VARIABLE5: return debug_user_variables[5]; break;
+                case TPI_V_VARIABLE6: return debug_user_variables[6]; break;
+                case TPI_V_VARIABLE7: return debug_user_variables[7]; break;
+                case TPI_V_VARIABLE8: return debug_user_variables[8]; break;
+                case TPI_V_VARIABLE9: return debug_user_variables[9]; break;
+
+                case TPI_V_MOUSE_LEFT:
+                    if (zxvision_key_not_sent_emulated_mach()) return 0;
+                    else return mouse_left;
+                break;
 
                 //interrupciones
                 case TPI_V_IFF1: return iff1.v; break;

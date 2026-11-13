@@ -21,10 +21,12 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <dirent.h>
 
 
 #include "ide.h"
+#include "scorpion.h"
 #include "cpu.h"
 #include "debug.h"
 #include "utils.h"
@@ -60,6 +62,11 @@ z80_byte ide_register_cylinder_high;
 z80_byte ide_register_drive_head;
 z80_byte ide_register_command;
 
+/* Número de sectores que quedan por transferir en una lectura múltiple ATM. */
+static int ide_atm_read_sectors_remaining=0;
+/* Desplazamiento en bytes del siguiente sector que se cargará en el búfer. */
+static unsigned int ide_atm_read_next_address=0;
+
 #define IDE_SECTOR_SIZE 512
 
 
@@ -85,6 +92,8 @@ Ver apartado 2.6 Capacity Specifications
 z80_long_int ide_disk_sectors_card=62720;
 int ide_disk_heads=4;
 int ide_disk_sectors_track=32;
+/* Cero conserva la geometría automática; otro valor fija los sectores por pista. */
+static int ide_disk_sectors_track_override=0;
 int ide_disk_cylinders=490;
 
 z80_byte *ide_memory_pointer;
@@ -98,6 +107,9 @@ int ide_card_selected=0;
 
 //64 MB
 long long int ide_size=64*1024*1024;
+
+//Para que pueda leer tamaño inferior a lo esperado (los multiples de MB...)
+long long int expected_read_ide_size=64*1024*1024;
 
 
 int ide_write_sector_operation=0;
@@ -154,85 +166,84 @@ void ide_flush_flash_to_disk(void)
 
 	if (ide_enabled.v==0) return;
 
-        if (ide_flash_must_flush_to_disk==0) {
-                debug_printf (VERBOSE_DEBUG,"Trying to flush IDE to disk but no changes made");
-                return;
-        }
+    if (ide_flash_must_flush_to_disk==0) {
+        debug_printf (VERBOSE_DEBUG,"Trying to flush IDE to disk but no changes made");
+        return;
+    }
 
-        if (ide_persistent_writes.v==0) {
-                debug_printf (VERBOSE_DEBUG,"Trying to flush IDE to disk but persistent writes disabled");
-                return;
-        }
-
-
-        debug_printf (VERBOSE_INFO,"Flushing IDE to disk");
+    if (ide_persistent_writes.v==0) {
+        debug_printf (VERBOSE_DEBUG,"Trying to flush IDE to disk but persistent writes disabled");
+        return;
+    }
 
 
-        FILE *ptr_idefile;
+    debug_printf (VERBOSE_INFO,"Flushing IDE to disk");
+
+
+    FILE *ptr_idefile;
 
 	debug_printf (VERBOSE_INFO,"Opening IDE File %s",ide_file_name);
 	ptr_idefile=fopen(ide_file_name,"wb");
 
 
 
-        int escritos=0;
-        long long int size;
-        size=ide_size;
+    int escritos=0;
+    long long int size;
+    size=ide_size;
 
 
-        if (ptr_idefile!=NULL) {
-                z80_byte *puntero;
-                puntero=ide_memory_pointer;
+    if (ptr_idefile!=NULL) {
+        z80_byte *puntero;
+        puntero=ide_memory_pointer;
 
-		//Justo antes del fwrite se pone flush a 0, porque si mientras esta el fwrite entra alguna operacion de escritura,
-		//metera flush a 1
-		ide_flash_must_flush_to_disk=0;
+        //Justo antes del fwrite se pone flush a 0, porque si mientras esta el fwrite entra alguna operacion de escritura,
+        //metera flush a 1
+        ide_flash_must_flush_to_disk=0;
 
-                escritos=fwrite(puntero,1,size,ptr_idefile);
+        escritos=fwrite(puntero,1,size,ptr_idefile);
 
-                fclose(ptr_idefile);
+        fclose(ptr_idefile);
 
+    }
 
-        }
+    //printf ("ptr_idefile: %d\n",ptr_idefile);
+    //printf ("escritos: %d\n",escritos);
 
-        //printf ("ptr_idefile: %d\n",ptr_idefile);
-        //printf ("escritos: %d\n",escritos);
-
-        if (escritos!=size || ptr_idefile==NULL) {
-                debug_printf (VERBOSE_ERR,"Error writing to IDE file. Disabling write file operations");
-                ide_persistent_writes.v=0;
-        }
+    if (escritos!=size || ptr_idefile==NULL) {
+        debug_printf (VERBOSE_ERR,"Error writing to IDE file. Disabling write file operations");
+        ide_persistent_writes.v=0;
+    }
 
 }
 
 int ide_read_file_to_memory(void)
 {
-	if (ide_memory_pointer==NULL || ide_enabled.v==0)  {
-    debug_printf(VERBOSE_ERR,"IDE is not enabled. You should not get this message");
-    return 1;
-  }
+    if (ide_memory_pointer==NULL || ide_enabled.v==0)  {
+        debug_printf(VERBOSE_ERR,"IDE is not enabled. You should not get this message");
+        return 1;
+    }
 
 	FILE *ptr_idefile;
 	unsigned int leidos=0;
 
-debug_printf (VERBOSE_INFO,"Opening IDE File %s",ide_file_name);
+    debug_printf (VERBOSE_INFO,"Opening IDE File %s",ide_file_name);
 	ptr_idefile=fopen(ide_file_name,"rb");
 
 
 	if (ptr_idefile!=NULL) {
-					leidos=fread(ide_memory_pointer,1,ide_size,ptr_idefile);
-					fclose(ptr_idefile);
-}
+        leidos=fread(ide_memory_pointer,1,expected_read_ide_size,ptr_idefile);
+        fclose(ptr_idefile);
+    }
 
-if (ptr_idefile==NULL) {
-debug_printf (VERBOSE_ERR,"Error opening ide file");
-return 1;
-}
+    if (ptr_idefile==NULL) {
+        debug_printf (VERBOSE_ERR,"Error opening ide file");
+        return 1;
+    }
 
-if (leidos!=ide_size) {
-debug_printf (VERBOSE_ERR,"Error reading ide. Asked: %ld Read: %d",ide_size,leidos);
-return 1;
-}
+    if (leidos!=expected_read_ide_size) {
+        debug_printf (VERBOSE_ERR,"Error reading ide. Asked: %ld Read: %d",ide_size,leidos);
+        return 1;
+    }
 
 
 
@@ -248,20 +259,21 @@ int ide_read_file(void)
 	ide_memory_pointer=NULL;
 
 
-        ide_memory_pointer=malloc(ide_size);
-        if (ide_memory_pointer==NULL) {
-                cpu_panic ("No enough memory for ide emulation");
-        }
+    ide_memory_pointer=malloc(ide_size);
+    if (ide_memory_pointer==NULL) {
+        cpu_panic ("No enough memory for ide emulation");
+    }
 
-				if (ide_read_file_to_memory()) {
+    if (ide_read_file_to_memory()) {
+        return 1;
+    }
+
+
+    if (ide_set_image_parameters() ) {
 					return 1;
-				}
+    }
 
-
-				if (ide_set_image_parameters() ) {
-					return 1;
-				}
-      return 0;
+    return 0;
 
 }
 
@@ -278,18 +290,19 @@ void ide_insert(void)
 	if (!si_existe_archivo(ide_file_name)) {
 		debug_printf (VERBOSE_ERR,"File %s does not exist",ide_file_name);
 		ide_disable();
-                return;
+        return;
 	}
 
 
 
 	ide_size=get_file_size(ide_file_name);
 	debug_printf (VERBOSE_DEBUG,"ide file size: %ld",ide_size);
+    expected_read_ide_size=ide_size;
 
 	if (ide_check_card_size() ){
 		ide_disable();
-                return;
-        }
+        return;
+    }
 
 
 	if (ide_read_file()) {
@@ -297,17 +310,15 @@ void ide_insert(void)
 		return;
 	}
 
-
-
-
 }
 
 void ide_reset(void)
 {
-        //Resetear estado
-        ide_write_sector_operation=0;
-        ide_index_return_buffer=0;
-        ide_index_write_buffer=0;
+    //Resetear estado
+    ide_write_sector_operation=0;
+    ide_index_return_buffer=0;
+    ide_index_write_buffer=0;
+    ide_atm_read_sectors_remaining=0;
 
 	//TODO resetear otros contadores a 0
 	ide_register_sector_number=1;
@@ -322,40 +333,43 @@ void ide_reset(void)
 
 
 
-        ide_status_register=(IDE_STATUS_RDY|IDE_STATUS_DSC);
+    ide_status_register=(IDE_STATUS_RDY|IDE_STATUS_DSC);
 
 }
 
 void ide_enable(void)
 {
-        debug_printf (VERBOSE_INFO,"Enabling ide");
-        ide_enabled.v=1;
+    if (ide_enabled.v) return;
+
+    debug_printf (VERBOSE_INFO,"Enabling ide");
+    ide_enabled.v=1;
 
 	ide_reset();
 
-        ide_memory_pointer=NULL;
+    ide_memory_pointer=NULL;
 
-        ide_insert();
+    ide_insert();
 
 
 }
 
 void ide_disable(void)
 {
+    if (ide_enabled.v==0) return;
 
-	//Hacer flush si hay algun cambio
-	ide_flush_flash_to_disk();
-
-
-        //Desactivar Divide ports
-        //divide_ide_ports_disable();
+    //Hacer flush si hay algun cambio
+    ide_flush_flash_to_disk();
 
 
-	ide_enabled.v=0;
+    //Desactivar Divide ports
+    //divide_ide_ports_disable();
 
-        //Si habia memoria asignada, desasignar
-        if (ide_memory_pointer!=NULL) free (ide_memory_pointer);
-        ide_memory_pointer=NULL;
+
+    ide_enabled.v=0;
+
+    //Si habia memoria asignada, desasignar
+    if (ide_memory_pointer!=NULL) free (ide_memory_pointer);
+    ide_memory_pointer=NULL;
 
 }
 
@@ -366,7 +380,10 @@ void ide_disable(void)
 //Mirar si tarjeta ide tiene tamanyo admitido
 int ide_check_card_size(void)
 {
-        switch (ide_size) {
+
+    int size_mb=ide_size/1024/1024;
+
+    switch (ide_size) {
 		case 8*1024*1024:
 		case 16*1024*1024:
 		case 32*1024*1024:
@@ -378,13 +395,32 @@ int ide_check_card_size(void)
 		break;
 
 
-                default:
-                        debug_printf (VERBOSE_ERR,"Invalid card size. Must be one of: 8, 16, 32, 64, 128, 256, 512, 1024 MB");
-                        return 1;
-                break;
-        }
+        default:
+            if (size_mb<8) size_mb=8;
+            else if (size_mb<16) size_mb=16;
+            else if (size_mb<32) size_mb=32;
+            else if (size_mb<64) size_mb=64;
+            else if (size_mb<128) size_mb=128;
+            else if (size_mb<256) size_mb=256;
+            else if (size_mb<512) size_mb=512;
+            else if (size_mb<1024) size_mb=1024;
+            else {
+                debug_printf (VERBOSE_ERR,"Invalid card size. Maximum 1024 MB");
+                return 1;
+            }
 
-        return 0;
+            //No mostramos esto como error por pantalla.
+            debug_printf (VERBOSE_INFO,"Warning. Unexpected ide size. Should be one of: 8, 16, 32, 64, 128, 256, 512, 1024 MB. "
+                                       "Rounding up to %d and continuing anyway, use at your own risk!",size_mb);
+            ide_size=size_mb*1024*1024;
+
+            //Asignaremos memoria como si fuera un tamaño estandard. Además si el archivo se escribe porque se ha modificado,
+            //ya se normalizará ese tamaño
+
+        break;
+    }
+
+    return 0;
 
 }
 
@@ -456,12 +492,35 @@ int ide_set_image_parameters(void)
                 break;
         }
 
+    if (ide_disk_sectors_track_override) {
+        ide_disk_sectors_track=ide_disk_sectors_track_override;
+        /* La capacidad real puede ser menor que la reserva normalizada de RAM. */
+        ide_disk_sectors_card=expected_read_ide_size/IDE_SECTOR_SIZE;
+        ide_disk_cylinders=ide_disk_sectors_card/(ide_disk_heads*ide_disk_sectors_track);
+    }
+
 	debug_printf (VERBOSE_INFO,"Card size: %ld MB Sectors in card: %d Heads: %d Sectors/track: %d Cylinders: %d",
 		ide_size/1024/1024,
 		ide_disk_sectors_card,ide_disk_heads,ide_disk_sectors_track,ide_disk_cylinders);
 
 
 	return 0;
+}
+
+/* Fija los sectores por pista para cualquier interfaz IDE y recalcula la
+   geometría. Cero restaura el cálculo automático. Devuelve 1 si no es válido.
+   La elección se conserva al insertar otra imagen y no escribe en el disco. */
+int ide_set_sectors_per_track(int sectors)
+{
+    if (sectors<0 || sectors>255) return 1;
+    ide_disk_sectors_track_override=sectors;
+    return ide_set_image_parameters();
+}
+
+/* Devuelve los sectores por pista efectivos, incluidos los del modo automático. */
+int ide_get_sectors_per_track(void)
+{
+    return ide_disk_sectors_track;
 }
 
 
@@ -774,6 +833,11 @@ void ide_write_command_register(z80_byte value)
 					ide_return_buffer[i]=ide_read_byte_memory(address++);
 				}
 
+                if (MACHINE_IS_ATM_TURBO2_FAMILY) {
+                    ide_atm_read_sectors_remaining=ide_register_sector_count ? ide_register_sector_count : 256;
+                    ide_atm_read_next_address=address;
+                }
+
 
 		break;
 
@@ -915,6 +979,7 @@ void ide_write_command_block_register(z80_byte ide_register,z80_byte value)
 
 		case 7:
 			ide_register_command=value;
+            ide_atm_read_sectors_remaining=0;
 			ide_status_register=(IDE_STATUS_RDY|IDE_STATUS_DSC|IDE_STATUS_DRQ);
 			ide_index_return_buffer=0;
 			ide_write_command_register(value);
@@ -970,7 +1035,23 @@ z80_byte ide_read_command_block_register(z80_byte ide_register)
 			//Este registro realmente es de 16 bits pero en divide y 8-bit simple ide, lee 8 bits solamente
 
 			//Si ha leido ya IDE_SECTOR_SIZE, decir status normal
-			if (ide_index_return_buffer==IDE_SECTOR_SIZE) ide_status_register=(IDE_STATUS_RDY|IDE_STATUS_DSC);
+            if (ide_index_return_buffer==IDE_SECTOR_SIZE) {
+                ide_status_register=(IDE_STATUS_RDY|IDE_STATUS_DSC);
+                /* TASiS solicita varios sectores con un solo READ SECTORS y
+                   espera DRQ antes de cada bloque. Conservar el comportamiento
+                   previo en las interfaces de las demás máquinas. */
+                if (MACHINE_IS_ATM_TURBO2_FAMILY && ide_atm_read_sectors_remaining) {
+                    ide_atm_read_sectors_remaining--;
+                    ide_register_sector_count=ide_atm_read_sectors_remaining;
+                    if (ide_atm_read_sectors_remaining) {
+                        int i;
+                        for (i=0;i<IDE_SECTOR_SIZE;i++)
+                            ide_return_buffer[i]=ide_read_byte_memory(ide_atm_read_next_address++);
+                        ide_index_return_buffer=0;
+                        ide_status_register|=IDE_STATUS_DRQ;
+                    }
+                }
+            }
 
 		break;
 
@@ -1068,4 +1149,365 @@ void eight_bit_simple_ide_enable(void)
 void eight_bit_simple_ide_disable(void)
 {
 	eight_bit_simple_ide_enabled.v=0;
+}
+
+/* SMUC (Scorpion & MOA Universal Controller) es la tarjeta de expansión
+ * que proporciona la interfaz ATA/IDE para discos y el acceso a otros
+ * periféricos. Las variables siguientes emulan sus registros y señales.
+ *
+ * La EEPROM 24LC16 es una memoria no volátil de 2 KiB del SMUC. El firmware
+ * puede guardar y recuperar datos en ella mediante el bus serie SDA/SCL;
+ * no forma parte de la RAM ni de la ROM paginada de la máquina.
+ *
+ * La CMOS es el conjunto de registros del reloj de tiempo real: incluye
+ * hora, fecha, estado y una pequeña zona de configuración. En la tarjeta
+ * física el reloj y sus registros pueden mantenerse con una pila cuando
+ * se apaga el ordenador. Aquí se representan con 128 bytes y el estado
+ * necesario para actualizar el reloj.
+ */
+/* Controla la presencia del SMUC, independientemente del disco IDE. */
+z80_bit ide_smuc_enabled={0};
+// Indica qué interfaz recibió el último comando ATA para la DMA de TSConf.
+int ide_smuc_dma_selected=0;
+
+
+
+/* FFBAh: D0 reinicia ATA, D4 es SDA, D6 es SCL y D7 selecciona
+ * los registros alternativos ATA y la escritura en RTC. */
+z80_byte ide_smuc_control=1;
+
+/* 7FBAh: registro de configuración del SMUC; los bits 0-2 y 4-5
+ * se leen siempre como unos en esta revisión del controlador. */
+z80_byte ide_smuc_config;
+
+/* D8BEh conserva el byte alto del último dato ATA de 16 bits. */
+z80_byte ide_smuc_data_high;
+
+/* DFBAh: dirección seleccionada y contenido de los registros CMOS. */
+static z80_byte ide_smuc_cmos_address;
+
+static z80_byte ide_smuc_cmos[128];
+
+/* Estado de la interrupción de actualización del reloj, registro C. */
+static time_t ide_smuc_cmos_last_second;
+
+static int ide_smuc_cmos_update_flag;
+
+/* Sustituye únicamente la palabra 0 de IDENTIFY por un disco ATA fijo. */
+int ide_smuc_identify_first_word;
+
+/* EEPROM 24LC16 y estado de la transferencia serie por SDA/SCL. */
+static z80_byte ide_smuc_eeprom[2048];
+
+/* Indica si el contenido de la EEPROM ya se inicializó al encender la máquina. */
+int ide_smuc_eeprom_initialized;
+
+/* Fase actual de la transferencia serie: comando, dirección, datos o ACK. */
+int ide_smuc_eeprom_state;
+
+/* Dirección de 11 bits del siguiente byte que se leerá o escribirá. */
+int ide_smuc_eeprom_address;
+
+/* Acumula los bits recibidos por SDA hasta formar un byte. */
+int ide_smuc_eeprom_input;
+
+/* Cuenta los bits recibidos del byte en curso. */
+int ide_smuc_eeprom_input_bits;
+
+/* Byte de la EEPROM que se desplaza para enviarlo por SDA. */
+int ide_smuc_eeprom_output;
+
+/* Cuenta los bits enviados del byte en curso. */
+int ide_smuc_eeprom_output_bits;
+
+/* Indica si la EEPROM ha soltado SDA para que lo controle el maestro. */
+int ide_smuc_eeprom_release;
+
+/* Valor visible al leer el bus serie: D6 representa la línea SDA. */
+z80_byte ide_smuc_eeprom_bus=0xff;
+
+
+enum {
+    IDE_SMUC_EEPROM_IDLE,
+    IDE_SMUC_EEPROM_COMMAND,
+    IDE_SMUC_EEPROM_ADDRESS,
+    IDE_SMUC_EEPROM_DATA,
+    IDE_SMUC_EEPROM_SEND,
+    IDE_SMUC_EEPROM_ACK
+};
+/* Procesa el bus serie de la EEPROM 24LC16 del SMUC.
+ * Entrada: valor escrito en FFBAh. Salida: ninguna; actualiza SDA leído.
+ */
+static void ide_smuc_eeprom_write(z80_byte value)
+{
+    int old_clock=ide_smuc_control & 0x40;
+    int new_clock=value & 0x40;
+    int old_data=ide_smuc_control & 0x10;
+    int new_data=value & 0x10;
+
+    if (old_clock!=new_clock) {
+        if (new_clock) {
+            if (ide_smuc_eeprom_state==IDE_SMUC_EEPROM_ACK) {
+                if (new_data) ide_smuc_eeprom_state=IDE_SMUC_EEPROM_IDLE;
+                else {
+                    ide_smuc_eeprom_state=IDE_SMUC_EEPROM_SEND;
+                    ide_smuc_eeprom_output=
+                        ide_smuc_eeprom[ide_smuc_eeprom_address];
+                    ide_smuc_eeprom_address=(ide_smuc_eeprom_address+1)&0x7ff;
+                    ide_smuc_eeprom_output_bits=0;
+                }
+            }
+            else if (ide_smuc_eeprom_release &&
+                     ide_smuc_eeprom_state>=IDE_SMUC_EEPROM_COMMAND &&
+                     ide_smuc_eeprom_state<=IDE_SMUC_EEPROM_DATA) {
+                ide_smuc_eeprom_input=(ide_smuc_eeprom_input<<1)|!!new_data;
+                ide_smuc_eeprom_input_bits++;
+            }
+        }
+        else {
+            if (ide_smuc_eeprom_input_bits==8) {
+                int data=ide_smuc_eeprom_input & 0xff;
+                ide_smuc_eeprom_input=0;
+                ide_smuc_eeprom_input_bits=0;
+                if (ide_smuc_eeprom_state==IDE_SMUC_EEPROM_COMMAND) {
+                    if ((data & 0xf0)!=0xa0) {
+                        ide_smuc_eeprom_state=IDE_SMUC_EEPROM_IDLE;
+                    }
+                    else {
+                        ide_smuc_eeprom_address=
+                            (ide_smuc_eeprom_address & 0xff)|((data & 0x0e)<<7);
+                        if (data & 1) {
+                            ide_smuc_eeprom_state=IDE_SMUC_EEPROM_SEND;
+                            ide_smuc_eeprom_output=
+                                ide_smuc_eeprom[ide_smuc_eeprom_address];
+                            ide_smuc_eeprom_address=(ide_smuc_eeprom_address+1)&0x7ff;
+                            ide_smuc_eeprom_output_bits=0;
+                        }
+                        else ide_smuc_eeprom_state=IDE_SMUC_EEPROM_ADDRESS;
+                    }
+                }
+                else if (ide_smuc_eeprom_state==IDE_SMUC_EEPROM_ADDRESS) {
+                    ide_smuc_eeprom_address=
+                        (ide_smuc_eeprom_address & 0x700)|data;
+                    ide_smuc_eeprom_state=IDE_SMUC_EEPROM_DATA;
+                }
+                else if (ide_smuc_eeprom_state==IDE_SMUC_EEPROM_DATA) {
+                    if (!(value & 0x20))
+                        ide_smuc_eeprom[ide_smuc_eeprom_address]=data;
+                    ide_smuc_eeprom_address=
+                        (ide_smuc_eeprom_address & 0x7f0)|
+                        ((ide_smuc_eeprom_address+1)&0x0f);
+                }
+                ide_smuc_eeprom_release=0;
+                ide_smuc_eeprom_bus=0xbf;
+                return;
+            }
+            if (ide_smuc_eeprom_state==IDE_SMUC_EEPROM_SEND) {
+                if (ide_smuc_eeprom_output_bits==8) {
+                    ide_smuc_eeprom_state=IDE_SMUC_EEPROM_ACK;
+                    ide_smuc_eeprom_release=1;
+                }
+                else {
+                    ide_smuc_eeprom_bus=
+                        (ide_smuc_eeprom_output & 0x80) ? 0xff : 0xbf;
+                    ide_smuc_eeprom_output<<=1;
+                    ide_smuc_eeprom_output_bits++;
+                    ide_smuc_eeprom_release=0;
+                    return;
+                }
+            }
+            else ide_smuc_eeprom_release=1;
+        }
+    }
+    else if (new_clock && old_data!=new_data) {
+        ide_smuc_eeprom_state=new_data ?
+            IDE_SMUC_EEPROM_IDLE : IDE_SMUC_EEPROM_COMMAND;
+        ide_smuc_eeprom_input=0;
+        ide_smuc_eeprom_input_bits=0;
+        ide_smuc_eeprom_release=1;
+    }
+    if (ide_smuc_eeprom_release)
+        ide_smuc_eeprom_bus=new_data ? 0xff : 0xbf;
+}
+
+/* Convierte un valor del reloj a BCD si el registro B lo solicita.
+ * Entrada: valor binario y registro B del RTC. Salida: valor para el Z80.
+ */
+static z80_byte ide_smuc_cmos_number(int number,z80_byte rtc_reg_b)
+{
+    if (rtc_reg_b & 4) return number;
+    return (number / 10) * 16 + number % 10;
+}
+
+/* Lee el reloj del SMUC y sus registros de estado.
+ * Entrada: ninguna. Salida: valor del registro RTC seleccionado.
+ */
+static z80_byte ide_smuc_cmos_read(void)
+{
+    time_t now=time(NULL);
+    struct tm *clock=localtime(&now);
+    z80_byte reg=ide_smuc_cmos_address & 0x7f;
+    z80_byte rtc_reg_b=ide_smuc_cmos[11];
+
+    if (ide_smuc_cmos_last_second &&
+        now!=ide_smuc_cmos_last_second)
+        ide_smuc_cmos_update_flag=1;
+    ide_smuc_cmos_last_second=now;
+
+    if (clock) {
+        switch (reg) {
+            case 0: return ide_smuc_cmos_number(clock->tm_sec,rtc_reg_b);
+            case 2: return ide_smuc_cmos_number(clock->tm_min,rtc_reg_b);
+            case 4: return ide_smuc_cmos_number(clock->tm_hour,rtc_reg_b);
+            case 6: return clock->tm_wday+1;
+            case 7: return ide_smuc_cmos_number(clock->tm_mday,rtc_reg_b);
+            case 8: return ide_smuc_cmos_number(clock->tm_mon+1,rtc_reg_b);
+            case 9: return ide_smuc_cmos_number(clock->tm_year%100,rtc_reg_b);
+        }
+    }
+    if (reg==10) return 0x20 | (ide_smuc_cmos[10] & 0x0f);
+    if (reg==11) return (rtc_reg_b & 4) | 2;
+    if (reg==12) {
+        z80_byte result=ide_smuc_cmos_update_flag ? 0x10 : 0;
+        ide_smuc_cmos_update_flag=0;
+        return result;
+    }
+    if (reg==13) return 0x80;
+    return ide_smuc_cmos[reg];
+}
+
+/* Lee un puerto SMUC conectado al IDE de ZEsarUX.
+ * Entrada: puerto Z80 y puntero al resultado. Salida: 1 si el puerto
+ * pertenece al SMUC activo; 0 si debe seguir la lectura normal.
+ */
+int ide_smuc_read(z80_int port,z80_byte *value)
+{
+    if (!ide_smuc_enabled.v) return 0;
+    if (MACHINE_IS_SCORPION_GMX) {
+        if (scorpion_gmx_is_pentagon_scheme()) return 0;
+    }
+    else if (!MACHINE_IS_TSCONF) return 0;
+
+    if ((port & 0x18a3)!=(0xfffe & 0x18a3)) return 0;
+    if ((port & 0xa044)==(0x5fba & 0xa044)) {
+        *value=(port & 4) ? 0x57 : 0x3f;
+        return 1;
+    }
+    if ((port & 0xa044)==(0x7fba & 0xa044)) {
+        *value=(port & 4) ? 0x57 : (ide_smuc_config | 0x37);
+        return 1;
+    }
+    if ((port & 0xa044)==(0xdfba & 0xa044)) {
+        *value=ide_smuc_cmos_read();
+        return 1;
+    }
+    if ((port & 0xa044)==(0xffba & 0xa044)) {
+        *value=ide_smuc_eeprom_bus;
+        return 1;
+    }
+    if ((port & 0x8044)==(0xffbe & 0x8044)) {
+        if (ide_smuc_control & 0x80) {
+            *value=(port & 0x100) ? 0xff : ide_read_command_block_register(7);
+            return 1;
+        }
+        if (!(port & 0x2000)) {
+            *value=ide_smuc_data_high;
+            return 1;
+        }
+        int reg=(port>>8)&7;
+        if (reg==0) {
+            *value=ide_read_command_block_register(0);
+            ide_smuc_data_high=ide_read_command_block_register(0);
+            if (ide_smuc_identify_first_word && ide_enabled.v) {
+                // El firmware SMUC espera un disco ATA fijo; el IDE genérico anuncia CF.
+                *value=0x40;
+                ide_smuc_data_high=0;
+                ide_smuc_identify_first_word=0;
+            }
+        }
+        else *value=ide_read_command_block_register(reg);
+        return 1;
+    }
+    return 0;
+}
+
+/* Escribe un puerto SMUC conectado al IDE de ZEsarUX.
+ * Entrada: puerto Z80 y valor escrito. Salida: 1 si el SMUC atendió
+ * el puerto; 0 si la escritura debe continuar hacia otros dispositivos.
+ */
+int ide_smuc_write(z80_int port,z80_byte value)
+{
+    if (!ide_smuc_enabled.v) return 0;
+    if (MACHINE_IS_SCORPION_GMX) {
+        if (scorpion_gmx_is_pentagon_scheme()) return 0;
+    }
+    else if (!MACHINE_IS_TSCONF) return 0;
+
+    if ((port & 0x18a3)!=(0xfffe & 0x18a3)) return 0;
+    if ((port & 0xa044)==(0xffba & 0xa044)) {
+        if (value & 1) ide_reset();
+        ide_smuc_eeprom_write(value);
+        ide_smuc_control=value;
+        return 1;
+    }
+    if ((port & 0xa044)==(0xdfba & 0xa044)) {
+        if (ide_smuc_control & 0x80)
+            ide_smuc_cmos[ide_smuc_cmos_address & 0x7f]=value;
+        else ide_smuc_cmos_address=value;
+        return 1;
+    }
+    if ((port & 0xa044)==(0x7fba & 0xa044)) {
+        ide_smuc_config=value;
+        return 1;
+    }
+    if ((port & 0x8044)==(0xffbe & 0x8044)) {
+        if (ide_smuc_control & 0x80) return 1;
+        if (!(port & 0x2000)) {
+            ide_smuc_data_high=value;
+            return 1;
+        }
+        int reg=(port>>8)&7;
+        if (reg==0) {
+            ide_write_command_block_register(0,value);
+            ide_write_command_block_register(0,ide_smuc_data_high);
+        }
+        else {
+            if (reg==7) {
+                ide_smuc_identify_first_word=(value==0xec && ide_enabled.v);
+                if (MACHINE_IS_TSCONF) ide_smuc_dma_selected=1;
+            }
+            ide_write_command_block_register(reg,value);
+        }
+        return 1;
+    }
+    return 0;
+}
+
+
+
+
+// Restablece los registros volátiles del SMUC y conserva su EEPROM.
+void ide_smuc_reset(void)
+{
+    ide_smuc_dma_selected=0;
+    ide_smuc_control=1;
+    ide_smuc_config=0;
+    ide_smuc_data_high=0;
+    ide_smuc_cmos_address=0;
+    ide_smuc_cmos_last_second=0;
+    ide_smuc_cmos_update_flag=0;
+    ide_smuc_identify_first_word=0;
+    ide_smuc_eeprom_state=IDE_SMUC_EEPROM_IDLE;
+    ide_smuc_eeprom_address=0;
+    ide_smuc_eeprom_input=0;
+    ide_smuc_eeprom_input_bits=0;
+    ide_smuc_eeprom_output=0;
+    ide_smuc_eeprom_output_bits=0;
+    ide_smuc_eeprom_release=1;
+    ide_smuc_eeprom_bus=0xff;
+    if (!ide_smuc_eeprom_initialized) {
+        int i;
+        for (i=0;i<2048;i++) ide_smuc_eeprom[i]=0xff;
+        ide_smuc_eeprom_initialized=1;
+    }
 }

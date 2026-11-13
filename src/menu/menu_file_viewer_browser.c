@@ -175,7 +175,7 @@ void menu_file_viewer_gens_show(char *file_read_memory,int longitud)
 
     results_buffer[index_buffer]=0;
 
-    menu_generic_message("GENS file",results_buffer);
+    zxvision_generic_message("GENS file",results_buffer);
 
     free(results_buffer);
 
@@ -241,7 +241,7 @@ void menu_file_viewer_sped_show(char *file_read_memory,int longitud)
 
         results_buffer[index_buffer]=0;
 
-        menu_generic_message("SPED file",results_buffer);
+        zxvision_generic_message("SPED file",results_buffer);
 
         free(results_buffer);
 
@@ -465,7 +465,7 @@ void menu_file_viewer_read_text_file(char *title,char *file_name)
 
 		if (avisolimite) debug_printf (VERBOSE_ERR,"Read max text buffer: %d bytes. Showing only these",leidos);
 
-		//menu_generic_message(title,file_read_memory);
+		//zxvision_generic_message(title,file_read_memory);
         //Desactivar parseo de caracteres especiales ~~, $$ etc
         zxvision_generic_message_tooltip(title , 1, 0 , 0, 0, 0, NULL, 1, 0, "%s", file_read_memory);
 	}
@@ -4161,7 +4161,7 @@ void menu_file_tzx_browser_show(char *filename)
 				puntero+=2;
 
 
-			        longitud_sub_bloque=util_tape_tap_get_info(&tzx_file_mem[puntero],buffer_bloque,0);
+                    longitud_sub_bloque=util_tape_tap_get_info(&tzx_file_mem[puntero],buffer_bloque,0,filesize-puntero);
 				indice_buffer +=util_add_string_newline(&texto_browser[indice_buffer],buffer_bloque);
 
 
@@ -4336,7 +4336,7 @@ int menu_tape_browser_show(char *filename,int indice_bloque_actual)
 
 
     //ZX80 O, ZX81 P
-    if (!util_compare_file_extension(filename,"p") || !util_compare_file_extension(filename,"p81")) {
+    if (!util_compare_file_extension(filename,"p") || !util_compare_file_extension(filename,"81") || !util_compare_file_extension(filename,"p81")) {
         menu_file_p_browser_show(filename);
         return -1;
     }
@@ -4422,7 +4422,8 @@ int menu_tape_browser_show(char *filename,int indice_bloque_actual)
     int id_bloque_leido=0;
 
 	while(total_mem>0) {
-		longitud_bloque=util_tape_tap_get_info(puntero_lectura,&buffer_texto[1],1);
+        //printf("total_mem %d\n",total_mem);
+		longitud_bloque=util_tape_tap_get_info(puntero_lectura,&buffer_texto[1],1,total_mem);
 
         //dejamos un espacio para poder indicar, si conviene, donde está el puntero actual de lectura
         if (id_bloque_leido==indice_bloque_actual) buffer_texto[0]='>';
@@ -4831,7 +4832,7 @@ Maximo sectores por archivo: 25
             }
 
 
-            zxvision_print_string_defaults(&ventana,1,hilow_browser_inicio_y_mapa-1,"Legend: [D]irect [u]sed [F]ile [.]free [x]unusable");
+            zxvision_print_string_defaults(&ventana,1,hilow_browser_inicio_y_mapa-1,"Legend: [D]irec. [u]sed [F]ile [.]free [x]unusable");
         }
 
         //Restaurar comportamiento atajos
@@ -5626,6 +5627,88 @@ Hence, data 26 70 2 gives a product code of 27026 and 26 70 a gives a product co
 
 
 
+void menu_file_hobeta_browser_show(char *filename)
+{
+
+
+    FILE *ptr_file_input_browser;
+
+    //Soporte para FatFS
+    FIL fil;        /* File object */
+    //FRESULT fr;     /* FatFs return code */
+
+    int in_fatfs;
+
+
+    if (zvfs_fopen_read(filename,&in_fatfs,&ptr_file_input_browser,&fil)<0) {
+        debug_printf(VERBOSE_ERR,"Unable to open file");
+        return;
+    }
+
+
+    z80_byte buffer_cabecera[17];
+
+
+    int leidos;
+
+    leidos=zvfs_fread(in_fatfs,buffer_cabecera,17,ptr_file_input_browser,&fil);
+
+
+    if (leidos==0) {
+        debug_printf(VERBOSE_ERR,"Error reading file");
+        return;
+    }
+
+    zvfs_fclose(in_fatfs,ptr_file_input_browser,&fil);
+
+    int indice_buffer=0;
+    char buffer_texto[512];
+
+    char *texto_browser=util_malloc_max_texto_browser();
+
+
+    char buffer_nombre[9];
+    char c;
+    int i;
+    for (i=0;i<8;i++) {
+        c=buffer_cabecera[i];
+        if (c<32 || c>126) c='.';
+        buffer_nombre[i]=c;
+    }
+
+    buffer_nombre[i]=0;
+
+ 	sprintf(buffer_texto,"Name: %s",buffer_nombre);
+ 	indice_buffer +=util_add_string_newline(&texto_browser[indice_buffer],buffer_texto);
+
+    c=buffer_cabecera[i];
+    if (c<32 || c>126) c='.';
+
+ 	sprintf(buffer_texto,"Extension: %c",c);
+ 	indice_buffer +=util_add_string_newline(&texto_browser[indice_buffer],buffer_texto);
+
+    sprintf(buffer_texto,"Parameter 1:             %d",buffer_cabecera[9]+256*buffer_cabecera[10]);
+    indice_buffer +=util_add_string_newline(&texto_browser[indice_buffer],buffer_texto);
+
+    sprintf(buffer_texto,"Length (real):           %d",buffer_cabecera[11]+256*buffer_cabecera[12]);
+    indice_buffer +=util_add_string_newline(&texto_browser[indice_buffer],buffer_texto);
+
+    sprintf(buffer_texto,"Length (sector-aligned): %d",buffer_cabecera[13]+256*buffer_cabecera[14]);
+    indice_buffer +=util_add_string_newline(&texto_browser[indice_buffer],buffer_texto);
+
+    sprintf(buffer_texto,"Checksum: %04XH",buffer_cabecera[15]+256*buffer_cabecera[16]);
+    indice_buffer +=util_add_string_newline(&texto_browser[indice_buffer],buffer_texto);
+
+	texto_browser[indice_buffer]=0;
+	zxvision_generic_message_tooltip("Hobeta file browser" , 1, 0 , 0, 0, 1, NULL, 1, 0, "%s", texto_browser);
+
+
+    free(texto_browser);
+
+
+}
+
+
 void menu_file_col_browser_show(char *filename)
 {
 
@@ -5923,6 +6006,10 @@ void menu_file_viewer_read_file(char *title,char *file_name)
         //printf ("extension vacia: %d\n",util_compare_file_extension(file_name,"") );
         //printf ("es z88 basic: %d\n",file_is_z88_basic(file_name));
 
+        char extension[NAME_MAX];
+
+        util_get_file_extension(file_name,extension);
+
         //Algunos tipos conocidos
         if (!util_compare_file_extension(file_name,"tap")) menu_tape_browser_show(file_name,-1);
 
@@ -5956,7 +6043,7 @@ void menu_file_viewer_read_file(char *title,char *file_name)
         //z88 en caso que la deteccion automatica (que se hace aqui mas abajo) falle
         else if (!util_compare_file_extension(file_name,"basz88")) menu_file_basic_browser_show(file_name);
 
-        else if (!util_compare_file_extension(file_name,"p") || !util_compare_file_extension(file_name,"p81")) menu_file_p_browser_show(file_name);
+        else if (!util_compare_file_extension(file_name,"p") || !util_compare_file_extension(file_name,"81") || !util_compare_file_extension(file_name,"p81")) menu_file_p_browser_show(file_name);
 
         else if (!util_compare_file_extension(file_name,"o")) menu_file_o_browser_show(file_name);
 
@@ -6004,6 +6091,8 @@ void menu_file_viewer_read_file(char *title,char *file_name)
         else if (!util_compare_file_extension(file_name,"rmd")) menu_file_rmd_browser_show(file_name);
 
         else if (!util_compare_file_extension(file_name,"mdr")) menu_file_mdr_browser_show(file_name);
+
+        else if (extension[0]=='$') menu_file_hobeta_browser_show(file_name);
 
         //Si archivo no tiene extension pero su contenido parece indicar que es z88 basic
         else if (!util_compare_file_extension(file_name,"") && file_is_z88_basic(file_name)) menu_file_basic_browser_show(file_name);

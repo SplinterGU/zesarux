@@ -1,8 +1,10 @@
 ZEsarUX Installation Instructions
 ---------------------------------
 
-This file explains how to install ZEsarUX on Unix systems: GNU/Linux, FreeBSD, Mac OS X, Raspberry.
+This file explains how to install ZEsarUX on Unix systems: GNU/Linux, FreeBSD, Mac OS X, Raspberry, Haiku, AROS, FiwixOS, Sortix, Minix3
 Note that most of the information that applies to Linux also applies to FreeBSD.
+
+For Haiku, AROS, FiwixOS, Sortix or Minix3 instructions, see near the end of this file
 
 For Windows specific instructions please see the INSTALLWINDOWS file.
 
@@ -79,7 +81,7 @@ The following is a list of recommended minimum features for each operating syste
 
 # Raspberry Pi (Raspbian)
 
-A Raspberry Pi 2 is recommended a minimum. The Raspberry Pi 1 is a bit too slow for ZEsarUX, but you can run at normal Spectrum speed by setting overclock on the Pi, having Real Video setting disabled and using the Spectrum reduced core
+A Raspberry Pi 2 is recommended a minimum. The Raspberry Pi 1 is a bit too slow for ZEsarUX, but you can run at normal Spectrum speed by setting overclock on the Pi, having Real Video setting disabled, using the Spectrum reduced core and running with setting --changeslowparameters
 
 - libpthreads
 - alsa
@@ -105,7 +107,7 @@ The following is a list of complete features, all of which are optional.
 
 # Video Drivers
 
-- x11 (on GNU/Linux, other Unix and Raspberry): needs x11libs, x11extlibs, xf86vidmode, xxf86vm. On debian-based systems the command "apt-get install xorg-dev" will be enough
+- x11 (on GNU/Linux, other Unix and Raspberry): needs x11libs, x11extlibs, xxf86vm. On debian-based systems the command "apt-get install xorg-dev" will be enough
 - x11 (on Mac OS X): needs XQuartz
 - cocoa (on Mac OS X): Compiling supported using XCode.
 - SDL 1.2 (on GNU/Linux, other Unix and Raspberry): needs sdllib-1.2. SDL2 is experimental. Run "apt-get install libsdl1.2-dev" on debian-based systems
@@ -184,7 +186,7 @@ Even more, if you have a slow device like the Raspberry Pi 1 or Zero, I recommen
 
     $ ./configure --enable-raspberry --spectrum-reduced-core --disable-memptr --disable-visualmem --disable-cpustats
 
-This will also ensure that the "reduced core" is on by default, which uses less cpu, although you can also switch it from command line, or at runtime. Also we do not compile memptr, visualmem and cpu stats, which use a bit more cpu
+This will also ensure that the "reduced core" is on by default, which uses less cpu, although you can also switch it from command line, or at runtime. Also we do not compile memptr, visualmem and cpu stats, which use a bit more cpu. Then run zesaurux with setting "--changeslowparameters" to improve performance
 
 
 NOTE: by using the reduced core some features will NOT be available. See the FAQ file, where it talks about the Spectrum reduced core
@@ -249,6 +251,67 @@ make
 --
 
 Please don't ask me about Haiku help, I'm not an expert on this OS ;)
+
+
+Note for AROS
+-------------
+
+To compile:
+
+-Open shell
+-Then, on the shell, run "sh" shell command, which opens a Unix-compatible shell:
+sh
+
+-Then run :
+
+export LDFLAGS="-nix"
+sh configure --other-unix --disable-pthreads
+make
+
+
+Note for FiwixOS
+----------------
+
+- Be sure to boot FiwixOS on standard VGA mode (not VESA)
+
+- Compile:
+
+export CFLAGS="-DSHORT_SLEEP_TIMER"
+export LIBS="-lvga"
+./configure --disable-pthreads --disable-networking --disable-aa
+make
+
+- Start the first time with:
+./zesarux --zoom 1 --sdl-8bit-color --sdl-force-win-size 320 200 --sdl-hwsurface --disableborder --ao null --disable-autoframeskip --vo sdl --enable-zxdesktop --zxdesktop-width 64 --zxdesktop-height 0 --zxdesktop-disable-footer-switch
+
+- Note: the most important settings are:
+--sdl-8bit-color --sdl-force-win-size 320 200 --vo sdl
+
+If not set this, probably ZEsarUX will generate a segmentation fault due to small video mode
+
+
+Note for Sortix
+---------------
+
+- Compile:
+
+export LIBS="-ldisplay -ltermcap"
+sh ./configure --disable-pthreads --other-unix
+make
+
+
+Note for Minix3
+---------------
+
+- Compile:
+
+export CFLAGS="-DMINIX3 -DCURSES_NOT_NCURSES"
+
+./configure --c-compiler clang
+make
+
+- F5 is usually mapped on Minix3 to dump kernel environment, so in this case, to open
+ZEsarUX menu, use the End key
 
 
 Utilities

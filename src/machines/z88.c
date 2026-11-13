@@ -35,6 +35,7 @@
 #include "audio.h"
 #include "timer.h"
 #include "compileoptions.h"
+#include "zesarux.h"
 
 
 char valor_sonido_3200hz=+50;
@@ -957,8 +958,8 @@ z80_byte z88_return_keyboard_port_value(z80_byte puerto_h)
 
 
                 //Si esta spool file activo, generar siguiente tecla
-                if (input_file_keyboard_is_playing() ) {
-                        input_file_keyboard_get_key();
+                if (send_text_as_keystrokes_is_playing() ) {
+                        send_text_as_keystrokes_get_key();
                 }
 
 
@@ -1930,12 +1931,13 @@ void z88_load_hybrid_eprom_card(char *archivo, int slot)
         FILE *ptr_hybridfile;
         ptr_hybridfile=fopen(archivo,"rb");
         //maximo 512 KB. Leemos saltando los primeros 512 kb en slot destino
-	z80_long_int leidos=fread(z88_puntero_memoria+z88_memory_slots[slot].offset_total+512*1024,1,512*1024,ptr_hybridfile);
+	//z80_long_int leidos
+        fread(z88_puntero_memoria+z88_memory_slots[slot].offset_total+512*1024,1,512*1024,ptr_hybridfile);
         fclose(ptr_hybridfile);
 
 	//no uso para nada leidos (de momento). Hago lo siguiente para que no se queje el compilador
-	leidos++;
-	leidos--;
+	//leidos++;
+	//leidos--;
 
 
         //metemos cartucho
@@ -2617,14 +2619,15 @@ int z88_eprom_flash_fwrite(char *nombre,z80_byte *datos,z80_long_int longitud)
 void z88_debug_print_eprom_flash_file(z88_eprom_flash_file *file)
 {
 
-                        //Imprimir nombre, maximo 20 caracteres
-			const unsigned int max_nombre=20;
-			char buffer[max_nombre+1];
+            //Imprimir nombre, maximo 20 caracteres
+            #define Z88_PRINT_MAX_NOMBRE 20
+			//const unsigned int max_nombre=20;
+			char buffer[Z88_PRINT_MAX_NOMBRE+1];
 
 			//printf ("z88_debug_print_eprom_flash_file nombre: ");
                         unsigned int i;
 			z80_byte caracter;
-                        for (i=0;i<file->namelength && i<max_nombre;i++) {
+                        for (i=0;i<file->namelength && i<Z88_PRINT_MAX_NOMBRE;i++) {
 				caracter=file->name[i];
 				if (caracter<32 || caracter>127) caracter='.';
 				buffer[i]=caracter;
@@ -3173,6 +3176,11 @@ z80_long_int z88_eprom_flash_recover_deleted(void)
 
 char z88_get_beeper_sound(void)
 {
+    if (audio_nagra_effect.v) {
+        if (blink_com & 64) return +100;
+        else return 0;
+    }
+
 
 	if (blink_com & 64) return +100;
 	else return -100;

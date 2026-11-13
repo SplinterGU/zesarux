@@ -1,37 +1,328 @@
-ZEsarUX 12.1 Release Candidate - Night Shift edition. 28 Agosto 2025
+ZEsarUX 13.1 - Zorro edition. 06 Octubre 2026
+
+* Cosas nuevas agregadas:
+
+Agregada máquina ZX Evo Baseconf (corregida en realidad)
+Agregadas máquinas Scorpion ZS-256, Scorpion ZS-256 Turbo+, Scorpion GMX
+Agregadas máquinas ATM Turbo 1, ATM Turbo 2, ATM Turbo 2+, ATM Turbo 3
+Agregada máquina Didaktik Gama
+Agregadas máquinas Microdigital TK90X ULA Ferranti (Español y Portugués)
+Permitir renderizar pantalla emulada en una ventana aparte
+Agregada opción en archivo de configuración para activar el uso de teclas numéricas en teclado Azerty sin tener que pulsar tecla Shift
+Agregado mas soporte de joystick en Mac (Dpad, different axis)
+Agregado soporte de 60 hz para las máquinas: Master System, SG1000, MSX, Colecovision, Spectravideo, Timex Sinclair 2068
+Agregado renderizado en real video para PCW, Jupiter Ace y Sam Coupe
+Permitir enviar mensages privados a usuarios en ZENG Online
+Permitir smartload de archivo SCL
+Agregado iconos de dispositivos: esxdos handler, kartusho, iFrom, lec memory, superupgrade
+Agregado soporte para disparar acciones de tipo Tecla-F desde el joystick (Reset CPU, Abrir ventana, NMI, etc). También, los eventos de joystick "Quicksave", "Rewind", "FForward" han sido eliminados y pueden ser disparados ahora como acciones
+Permitir seleccionar archivo de salida desde la ventana de Fuente de sonido Externa
+Agregado otros juguetes "Clive" y "Simón" a menú Procrastinar
+Permitir prefijos $ y 0x para valores hexadecimales
+Permitir hacer debug en consola de llamadas a esxdos
+Permitir visualizar y extraer archivos Hobeta (.$C, etc)
+Permitir usar imagenes ide de tamaño no estandar
+Permitir traps de cinta al grabar desde Super Tape Copier o Lao Copy 2
+Permitir seleccionar modo de audio Beeper & MIC en Spectrum (por ejemplo para poder grabar sonido de carga)
+Permitir pausar la CPU
+Permitir buscar bytes desde el Editor Hexadecimal
+
+* Mejoras:
+
+Mejorada emulación de Sinclair QL:
+- Agregado emulación de Qsound
+- Mejorada emulación del intel 8049
+- Permitir cambiar color de border de QL
+- Mejorada la relación de aspecto de la pantalla del Sinclair QL. Los gráficos ahora reproducen la geometría del hardware original (1.476:1). Permitir también 4:3 y 1:1
+- Agregada paleta de colores de Vision-QL
+- Agregada emulación de Ratón QL QIMI
+- Agregada extensión CPU_TURBO al Super Basic para permitir cambiar la velocidad de la CPU
+- Agregada unidad flp2
+- Permitir smartload archivos tipo boot, basic o ejecutables, ejecutando sentencias lrun_ o exec_ automáticamente
+- Permitir smartload imágenes .mdv
+- Agregado soporte para cualquier tipo de archivos .mdv
+- Agregado soporte para imágenes .img (QDOS QL5A / QL5B) images
+- Agregado soporte para imágenes .win
+- Permitir cargar ROMS adicionales (por ejemplo tkii220.rom)
+- Permitir enviar pulsaciones de teclas (leer del portapapeles o leer de archivo de texto) a QL
+- Permitir usar reloj en tiempo real del PC o el interno del QL
+- Permitir cambiar la zona horaria del RTC
+- Grabar el reloj de tiempo real del QL en los snapshots ZSF
+- Agregado soporte para drivers de video de modo texto (stdout, simpletext)
+
+Mejorado ZX Vision:
+- Agregada ventana de Reloj
+- Agregada ventana de Calculadora
+- Mejorada la organización, redacción y coherencia de los menús de la interfaz de usuario
+- Mejorado movimiento de ventana al mover con ratón
+- Procesar teclas de función cuando el top menú está abierto
+- Process switcher ahora muestra una fila de procesos por defecto
+- Dibujar marco ventana de ventanas en segundo plano
+- Menús principales cuando el menú superior está activado, no tienen título de ventana
+- Permitir ocultar menús del menú superior
+- Permitir mostrar nombres de menús cortos en menú superior
+- Agregar a lista de recientes files/folders al seleccionar una carpeta (por ejemplo en directorio esxdos handler o ql mdv)
+- Permitir pulsar en un submenu previou
+
+Mejorado ZX Desktop:
+- Permitir ordenar iconos alfabéticamente
+- Permitir cambiar el bitmap de un icono
+- Permitir cerrar una ventana abierta pulsando botón derecho en su icono del ZX Desktop
+- Comprobar si un item está en una posición inválida al recuperarlo de la Papelera
+
+Mejorado integración de TR-DOS en Pentagon
+Agregada vistas a Visual Floppy (disco, transparente, opaco)
+Efectos especiales de salida de video se aplican dinámicamente al mover el cursor
+Movido archivo de índice de búsqueda (zesarux_index_menu.idx) a la carpeta de inicio del usuario
+Agregado registros de General Sound registers a la ventana de Ver Sensores
+Audio Chip Registers: cuando un canal ha activado envolventes, mostrar volumen actual y forma del envolvente
+
+* Correcciones:
+
+Corregido ZX Vision:
+- Corregido al restaurar ventanas minimizadas al inicio y la opción de "Ocultar ventanas minimizadas" está activada
+- Corregido al pulsar en un menú previo y el menú se cerraba aleatoriamente
+- Corregido al pulsar con ratón en selector de archivos cuando el cursor está en el campo del Nombre
+
+Corregido ZX Evo TSConf:
+- Agregado emulación tarjeta SD/MMC (SD Z-Controller)
+- Agregado emulación IDE Nemo
+- Agregado emulación IDE Smuc
+- Actualizado a última ROM
+- Mejorada la temporización de la CPU en TSConf: añadidas las esperas de acceso a RAM y la emulación de la caché a 14 MHz, y corregido el momento de la interrupción raster en los modos turbo.
+- Corregida temporización de DMA
+- Corregido contador de scroll scroll counter, interrupción raster
+- Corregido alineación de DMA en modo burst, retorno en modo burst
+- Corregido transparencia del tile zero
+- Corregido color de borde detrás de capas transparentes
+- Corregido color negro brillante en paleta
+- Corregido resetear paleta de colores CRAM al cargar snapshots SPG
+- Corregido al acceder a TR-DOS y archivos .trd
+- Corregido al seleccionar diferentes roms de arranque en TS Bios
+- Corregido al acceder .trd, .scl y .tap seleccionados desde la máquina (por ejemplo con Wild commander)
+- Corregido al leer teclado en modo PS/2 (para Wild Commander por ejemplo)
+
+Corregida emulación del floppy disk 3" CF2 (usado en +3, CPC, PCW):
+- La mayoria de discos ya cargan, incluido discos protegidos
+- Corregido estado de fin-de-cilindro del PD765 despues de leer EOT (juegos protegidos con Alkatraz ahora cargan)
+- Corregido PD765 timeout de lectura
+- Corregido PD765 Speedlock lecturas de sectores débiles (CRC error) en imágenes EDSK de +3
+- Corregido carga de discos protegidos con Speedlock en Spectrum +3
+
+Corregida emulación del Sam Coupe:
+- Agregadas las interrupciones de línea y corregidos los pulsos de estado de las interrupciones de línea y fotograma
+- Agregada la lectura de la línea vertical mediante HPEN
+- Corregidos los niveles de intensidad de la paleta de 128 colores
+- Corregida la configuración de 256K de RAM: las páginas ausentes 16-31 ya no reflejan las páginas 0-15
+
+Corregidos timings para TK90X y TK95 modelos de 50 hz y 60 hz
+Corregido MEMPTR despues de instrucciones return de Z80
+Corregido lecturas de bus flotante en Spectrum 48K y 128K
+Corregido contención no-MREQ en Spectrum +2A and +3
+Corregido renderizado de CPC sin border
+Corregido Cocoa (macOS) cambio de máquina en pantalla completa
+Corregidas consultas usando el Speccy Online Browser
+Corregido en Master System scrolling y temporización raster
+Corregido arranque de Spectrum Next con NextZXOS 2.09
+Corregido efectos multicolor en Spectrum (Nirvana, etc). Gracias a noentiendo
+Corregido el desactivado del menú de Búsqueda
+Corregido al salvar archivos bmp que no tienen ancho multiple de 4
+Corregido al generar archivos pzx agregando pausa de un segundo entre bloques
+Corregido al mostrar forma de onda de cinta en Cinta Real Visual
+Corregido efecto de video Fade Out
+Corregida descarga de ZEsarUX extras desde menú Network
+Corregido al mostrar valores de botones de joystick real en ventana de Real Joystick information al usar SDL
+Corregido al dibujar última linea de forma de onda en ventana View Waveform
+Corregido al pulsar un botón superior redefinido con parámetros adicionales
+Corregida decodificación de paleta de ULA+ en TBBlue. Gracias Ignacio Monge
+Corregido copia-pega y comandos ZRCP send-ascii* en Amstrad CPC
+Corregido posible segfault en máquinas Spectrum al definir mas de 128KB de RAM
+Corregido comportamiento de NMI anidada en Spectrum + DivMMC/DivIDE
+
+----
+
+
+ZEsarUX 13 - The Way of the Exploding Fist edition. 09 Junio 2026
+
+* Cosas nuevas agregadas:
+
+Agregada versión para macOS Silicon
+Agregado soporte para drag&drop en Windows y Linux (Xwindow) - ya se soportaba en Mac y SDL2
+Permitir drag&drop de archivos comprimidos
+Agregado soporte para lectura de portapapeles y envio como pulsaciones de teclas en sistemas: Mac, Windows, GNU/Linux (SDL2, Xwindow)
+Renombrar función de "Input File Spooling" a "Enviar Texto como Pulsaciones de Teclado"
+Agregado un montón de efectos especiales para la salida de video:
+- Reducir, Temblar, Invertir Vertical, Invertir Horizontal, Rotar, Remolino, Interferencias, Mar, Ondas, Campo Magnético, Cizalla, Lente, Radar
+- Zoom, Zoom Mouse, Pixelar, Desenfocar, Borde Sombreado, LED, LED RGB, Pérdida Hsync, Pérdida Vsync, Vsync, Scroll Horizontal, Scroll Vertical, Fade In, Fade Out, Fade InOut
+- Scanlines, Sepia, Rojo, RGB, Decolorizar, Persistencia, Contraste, Brillo, Nagravision, Lineas Aleatorias, Decodificar Nagravision, Ordenar Parecidos, Rebote Logo
+- Restaurar Original, Copiar a buffer, Mezclar desde Buffer, Cargar BMP
+
+Permitir reducir pantalla a la mitad (1/2) y a un cuarto (1/4)
+Permitir reducir pantalla en Colecovision, CPC, Master System, MSX, Prism, SG1000, Spectravideo, Spectrum, TSConf, ZX80, ZX81, Z88
+Agregado efecto scanlines agresivo
+Agregado modo de color en blanco y negro con tramado
+Agregado modo de color RGB 8 bit
+Agregado mostrar rejilla de atributos en Spectrum
+Agregado efecto Audio Nagravision
+Permitir al driver SDL usar una paleta de color de 8 bits
+Permitir al driver SDL forzar el tamaño de la ventana
+Agregada ventana de estado de salida de midi
+Agregada tecla-f/icono para lanzar una acción ("SendKeysMenu") para enviar teclas al menú, por ejemplo enviar teclas "tti" para abrir cinta de entrada
+Permitir variable de entorno DESTDIR en el paso make install
+Permitir acelerar carga y grabación de diskette, microdrive, etc
+Permitir insertar una cinta estándar en ZX Spectrum cuando la cpu ya está ejecutando la rutina de la rom
+Permitir grabar historial de smartload en un archivo
+Agregada opción de configuración para autoactivar chip AY en modelos de Spectrum sin chip ay
+Agregada vista previa de snapshots ZSF de máquinas QL, ZX80 y ZX81
+Permitir ver GO SUB stack de ZX80 y ZX81
+Permitir caracteres utf-8 en footer
+Agregada mirilla de Dispositivos Ópticos
+Agregada emulación de Dispositivos Ópticos:
+- Datel Lightwriter
+- Defender Light Gun
+- Spectrum Doodler Lightpen
+- Stack Light Rifle
+- Trojan Light Pen
+
+* Mejoras:
+
+Mejorada emulación de ZX80 y ZX81:
+- Todo el código de temporización y pantalla se ha reescrito y corregido, cerca de 100% perfecto
+- Eliminadas opciones de configuración: --vsync-minimum-length, --no-horiz-stabilization, --enablezx8081lnctradjust, --disablezx8081lnctradjust
+- Eliminadas opciones del menú GUI settings: Estabilización Horizontal, lnctr video adjust, Video x_offset
+- Mejorada detección de sonido por vsync
+
+Mejorado Debug CPU:
+- Permitir mostrar tiempos de cada instrucción (opción no activada por defecto)
+- Agregada función para ejecutar hasta que la cpu encuentra un opcode de retorno (cualquier RET, RETI, RETN o RET with condición verdadera)
+- Mostrar cuando los valores de registros se han modificado por la última execución de instrucción
+- Vistas 5 y 6 usan un memptr diferente ("memptx")
+- Mostrar cuando la memoria se ha modificado por la última execución de instrucción en vistas 5 y 6
+- Tecla directa (t) para evaluar expresiones
+- Agregada opción para detenerse en PC+2 al hacer step over en RST 8, útil al debugar llamadas de esxdos
+- Agregadas variables de usuario VAR0, VAR1, ... VAR9
+- Agregado contador de frames de video
+- Permitir borrar un breakpoint desde la ventana de Edición de breakpoint
+- Reasignar tecla de opción 'x' ("cambiar modo de vista") a 'y' ("cambiar disposición")
+- Reasignar tecla de opción 'e' (RET) a 'E'
+
+Mejorado Snapshots en RAM:
+- Navegar de manera visual por todos los snapshots en RAM, como en una "Máquina del Tiempo"
+- Permitir guardar snapshots en RAM; antes podías hacerlo automáticamente a intervalo fijo, ahora puedes guardarlo cuando quieras
+
+Mejorado ZX Vision:
+- Agregado nuevo Menú Superior (no habilitado por defecto)
+- Agregado tooltips para botones superiores (de menús) e inferiores (de dispositivos) y para iconos
+- Agregado soporte para tipos de letra de 4 pixeles de ancho
+- Permitir elegir tamaño de tipo de letra > 8
+- Agregado tipo de letra "ZEsarUXtiny" adecuado para configuración de charset 4x6 (el mismo que ya se usaba en los iconos)
+- Agregado estilos de GUI "ZEsarUX Tiny" and "Pico-8"
+- Permitir pulsar teclas F de función desde el menú
+- Permitir reducir tamaño disponible menú a la mitad de la ventana principal
+- Permitir ver previews de archivos del selector de archivos en el fondo del ZX Desktop
+- La mayoría de ventanas ahora se pueden mover/redimensionar usando teclas mayus+OPQAWSKL
+- Reordenadas opciones & nuevo menú: revisa opciones -> Display Emulado, General, Ventana Principal, ZX Vision, TV
+- Movido varias opciones a opciones -> Hardware
+- Agregada acción al ayudante de atajos para crear icono que lanza las teclas grabadas
+- Algunos diálogos de ajustes pueden resetearse a valores por defecto
+- Agregado un control deslizante en diálogos de entrada numérica
+- Ventanas restauradas al inicio como maximizadas, se restaurarán al tamaño máximo disponible
+- Permitir enviar mensajes a ventanas, para disparar acciones. Se pueden enviar mensajes desde el menu Windows o desde la ventana de Gestión de Procesos
+- Permitir seleccionar estilo de GUI en oscuro o claro dependiendo de la hora actual
+- Cambiado set de caracteres para los estilos Solarized Dark y Light: ahora usa el mismo que AtariTOS
+- Mostrar tamaño ventana al redimensionar
+- Mostrar posición ventana al mover
+- Cambiado color del borde de ventanas al arrastrar para redimensionarlas: color de Aviso cuando la ventana necesita aumentarse de tamaño (porque hay texto mas allá del tamaño actual), y en caso contrario, color Seleccionado
+- Nuevo tipo de widget Triángulo en Ver Sensores
+
+Mejorado ZX Desktop:
+- Permitir definir valores pequeños para el ancho del ZX Desktop
+- Agregar opción para prohibir activar ZX Desktop
+- Permitir cambiar el color de fondo de iconos, botones inferiores y superiores
+- Agregada opción para ordenar automaticámente los iconos en ZX Desktop
+- Agregada opción para añadir un contorno a los iconos
+- Agregado icono de dispositivo SamRam
+- Ventanas no se cierran al activar ZX Desktop
+- Mejorado icono de Papelera
+
+Mejorado ZX Life:
+- Cada generación del juego puede avanzar al ritmo de la música del chip AY
+- Permitir acelerar juego
+- Corregir comportamiento en límites del tablero
+
+Permite ver todos los sprites de hardware a la vez en la ventana de Ver Sprites.
+Mejorado edición de joystick a eventos/teclas (permitir desasignar fácilmente)
+Mejorada precisión decimal de valores de ventana de Basic Variables
+Mejorado código para permitir compilar en otros sistemas Unix, como AROS, FiwixOS, Sortix, Minix3
+Mejorado ZENG Online protocol: permitir conectar cliente y servidor con diferentes versiones de ZEsarUX (siempre que sean compatibles), agregar tiempo de vida ("uptime") de las salas
+Mejorado inserción de archivos de dispositivos (archivos .mmc, archivos .ide, etc): ahora se habilitan automáticamente después de insertarlos
+Mejorado título de la ventana de ZEsarUX: unificar título en todos los diferentes drivers: SDL, X11, etc ...
+Mejorados menús de stdout: mostrar "..." y ">" cuando menú abre una ventana o menú tiene submenú
+Mejorada emulación de QL: permitir asumir mdv1_ para operaciones de archivos sin prefijo de dispositivo
+
+* Correcciones:
+
+Corregido problemas al activar modo de pantalla completa en macOS, Linux y Windows (drivers cocoa, xwindow, sdl, sdl2)
+Corregida emulación de Magnum Light Phaser
+Corregida lectura de puerto BFFD en Spectrum +2A/+3
+Corregida emulación de opcode DD/FD+EB: EX DE,HL en vez de EX DE,IX/IY
+Corregido tiempos de opcodes DD/FD inexistentes
+Corregido desensamblado de opcodes indocumentados DD/FD + CB + res/set (ix+d) donde el resultado también se guarda en un registro
+Corregida carga con --tape y --realtape con autocarga de snapshot al inicio
+Corregido registro C después de cargar cinta estandar (comportamiento no documentado) - corrige carga de juego Sweet Fightin' +2
+Corregido parámetro --sdl-force-win-size al usar modo de color rgb24 bit en SDL1
+Corregidos parámetros --sdl-force-win-size y --sdl-8bit-color en SDL2
+Corregido descomprimir archivos tar y rar con espacios en el nombre
+Corregido temporizador por defecto en Mac OS X cuando no se usa driver cocoa
+Corregido compilación sin pthreads
+Corregido posible división por 0 al obtener erróneamente el uso de cpu en Linux
+Corregido posible segfault en driver cocoa de macOS
+Corregido fallo visual en border en Spectrum Next al cambiar la velocidad turbo
+Corregido mostrar indicador de submenú (>) cuando el menú tiene barra de scroll vertical
+Corregido al reabrir ventanas que estaban cerradas y minimizadas (cuando la opción de "ocultar ventanas minimizadas" está activada)
+Corregido cambio de color de paleta en Amstrad PCW
+Corregido expandir contenidos de archivos .mdv de QL
+Corregido varios posibles segfaults en diferentes secciones del código
+Corregido entrar modo cpu-step desde ZRCP
+Eliminados algunos opcodes viejos/inexistentes de Next Z80N
+
+----
+
+
+ZEsarUX 12.1 - Night Shift edition. 25 Septiembre 2025
 
 * Cosas nuevas agregadas:
 
 Agregado modo Streaming a ZENG Online para ZX Spectrum. Mejora la experiencia de juego: reduce lag y elimina cualquier inconsistencia de estado de juego en todos los jugadores
-Agregada emulación de ZXMMC+
-Agregado emulación de una segunda tarjeta de MMC/SD
 Agregado soporte para joystick de tipo volante (y otros joysticks con controles analógicos) para juegos de carreras (usando modificaciones pre-definidas para juegos específicos o personalizados)
-Agregada conversión de archivos ZX81 P a P81, y P81 a P
-Permitir grabar pantalla de ZX80/81 a archivo .scr
-Permitir LOAD "nombre" de un archivo .P81 de ZX81
-Agregado previews de archivos .O (ZX80): mostrar listado basic
-Agregado previews de archivos .P/.P81 (ZX81) cuando no tienen pantalla grabada en el archivo: mostrar listado basic
 Agregado soporte de joystick real para SDL2
-Agregadas funciones directas para aumentar/reducir/silenciar el Volumen del Sonido
-Permitir grabar una nota de texto en un snapshot ZSF
-Permitir encontrar archivos de rom al ejecutar ZEsarUX desde una carpeta actual diferente de la ruta de las roms
-Permitir seleccionar máquina según tipo familia (Spectrum, ZX80, ZX81, CPC, etc)
-Agregado soporte para archivos .ay en Visor de Archivos
-Agregado soporte para archivos GENS en Visor de Archivos
-Permitir cambiar path del archivo de configuración desde el menú
-Premitir ver archivo expandido desde submenus de Almacenamiento (cinta, dsk, etc)
-Permitir ver la pila del GO SUB de Basic
-Agregado un asistente de configuración al iniciar ZEsarUX por primera vez
 Agregado soporte para 4 botones de fuego de joystick en:
 - Kempston joystick (Spectrum): 4 botones
 - Amstrad CPC: 3 botones
 - Master System, SG1000, Colecovision: 2 botones
+Agregada opción para emular un dispositivo de joystick barato, que mete valores en el bus, afectando a las interrupciones
+Agregada emulación de ZXMMC+
+Agregado emulación de una segunda tarjeta de MMC/SD
+Permitir grabar a disco audio capturado desde Fuente de Sonido Externa
+Permitir grabar pantalla de ZX80/81 a archivo .scr
+Permitir LOAD "nombre" de un archivo .P81 de ZX81
+Agregadas funciones directas para aumentar/reducir/silenciar el Volumen del Sonido
+Agregadas muchas cintas mías recuperadas de los años 80 y 90:
+- Un total de 264 archivos adicionales en la carpeta my_soft
+- Incluyen Utilidades y Juegos
+- Algunos nuevos, otros son diferentes versiones de programas ya existentes
+- La mayoría de Spectrum pero también algún programa de ZX81 (realizado por mi padre y hermanos)
+Permitir encontrar archivos de rom al ejecutar ZEsarUX desde una carpeta actual diferente de la ruta de las roms
+Permitir seleccionar máquina según tipo familia (Spectrum, ZX80, ZX81, CPC, etc)
+Permitir cambiar path del archivo de configuración desde el menú
+Permitir ver archivo expandido desde submenus de Almacenamiento (cinta, dsk, etc)
+Agregado un asistente de configuración al iniciar ZEsarUX por primera vez
+Permitir grabar una nota de texto en un snapshot ZSF
 
 * Mejoras:
 
 Mejorado AY Player:
-- Permitir cargar lista de reproducción del AY Player
-- Permitir grabar lista de reproducción del AY Player (lista entera o sólo archivos marcados)
+- Permitir cargar y grabar lista de reproducción del AY Player (la grabación por lista entera o sólo archivos marcados)
 - Permitir incrementar longitud de pista (para algunas pistas con longitud incorrecta)
 - Agregadas funciones directas para siguiente/anterior pista/archivo
 - Mostrar décimas de segundo en duración de canción y tiempo transcurrido
@@ -47,19 +338,19 @@ Mejorada emulación de Sinclair QL:
 - Corregido teclado de Sinclair QL: permitir escritura rápida
 - Permitir desactivar pantalla
 
-Mejorado ZX Vision:
-- Permitir ocultar ventanas minimizadas
-- Permitir ubicar ventanas mas allá de los límites de la ventana principal de ZEsarUX
-- No reabrir el menú al cerrar una ventana
-- Permitir escritura rápida de texto en campos de entrada
-- Mostrar, con un punto, cuando un icono es de una ventana abierta pero minimizada
-- Mantener las proporciones de tamaño de la ventana de ZEsarUX (no permitir zoom x/y diferente) por defecto
-- Ocultar el cursor al enviar una ventana a segundo plano
-- Permitir mostrar texto corto de los iconos del ZX Desktop
-- Preservar nombre de icono al cambiar su tipo
-- Cambiado set de caracteres para el estilo ZEsarUX Plus: ahora usa el mismo que AtariTOS, es un set de caracteres con mejor legibilidad
-- Agregado soporte de archivos rzx para el selector de archivos: se pueden expandir (a archivo de snapshot z80), mostrar vista previa, convertir a SCR, convertir a Z80, usar como fondo del ZX Desktop
-- Corregido fallo que duplica el Menú Principal al pulsar F6 desde el Menú Principal
+Mejorada conversión de audio de cintas reales de ZX81 a archivos P/P81:
+- Agregado un algoritmo mejorado alternativo
+- Agregada herramienta en Storage-> Tape
+- Permitir ver la señal de sonido mientras se convierte, describiendo pulsos, bits y bytes
+- Permitir escuchar la señal de sonido mientras se convierte
+- Permitir ver bits, bytes y caracteres mientras se convierte
+- Esta es una herramienta educativa y de preservación de como funciona la señal de cinta del ZX81
+
+Mejorada ventana Fuente de Sonido Externa:
+- Mostrar la frecuencia al detectar tono guía o bits 0/1
+- Mostrar cantidad aproximada de bytes leídos
+- Mostrar frecuencia media cuando señal desconocida
+- Permitir activar entrada desde esta ventana
 
 Mejorado Debug CPU:
 - Permitir ver e ir a la dirección previa de un opcode en el historial de cpu
@@ -82,24 +373,51 @@ Mejorado ZRCP:
 - Mejor gestión de CR+LF
 - Agregado comandos: cd, pwd
 
-Mejorada ventana Fuente de Sonido Externa:
-- Mostrar la frecuencia al detectar tono guía o bits 0/1
-- Mostrar cantidad aproximada de bytes leídos
-- Mostrar frecuencia media cuando señal desconocida
-- Permitir activar entrada desde esta ventana
+Mejorado ZX Vision:
+- Permitir ocultar ventanas minimizadas
+- Permitir ubicar ventanas mas allá de los límites de la ventana principal de ZEsarUX
+- No reabrir el menú al cerrar una ventana
+- Permitir escritura rápida de texto en campos de entrada
+- Mostrar, con un punto, cuando un icono es de una ventana abierta pero minimizada
+- Mantener las proporciones de tamaño de la ventana de ZEsarUX (no permitir zoom x/y diferente) por defecto
+- Ocultar el cursor al enviar una ventana a segundo plano
+- Permitir mostrar texto corto de los iconos del ZX Desktop
+- Preservar nombre de icono al cambiar su tipo
+- Cambiado set de caracteres para el estilo ZEsarUX Plus: ahora usa el mismo que AtariTOS, es un set de caracteres con mejor legibilidad
+- Agregado soporte de archivos rzx para el selector de archivos: se pueden expandir (a archivo de snapshot z80), mostrar vista previa, convertir a SCR, convertir a Z80, usar como fondo del ZX Desktop
+- Corregido fallo que duplica el Menú Principal al pulsar F6 desde el Menú Principal
 
-Mejorada ventana de View Basic:
+Mejorado Selector de Archivos:
+- Agregado previews de archivos .O (ZX80), .P/.81/.P81 (ZX81) cuando no tienen pantalla grabada en el archivo: mostrar listado del programa en basic
+- Agregado previews de basic de archivos .bas (ZX Spectrum), .baszx80 (ZX80), .baszx81 (ZX81)
+- Agregado previews de archivos .txt
+- Agregado previews de archivos .tap/.tzx/.pzx cuando no tienen pantalla: mostrar listado del programa en basic
+- Agregada conversión de archivos ZX81 P a P81, y P81 a P
+- Agregada algunas acciones para archivos .81 en Selector de Archivos
+- Permitir crear enlace a un archivo en el ZX Desktop, desde File utilities
+- Agregado soporte para archivos .ay en Visor de Archivos
+- Agregado soporte para archivos GENS en Visor de Archivos
+- Permitir usar ruta a una imagen montada FAT en todos los casos
+
+Mejorada ventana de View Basic Listing:
+- La ventana se puede dejar en segundo plano
+- Automaticamente refresca si el listado cambia
+- Permitir ver tokens de BetaBasic
+- Permitir definir inicio y longitud de programa personalizado
+- Permitir seguir línea en ejecución
 - Permitir lineas > 9999, útil para programas protegidos
-- AGREGAR LO QUE FALTA!!!
 
-Mejorada conversión de audio a archivos P/P81 de ZX81: agregado un algoritmo mejorado alternativo
-Mejorado Hexadecimal editor: expresión de seguimiento se guarda en configuración
+Mejorada ventana de View Basic Variables:
+- La ventana se puede dejar en segundo plano
+- Automaticamente refresca si las variables cambian
+
+Agregada ventana para ver la pila del GO SUB de Basic
+Mejorado Hexadecimal editor: la expresión de seguimiento se guarda en configuración
 Mejorado máximo de teclas enviado a ZENG/ZENG Online
 Mejorada temporización en Windows y otros sistemas que usen driver de video SDL. Ahora usa temporización de SDL
 Mejorada temporización en Mac usando temporizador nativo
 Mejorado logo de marca de agua: puede mostrarse sólo al cargar/grabar, puede cambiar colores al cargar/grabar
-Mejorado Mapa de Aventura mostrando direcciones entrar y salir
-Mejorado Selector de Archivos: permitir usar ruta a una imagen montada FAT en todos los casos
+Mejorado Mapa de Aventura: se agregan direcciones entrar y salir
 Mejorada ventana de Visual Cassette Tape: soportar también cinta estándar
 Mejorada opción de Custom rom agregando una opción para resetear la máquina
 Mejorada emulación de DivMMC, DivIDE y ZXMMC: permitir activarlos incluso si no hay tarjeta MMC/SD o IDE insertada
@@ -110,6 +428,7 @@ Corregido bloqueo de semáforos en Windows
 Corregido cálculo de uso de cpu cuando el footer está desactivado
 Corregida asignación de esxdos handler root dir al cargar un archivo .nex sin indicar path desde linea de comandos
 Corregido bug al restaurar un snapshot ZSF con DivIDE activado
+Corregido sonidos de menú al cerrar menú, al mostrar un error, y cuando el detector de silencio está activado
 Corregido segfault al pulsar CTRL-C en consola
 Corregido cambios de color de paleta en PCW
 Corregido teclado de Chloe: permitir escritura rápida
@@ -120,6 +439,7 @@ Corregida pestaña de protección de escritura en ventana de visual hilow datadr
 Corregida columna del Selector de Archivos para texto "<dir>" en carpetas con caracteres utf-8
 Corregido item de menú de tipo separador en driver video stdout
 Corregido al mostrar volumen mínimo en ventana Fuente de Sonido Externa
+Corregido segfault al usar texto a voz con menús stdout y mensajes de texto muy grandes
 
 ----
 
@@ -1013,5 +1333,4 @@ Corregido tipo de forma de onda "Scroll" en View WaveForm
 
 
 Algunas otras correcciones y mejoras
-
 

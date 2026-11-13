@@ -30,6 +30,8 @@
 //Para Linux
 #include <dirent.h>
 
+#include "compileoptions.h"
+
 //Para Mac
 #if defined(__APPLE__)
     #include <sys/syslimits.h>
@@ -46,6 +48,19 @@
 //FreeBSD, Haiku (y quizá otros Unix) utilizan este
 #include <limits.h>
 
+
+//Otros sistemas Unix
+#ifdef OTHER_UNIX
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+#ifndef NAME_MAX
+#define NAME_MAX 4096
+#endif
+
+#endif
 
 //
 //Fin uso de PATH_MAX en diferentes sistemas operativos

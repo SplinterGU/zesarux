@@ -45,6 +45,8 @@ z80_byte mmc_csd[16]={11,11,11,11,11,11,11,11,11,11,11,11,11,11,11,11};
 
 //Registro OCR
 z80_byte mmc_ocr[5]={5,0,0,0,0};
+int baseconf_mmc_r7_index=-1;
+z80_byte baseconf_mmc_r7_echo;
 //primer byte: R1: xxx0sss1
 //sss: status: 010 data accepted
 //Siguientes 4 bytes indican voltaje y algun status bit. Indicamos 0 y es voltaje 1.45V-1.50V
@@ -143,6 +145,7 @@ int mmc_cid_index=-1;
 
 //A 0 cuando se ha recibido todos los valores correctos de ocr
 int mmc_ocr_index=-1;
+int mmc_stop_index=-1;
 
 //A 0 cuando se ha recibido todos los valores correctos de read block
 int mmc_read_index=-1;
@@ -153,6 +156,7 @@ int mmc_write_index=-1;
 //Direcciones de inicio de lectura y escritura de datos
 unsigned int mmc_write_address;
 unsigned int mmc_read_address;
+z80_int mmc_read_crc;
 z80_byte mmc_last_command=0;
 int mmc_index_command=0;
 
@@ -227,6 +231,7 @@ void mmc_footer_mmc_operating(int tarjeta)
 {
 
     //printf("mmc_footer_mmc_operating card %d\n",tarjeta);
+    //printf("mmc_last_command: %02XH\n",mmc_last_command);
 
 	generic_footertext_print_operating("MMC");
     watermark_tell_device_activity();
@@ -633,6 +638,8 @@ void mmc_reset(void)
 
 void mmc_enable(int tarjeta)
 {
+    if (mmc_enabled[tarjeta].v) return;
+
         debug_printf (VERBOSE_INFO,"Enabling mmc");
         mmc_enabled[tarjeta].v=1;
 
@@ -647,6 +654,8 @@ void mmc_enable(int tarjeta)
 
 void mmc_disable(int tarjeta)
 {
+
+    if (mmc_enabled[tarjeta].v==0) return;
 
 	//Hacer flush si hay algun cambio
 	mmc_flush_flash_to_disk();
@@ -715,6 +724,8 @@ void mmc_cs(z80_byte value)
 	mmc_csd_index=-1;
 	mmc_cid_index=-1;
 	mmc_ocr_index=-1;
+	baseconf_mmc_r7_index=-1;
+	mmc_stop_index=-1;
 
 
 }
@@ -794,6 +805,20 @@ z80_byte mmc_read_byte_memory(unsigned int address)
 	}
 }
 
+static z80_int mmc_crc16_block(unsigned int address)
+{
+        z80_int crc=0;
+        int i,bit;
+
+        for (i=0;i<512;i++) {
+                crc ^= (z80_int)mmc_read_byte_memory(address+i)<<8;
+                for (bit=0;bit<8;bit++) {
+                        crc=(crc&0x8000) ? (crc<<1)^0x1021 : crc<<1;
+                }
+        }
+        return crc;
+}
+
 void mmc_write_byte_memory(unsigned int address,z80_byte value)
 {
 
@@ -827,7 +852,17 @@ z80_byte mmc_read(void)
 	//Si seleccionada tarjeta invalida, volver sin mas
 	if (mmc_tarjeta_invalida_seleccionada) return 0;
 
-	mmc_footer_mmc_operating(mmc_card_selected);
+
+    //printf("MMC read.  mmc_last_command=%02XH\n",mmc_last_command);
+
+
+    int mostrar_actividad=1;
+    //No mostrar actividad de tarjeta en caso de READ_OCR pues esto baseconf lo hace continuamente en el menu
+
+    if (MACHINE_IS_BASECONF && (mmc_last_command==0x7A || mmc_last_command==0) ) mostrar_actividad=0;
+
+	if (mostrar_actividad) mmc_footer_mmc_operating(mmc_card_selected);
+
 
 	z80_byte value;
 
@@ -836,14 +871,13 @@ z80_byte mmc_read(void)
 		return mmc_r1;
 	}
 
-    //printf("MMC read. mmc_last_command=%02XH\n",mmc_last_command);
 
 	//Actuar segun mmc_last_command
 	switch (mmc_last_command) {
 
 		case 0x00:
 			//Viene de un cs
-			if (MACHINE_IS_TBBLUE) return 0xFF; //Temporal. Sin esto no puede cargar el config.ini
+			if (MACHINE_IS_TBBLUE || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION_GMX) return 0xFF;
 			return 0;
 		break;
 
@@ -861,6 +895,16 @@ z80_byte mmc_read(void)
 		//0x48=CMD8=SEND_IF_COND. For only SDC V2. Check voltage range.
 		//Parece que es de deteccion de MMC/SD
 		case 0x48:
+			if (MACHINE_IS_BASECONF || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION_GMX) {
+				if (baseconf_mmc_r7_index>=0) {
+					static const z80_byte r7_prefix[5]={0xff,1,0,0,1};
+					value=baseconf_mmc_r7_index<5 ? r7_prefix[baseconf_mmc_r7_index] : baseconf_mmc_r7_echo;
+					baseconf_mmc_r7_index++;
+					if (baseconf_mmc_r7_index==6) baseconf_mmc_r7_index=-1;
+					return value;
+				}
+				return 0xff;
+			}
 			debug_printf (VERBOSE_DEBUG,"MMC Read command CMD8 SEND_IF_COND unhandled");
 
 			//mmc_r1 |=4; //Devolver error
@@ -971,9 +1015,13 @@ z80_byte mmc_read(void)
                 case 0x4C:
                         //debug_printf (VERBOSE_PARANOID,"MMC Read command STOP_TRANSMISSION. PC=%d A=%d BC=%d",reg_pc,reg_a,reg_bc);
 
-
-
-                        return 1;
+                        /* R1b: report success/busy once and then release
+                           the SPI bus with FF. */
+                        if (mmc_stop_index==0) {
+                                mmc_stop_index=1;
+                                return 0;
+                        }
+                        return 0xff;
                 break;
 
 
@@ -1004,19 +1052,16 @@ z80_byte mmc_read(void)
 					//(value>=32 && value<=127 ? value : '?') );
 				}
 
-                                //CRC. A FFh
-                                /*
-                                Nota: no estoy seguro viendo mi codigo si este crc se pretende que sean 1 byte o 2
-                                Porque tal y como está ahora, será 1 byte de crc. Si vemos sobre mmc_read_index:
-                                mmc_read_index=514. ultimo byte de datos
-                                mmc_read_index=515. se asigna value=crc=255. Se retorna ese value. Al incrementarse mmc_read_index pasa a ser 516 y luego a -1
-                                mmc_read_index=516. se asigna value=crc=255. Pero aqui NO se llega nunca pues mmc_read_index pasa de 515 a 516 y a -1 de golpe
-                                */
-                                if (mmc_read_index==515 || mmc_read_index==516) value=0xFF;
+                                if (MACHINE_IS_BASECONF || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION_GMX) {
+                                        //CRC16-CCITT, most significant byte first.
+                                        if (mmc_read_index==515) value=mmc_read_crc>>8;
+                                        if (mmc_read_index==516) value=mmc_read_crc&0xff;
+                                }
+                                else if (mmc_read_index==515 || mmc_read_index==516) value=0xff;
 
                                 //Si final
                                 mmc_read_index++;
-                                if (mmc_read_index==516) mmc_read_index=-1;
+                                if (mmc_read_index==((MACHINE_IS_BASECONF || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION_GMX) ? 517 : 516)) mmc_read_index=-1;
 
 
                                 return value;
@@ -1070,26 +1115,23 @@ z80_byte mmc_read(void)
                     //    (value>=32 && value<=127 ? value : '?') );
                 }
 
-                //cuando se han leido los 512 bytes, ir al siguiente sector
-                if (mmc_read_index==514) mmc_read_index=515;
-
-				/*
-
-
-                                //CRC. A FFh
-                                if (mmc_read_index==515 || mmc_read_index==516) value=0xFF;
-
-				*/
+                if (MACHINE_IS_BASECONF || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION_GMX) {
+                    //CRC16-CCITT del bloque, byte alto primero.
+                    if (mmc_read_index==515) value=mmc_read_crc>>8;
+                    if (mmc_read_index==516) value=mmc_read_crc&0xff;
+                }
+                else if (mmc_read_index==514) mmc_read_index=515;
 
                 //Si final
                 mmc_read_index++;
-                if (mmc_read_index==516) mmc_read_index=-1;
+                if (mmc_read_index==((MACHINE_IS_BASECONF || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION_GMX) ? 517 : 516)) mmc_read_index=-1;
 
 
                 //Siguiente bloque a leer
                 if (mmc_read_index==-1) {
                     mmc_read_index=0;
                     mmc_read_address +=512;
+                    if (MACHINE_IS_BASECONF || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION_GMX) mmc_read_crc=mmc_crc16_block(mmc_read_address);
                     //debug_printf (VERBOSE_PARANOID,"MMC: After read 512 bytes on READ_MULTIPLE_BLOCK. Jumping to next Block Read. mmc_read_address=%XH",mmc_read_address);
                 }
 
@@ -1142,8 +1184,19 @@ z80_byte mmc_read(void)
                 break;
 
                 case 0x7A:
-			debug_printf (VERBOSE_PARANOID,"MMC Read command READ_OCR");
+			if (!MACHINE_IS_BASECONF || mmc_ocr_index==0)
+				debug_printf (VERBOSE_PARANOID,"MMC Read command READ_OCR");
                         if (mmc_ocr_index>=0) {
+                                if (MACHINE_IS_BASECONF || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION_GMX) {
+                                        // BaseConf espera R3: un byte R1 seguido de cuatro bytes OCR.
+                                        static const z80_byte baseconf_ocr[4]={0x80,0xff,0x80,0x00};
+                                        if (mmc_ocr_index==0) value=0xff;
+                                        else if (mmc_ocr_index==1) value=0;
+                                        else value=baseconf_ocr[mmc_ocr_index-2];
+                                        mmc_ocr_index++;
+                                        if (mmc_ocr_index==6) mmc_ocr_index=-1;
+                                        return value;
+                                }
                                 //valor primero, byte ncr time
                                 if (mmc_ocr_index==0) {
                                         //printf ("retornando ncr\n");
@@ -1164,7 +1217,6 @@ z80_byte mmc_read(void)
 
                                 //CRC. A FFh
                                 if (mmc_ocr_index==7 || mmc_ocr_index==8) {
-                                        //printf ("retornando CRC\n");
                                         value=0xFF;
                                 }
 
@@ -1211,19 +1263,33 @@ void mmc_write(z80_byte value)
         return;
     }
 
-        //Si seleccionada tarjeta invalida, volver sin mas
-        if (mmc_tarjeta_invalida_seleccionada) {
-            return;
-        }
+    //Si seleccionada tarjeta invalida, volver sin mas
+    if (mmc_tarjeta_invalida_seleccionada) {
+        return;
+    }
 
-	mmc_footer_mmc_operating(mmc_card_selected);
+    // En TSConf y GMX, FFH genera relojes SPI entre comandos; no inicia uno nuevo.
+    if ((MACHINE_IS_TSCONF || MACHINE_IS_SCORPION_GMX) && mmc_index_command==0 && value==0xFF) return;
+
+    //printf("MMC write. mmc_last_command=%02XH\n",mmc_last_command);
+
 
 
 	if (mmc_index_command==0) {
-        //printf("MMC Se recibe comando %d (%02XH)\n",value,value);
+        //printf("MMC Se recibe write comando %d (%02XH). antes mmc_last_command=%02XH\n",value,value,mmc_last_command);
 		//Se recibe comando
 		mmc_last_command=value;
 		mmc_index_command++;
+
+        //Solo mostraremos actividad en footer/icono SD en caso de nuevo comando y no de escritura de parametros
+        //de comando. Esto es suficiente y ademas facilita filtrar los comandos de baseconf aqui abajo
+
+        int mostrar_actividad=1;
+        //No mostrar actividad de tarjeta en caso de READ_OCR pues esto baseconf lo hace continuamente en el menu
+
+        if (MACHINE_IS_BASECONF && (mmc_last_command==0x7A || mmc_last_command==0) ) mostrar_actividad=0;
+
+        if (mostrar_actividad) mmc_footer_mmc_operating(mmc_card_selected);
 	}
 
 	else {
@@ -1251,6 +1317,16 @@ void mmc_write(z80_byte value)
 			//0x48=CMD8=SEND_IF_COND. For only SDC V2. Check voltage range.
 			//Parece que es de deteccion de MMC/SD
 			case 0x48:
+				if (MACHINE_IS_BASECONF || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION_GMX) {
+					// CMD8 devuelve en R7 el patrón de comprobación recibido.
+					if (mmc_index_command==4) baseconf_mmc_r7_echo=value;
+					if (mmc_index_command==5) {
+						baseconf_mmc_r7_index=0;
+						mmc_index_command=0;
+					}
+					else mmc_index_command++;
+					break;
+				}
 				debug_printf (VERBOSE_DEBUG,"MMC Write command CMD8 SEND_IF_COND unhandled");
 				//mmc_r1 |=4; //devolver error
 			break;
@@ -1269,27 +1345,28 @@ void mmc_write(z80_byte value)
 				else mmc_index_command++;
 			break;
 
-                        //SEND_CID
-                        case 0x4a:
-				debug_printf (VERBOSE_PARANOID,"MMC Write command SEND_CID");
-                                //5 valores envia
-                                if (mmc_index_command==5) {
-                                        //Ya se pueden enviar valores csd
-                                        mmc_cid_index=0;
-                                        //Reseteamos indice
-                                        mmc_index_command=0;
-                                }
-                                else mmc_index_command++;
-                        break;
+            //SEND_CID
+            case 0x4a:
+                debug_printf (VERBOSE_PARANOID,"MMC Write command SEND_CID");
+                //5 valores envia
+                if (mmc_index_command==5) {
+                        //Ya se pueden enviar valores csd
+                        mmc_cid_index=0;
+                        //Reseteamos indice
+                        mmc_index_command=0;
+                }
+                else mmc_index_command++;
+            break;
 
 
-                case 0x4C:
+            case 0x4C:
                     //debug_printf (VERBOSE_PARANOID,"MMC Write command STOP_TRANSMISSION");
 
 
 			        if (mmc_index_command==5) {
                         //Estado idle
                         mmc_r1=1;
+			            mmc_stop_index=0;
                         //Reseteamos indice
                         mmc_index_command=0;
                     }
@@ -1309,8 +1386,8 @@ void mmc_write(z80_byte value)
 
 				//5 valores y el ff del final
 				if (mmc_index_command==6) {
-                                        //Reseteamos indice
-                                        mmc_index_command=0;
+                    //Reseteamos indice
+                    mmc_index_command=0;
 
 					//Devolvemos datos
 					//printf ("Reading byte at address 0x%02X 0x%02X 0x%02X 0x%02X\n",mmc_parameters_sent[0],mmc_parameters_sent[1],
@@ -1320,13 +1397,10 @@ void mmc_write(z80_byte value)
                                                 mmc_parameters_sent[2],mmc_parameters_sent[3]);
 					//printf ("Direccion: 0x%X\n",direccion);
 					mmc_read_address=direccion;
-
-
-
-
+					if (MACHINE_IS_BASECONF || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION_GMX) mmc_read_crc=mmc_crc16_block(direccion);
 					mmc_read_index=0;
                                 }
-                        break;
+            break;
 
 			//READ MULTIPLE BLOCK
 			case 0x52:
@@ -1350,6 +1424,7 @@ void mmc_write(z80_byte value)
                                         //printf ("Direccion: 0x%X\n",direccion);
                                         //printf ("MMC Write command READ_MULTIPLE_BLOCK. Address: %XH\n",direccion);
                                         mmc_read_address=direccion;
+									if (MACHINE_IS_BASECONF || MACHINE_IS_TSCONF || MACHINE_IS_SCORPION_GMX) mmc_read_crc=mmc_crc16_block(direccion);
                                         //debug_printf (VERBOSE_PARANOID,"MMC Write command READ_MULTIPLE_BLOCK. Address: %XH",direccion);
 
 
@@ -1411,7 +1486,8 @@ void mmc_write(z80_byte value)
 			//Aunque en divmmc, si quitamos este comando no cambia nada
 			//En cambio si lo implementamos mal (por ejemplo devolviedo diferentes valores de retorno) la tarjeta no la detecta
 			case 0x7A:
-				debug_printf (VERBOSE_PARANOID,"MMC Write command READ_OCR");
+				if (!MACHINE_IS_BASECONF || mmc_index_command==5)
+					debug_printf (VERBOSE_PARANOID,"MMC Write command READ_OCR");
                                 //5 valores envia
                                 if (mmc_index_command==5) {
                                         //Ya se pueden enviar valores ocr

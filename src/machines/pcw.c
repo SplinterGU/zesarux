@@ -25,10 +25,12 @@
 #include "pcw.h"
 #include "cpu.h"
 #include "screen.h"
+#include "screen_fx.h"
 #include "debug.h"
 #include "contend.h"
 #include "joystick.h"
 #include "zxvision.h"
+#include "menu_items.h"
 #include "operaciones.h"
 #include "utils.h"
 #include "audio.h"
@@ -286,13 +288,18 @@ void pcw_set_memory_pages(void)
 
 }
 
-//Tabla de colores en rgb24, solo se usa al principio para convertirla a rgb15
-int pcw_rgb_table[PCW_TOTAL_PALETTE_COLOURS]={
+//Tabla de colores en rgb24, para modos 0, 1, 2, 3
+int pcw_rgb24_full_table[PCW_ALL_COLOURS_MODES]={
 
+    //
+    // 2 colores para modo 0
+    //
     0x000000, //negro
     0x41FF00,  //verde. Tipico color de green "P1" phosphor
 
-    //4 colores tipicos de CGA
+    //
+    // 16 colores para modo 1, realmente son 4 paletas diferentes, los 4 colores tipicos de CGA
+    //
 
     //Paleta 0 low intensity
     //negro, green, red, brown
@@ -322,7 +329,9 @@ int pcw_rgb_table[PCW_TOTAL_PALETTE_COLOURS]={
     0xFFFFFF, //white
 
 
-    //paleta 16 colores
+    //
+    // 16 colores para modo 2, 3
+    //
     0x000000,
     0x0000AA,
     0x00AA00,
@@ -360,14 +369,51 @@ int pcw_convert_rgb_24_to_rgb_15(int rgb24)
     return rgb15;
 }
 
-#define PCW_COLOUR_START_MODE1_RGB15 2
-#define PCW_COLOUR_START_MODE2_RGB15 (PCW_COLOUR_START_MODE1_RGB15+(4*4))
+#define PCW_COLORS_IN_MODE0 2
+#define PCW_COLORS_IN_MODE1 (4*4)
+#define PCW_COLORS_IN_MODE2_3 16
+
+#define PCW_COLOUR_NEW_START_MODE1_RGB15 PCW_COLORS_IN_MODE0
+#define PCW_COLOUR_NEW_START_MODE2_RGB15 (PCW_COLOUR_NEW_START_MODE1_RGB15+PCW_COLORS_IN_MODE1)
+
+typedef struct {
+    int offset,total_colores;
+} pcw_colores_paletas;
+
+pcw_colores_paletas lista_pcw_colores_paletas[3]={
+    {0,PCW_COLORS_IN_MODE0},
+    {PCW_COLOUR_NEW_START_MODE1_RGB15,PCW_COLORS_IN_MODE1},
+    {PCW_COLOUR_NEW_START_MODE2_RGB15,PCW_COLORS_IN_MODE2_3}
+};
 
 //La paleta de trabajo es esta, en 15 bits, que al final se obtendran colores de paleta de tsconf de 15 bits
 //Cuando el pcw modifica algun color de la paleta, se hace sobre esta paleta de 15 bits
+//Son 16 colores, todos compartidos entre todos modos
+//Por ejemplo los 2 colores del modo 0 son los mismos 2 colores iniciales del modo 1, PERO,
+//habitualmente al cambiar el modo de video (dependiendo del bit 7 del valor) se sobreescriben los colores que la componen llamando a pcw_init_colour_palette_mode,
+//y dicha funcion asigna los colores de pcw_rgb_table_15_bits segun pcw_rgb24_full_table, con los colores que tiene de cada modo
 int pcw_rgb_table_15_bits[PCW_TOTAL_PALETTE_COLOURS];
 
+//Resetear paleta asociada a un modo concreto
+//Modos 2 y 3 comparten misma paleta
+void pcw_init_colour_palette_mode(int mode)
+{
+    if (mode>=4) mode=0;
+    if (mode==3) mode=2;
+
+    int colores=lista_pcw_colores_paletas[mode].total_colores;
+    int offset_origen=lista_pcw_colores_paletas[mode].offset;
+
+    int i;
+    for (i=0;i<colores;i++) {
+        int rgb_24=pcw_rgb24_full_table[offset_origen+i];
+        int rgb_15=pcw_convert_rgb_24_to_rgb_15(rgb_24);
+        pcw_rgb_table_15_bits[i]=rgb_15;
+    }
+}
+
 //Convertir los colores rgb24 a rgb15
+/*
 void pcw_init_colour_palette(void)
 {
 
@@ -380,6 +426,7 @@ void pcw_init_colour_palette(void)
     }
 
 }
+*/
 
 
 //Retorna el color de 15 bits de un indice a paleta
@@ -408,20 +455,18 @@ int pcw_get_rgb_color_mode0(int i)
 int pcw_get_rgb_color_mode1(int i)
 {
     int indice_color=i+pcw_mode1_palette*4;
-    int color_rgb15=pcw_get_color_palette(PCW_COLOUR_START_MODE1_RGB15+indice_color);
+    int color_rgb15=pcw_get_color_palette(indice_color);
 
     int indice_color_rgb24=TSCONF_INDEX_FIRST_COLOR+color_rgb15;
     //printf("%d %d\n",i,indice_color_rgb24);
     return indice_color_rgb24;
 }
 
-//Retorna el color en modo 2
-int pcw_get_rgb_color_mode2(int i)
+//Retorna el color en modo 2 y 3
+int pcw_get_rgb_color_mode2_3(int i)
 {
-
-
     int indice_color=i;
-    int color_rgb15=pcw_get_color_palette(PCW_COLOUR_START_MODE2_RGB15+indice_color);
+    int color_rgb15=pcw_get_color_palette(indice_color);
 
     int indice_color_rgb24=TSCONF_INDEX_FIRST_COLOR+color_rgb15;
     //printf("%d %d\n",i,indice_color_rgb24);
@@ -455,7 +500,7 @@ void pcw_refresca_putpixel_mode2(int x,int y,int color)
 {
     y*=2;
 
-    int color_final=pcw_get_rgb_color_mode2(color);
+    int color_final=pcw_get_rgb_color_mode2_3(color);
 
     scr_putpixel_zoom(x,y,color_final);
     scr_putpixel_zoom(x,y+1,color_final);
@@ -485,14 +530,10 @@ int pcw_get_palette_colour(int indice_color)
         break;
 
         case 1:
-            indice_color=indice_color % 16;
-            return pcw_get_palette_colour_indexfinal(PCW_COLOUR_START_MODE1_RGB15+indice_color);
-        break;
-
         case 2:
         default:
             indice_color=indice_color % 16;
-            return pcw_get_palette_colour_indexfinal(PCW_COLOUR_START_MODE2_RGB15+indice_color);
+            return pcw_get_palette_colour_indexfinal(indice_color);
         break;
 
     }
@@ -522,14 +563,10 @@ void pcw_change_palette_colour(int indice_color,int rgb_color)
         break;
 
         case 1:
-            indice_color=indice_color % 16;
-            pcw_change_palette_colour_indexfinal(PCW_COLOUR_START_MODE1_RGB15+indice_color,rgb_color);
-        break;
-
         case 2:
         default:
             indice_color=indice_color % 16;
-            pcw_change_palette_colour_indexfinal(PCW_COLOUR_START_MODE2_RGB15+indice_color,rgb_color);
+            pcw_change_palette_colour_indexfinal(indice_color,rgb_color);
         break;
 
     }
@@ -579,7 +616,8 @@ void pcw_reset(void)
 
     pcw_video_mode=0;
 
-    pcw_init_colour_palette();
+    //pcw_init_colour_palette();
+    pcw_init_colour_palette_mode(pcw_video_mode);
 }
 
 void pcw_init_memory_tables(void)
@@ -1308,7 +1346,6 @@ void scr_refresca_pantalla_y_border_pcw_no_rainbow(void)
     if (border_enabled.v) {
         if (modificado_border.v) {
 
-
             int border_col=0;
 
             //Reverse video
@@ -1320,7 +1357,7 @@ void scr_refresca_pantalla_y_border_pcw_no_rainbow(void)
             //Ejemplo de juego que usa color modo 1: knight lore
             if (pcw_video_mode==0) color=pcw_get_rgb_color_mode0(border_col);
             else if (pcw_video_mode==1) color=pcw_get_rgb_color_mode1(border_col*3);
-            else color=pcw_get_rgb_color_mode2(border_col*15);
+            else color=pcw_get_rgb_color_mode2_3(border_col*15);
 
 
             scr_refresca_border_pcw(color);
@@ -1334,20 +1371,109 @@ void scr_refresca_pantalla_y_border_pcw_no_rainbow(void)
 
 
 
+// Guarda una línea visible de PCW, con sus dos filas de píxeles, en rainbow.
+void screen_store_scanline_rainbow_pcw_border_and_display(void)
+{
+    // La línea física incluye el borde; las primeras líneas invisibles se omiten.
+    int visible_y=t_scanline_draw-screen_invisible_borde_superior;
+    // El borde está expresado en píxeles de salida; cada scanline ocupa dos filas.
+    int source_y=visible_y-PCW_TOP_BORDER_NO_ZOOM/2;
+    int width=get_total_ancho_rainbow();
+    int height=get_total_alto_rainbow();
+
+    int output_y=border_enabled.v ? visible_y*2 : source_y*2;
+    int left=border_enabled.v ? PCW_LEFT_BORDER_NO_ZOOM : 0;
+    int x,bit,repeat;
+    z80_int *row;
+    z80_int *next_row;
+
+    if (output_y<0 || output_y+1>=height) return;
+
+    // El vídeo inverso afecta también al borde, como en el render normal.
+    int border_index=0;
+    if ((pcw_port_f7_value & 0x80) && !pcw_do_not_inverse_display.v) border_index=1;
+    int border_color;
+    if (pcw_video_mode==0) border_color=pcw_get_rgb_color_mode0(border_index);
+    else if (pcw_video_mode==1) border_color=pcw_get_rgb_color_mode1(border_index*3);
+    else border_color=pcw_get_rgb_color_mode2_3(border_index*15);
+
+    row=&rainbow_buffer[output_y*width];
+    next_row=row+width;
+    // El borde se escribe a la vez en las dos filas de salida.
+    for (x=0;x<width;x++) row[x]=next_row[x]=border_color;
+
+    if (source_y>=0 && source_y<256) {
+        // El roller RAM selecciona el banco y la dirección de cada línea.
+        z80_byte roller_bank=(pcw_port_f5_value>>5)&7;
+        z80_int roller_offset=(pcw_port_f5_value&31)*512;
+        z80_byte scroll=pcw_do_not_scroll.v ? 0 : pcw_port_f6_value;
+        z80_byte address_block;
+        z80_int address;
+        scr_refresca_pant_pcw_return_line_pointer(roller_bank,
+            roller_offset+((source_y+scroll)&255)*2,&address_block,&address);
+
+        for (x=0;x<720;x+=8) {
+            z80_byte value=pcw_ram_mem_table[address_block][address+x];
+            if ((pcw_port_f7_value & 0x80) && !pcw_do_not_inverse_display.v) value^=255;
+            if (!(pcw_port_f7_value & 0x40) && !pcw_always_on_display.v) value=0;
+
+            if (pcw_video_mode==3) {
+                // El primer byte contiene papel y tinta; el segundo, los ocho bits.
+                if (x&8) continue;
+                int paper=(value>>4)&15;
+                int ink=value&15;
+                z80_byte pixels=pcw_ram_mem_table[address_block][address+x+8];
+                for (bit=0;bit<8;bit++) {
+                    int color=pcw_get_rgb_color_mode2_3((pixels&128) ? ink : paper);
+                    row[left+x+bit*2]=next_row[left+x+bit*2]=color;
+                    row[left+x+bit*2+1]=next_row[left+x+bit*2+1]=color;
+                    pixels<<=1;
+                }
+            }
+            else {
+                // Los modos 1 y 2 repiten cada color dos o cuatro píxeles.
+                int bits_per_pixel=pcw_video_mode==0 ? 1 : (pcw_video_mode==1 ? 2 : 4);
+                int mask=(1<<bits_per_pixel)-1;
+                for (bit=0;bit<8;bit+=bits_per_pixel) {
+                    int index=(value>>(8-bit-bits_per_pixel))&mask;
+
+                    int color;
+                    if (pcw_video_mode==0) color=pcw_get_rgb_color_mode0(index);
+                    else if (pcw_video_mode==1) color=pcw_get_rgb_color_mode1(index);
+                    else color=pcw_get_rgb_color_mode2_3(index);
+
+                    for (repeat=0;repeat<bits_per_pixel;repeat++)
+                        row[left+x+bit+repeat]=next_row[left+x+bit+repeat]=color;
+                }
+            }
+        }
+    }
+}
+
+void scr_refresca_pantalla_y_border_pcw_rainbow(void)
+{
+    if (ventana_video_output_esta_abierta()) return;
+
+    int width=get_total_ancho_rainbow();
+    int height=get_total_alto_rainbow();
+    z80_int *pixels=screen_rainbow_effects(rainbow_buffer,width,height);
+    int x,y;
+    for (y=0;y<height;y++) {
+        for (x=0;x<width;x++) scr_putpixel_zoom_rainbow(x,y,*pixels++);
+    }
+}
+
 void scr_refresca_pantalla_y_border_pcw(void)
 {
 
-    //TODO : de momento sin rainbow
-    scr_refresca_pantalla_y_border_pcw_no_rainbow();
 
-    /*
     if (rainbow_enabled.v) {
         scr_refresca_pantalla_y_border_pcw_rainbow();
     }
     else {
         scr_refresca_pantalla_y_border_pcw_no_rainbow();
     }
-    */
+
 }
 
 int pcw_was_booting_disk_enabled=0;
@@ -1513,6 +1639,15 @@ void pcw_boot_check_dsk_not_bootable(void)
 void pcw_out_port_video(z80_byte puerto_l,z80_byte value)
 {
 
+    /*
+    El puerto $80 se usa para mandar un valor para elegir registro.
+    En puerto $81 es para los datos asociados; ambos soportan lectura y escritura
+
+    Internamente hay 3 registros de estado (llamémoslos est0, est1 y est2).
+    Cuando se escribe en el puerto $80, el primero (est0, función) son los 4 bits más significativos del valor enviado al puerto $80,
+    el segundo (est1, índice) los 4 menos significativos del valor enviado al puerto $80 y el último (est2, subíndice, sólo usado para paleta de 24 bits) se pone a 0.
+    */
+
     if (puerto_l==0x80) {
         pcw_last_port_80_value=value;
 
@@ -1527,8 +1662,10 @@ void pcw_out_port_video(z80_byte puerto_l,z80_byte value)
     if (puerto_l==0x81) {
         pcw_last_port_81_value=value;
 
+        z80_byte funcion=(pcw_last_port_80_value >>4) & 0xF;
 
-        if (pcw_last_port_80_value & 0x20) {
+
+        if (funcion==2) {
             //Cambio color paleta mediante indice a colores
 
             int indice_a_color;
@@ -1549,7 +1686,7 @@ void pcw_out_port_video(z80_byte puerto_l,z80_byte value)
             if (pcw_last_index_color_change>=16) pcw_last_index_color_change=0;
         }
 
-        else if (pcw_last_port_80_value & 0x10) {
+        else if (funcion==1) {
             //Cambio color paleta mediante RGB
 
 
@@ -1593,17 +1730,33 @@ void pcw_out_port_video(z80_byte puerto_l,z80_byte value)
             }
         }
 
-        else {
+        else if (funcion==0) {
             //Cambio modo
-            if (value>=4) value=0;
+            int modo=value & 0x7F;
+            //printf("Cambio a modo %d\n",modo);
+            if (modo>=4) modo=0;
+            //7 bits indican el numero de modo. Aunque solo hay modos desde 0 a 4. 4 no soportado en ZEsarUX
 
-            pcw_video_mode=value;
+            //bit 7 de value. Si a 0, se resetea paleta por defecto. A 1, no se resetea a paleta por defecto
+            if ((value & 128)==0) {
+                //printf("Reset paleta\n");
+
+                pcw_init_colour_palette_mode(modo);
+            }
+
+
+            pcw_video_mode=modo;
 
             char buffer_mensaje[256];
             sprintf(buffer_mensaje,"Setting video mode %s",pcw_video_mode_names[pcw_video_mode]);
             screen_print_splash_text_center_no_if_previous(ESTILO_GUI_TINTA_NORMAL,ESTILO_GUI_PAPEL_NORMAL,buffer_mensaje);
 
         }
+
+        else if (funcion==3) {
+            //printf("Cambio de color en border no implementado\n");
+        }
+
     }
 
 }

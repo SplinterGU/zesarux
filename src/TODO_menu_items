@@ -1,0 +1,278 @@
+-- menu items Mejoras
+
+-Ayuda en process management. Cada ítem de ayuda muestra mismo mensaje. Además debe ser un string definido una sola vez que en cada ítem apunta a mismo puntero . Que significa esto????????
+-process management: no muestra uso tiempo de ventana zxlife si la ventana actual es zxlife
+
+-En visor de disco (dsk) con archivos, que indique User number (UU) de cada archivo? Ver https://www.seasip.info/Cpm/format22.html
+-O incluso mejor un browser/viewer de formato CP/M, que indique:
+*extent number
+*date file
+*etc
+
+-En visor dsk que solo muestre primer extent de un archivo. ya esta??
+-extractor dsk no obtiene bien longitudes de disco cpc (porque intenta obtener cabecera plus3dos). ok ya?
+-extractor dsk que use misma manera que visor dsk?
+-extractor dsk creo que a veces lee archivos con cabecera plus3dos. ejemplo : chase hq2. tampoco parece obtener bien siempre los datos (de otro sitio...)
+lecturas de plus3dos headers no van bien: Real length file SCREEN  .    read from PLUS3DOS header: 55560
+
+-quiza funcion que espera_no_tecla sin considerar movimiento raton, deberia ser la habitual, y solo en casos concretos
+usar la que si considera movimiento raton
+
+
+
+-Poder ver variables de una cinta .P, .O e incluso basic de spectrum (desde el bloque de basic de un .tap?)
+quizá tiene un uso muy reducido porque los programas necesariamente no se graban con variables, excepto algunos que guardan datos
+como matrices y cosas asi. pero en ese caso se pueden cargar y ya luego examinar variables
+
+
+-Juego "Simón" haciendo uso del logo X. Y con sonidos de eventos de menú
+
+-app Calculadora que permita escribir expresiones
+
+-Tetris en app procrastinate ?
+
+-En imagen IA de descripción, botón para pedir otra imagen a la IA
+
+
+-Alto total de process switcher se amplía si necesita ubicar más iconos?
+Debería aumentar total_height si es necesario
+
+
+-quiza un widget de sensors con la Z del logo?
+
+-Audio chip sheet en modo texto. Que salgan en 3 líneas de texto por cada canal y las notas y hagan scroll igual
+
+-select machine by name hace scroll horizontal la ventana de menu. por que? porque se activa scroll vertical y se pierde 1 caracter de ancho
+
+
+-Visualmem mmc read/write en Windows no muestra bien posicion (siempre a 0). Probablemente porque es 32 bits y no gestiona bien
+valores long int
+
+-Osd keyboard sin multitarea en ZX81 no va fino
+
+-filesel: Quizá campos pulsables que se vean distintos?
+
+-sprite disabling window tambien para tsconf y maquinas con chip vdp (msx, etc)
+
+-View sprites hardware parece que en tsconf no siempre se ve bien. Ejemplo demo Mustang
+
+-al salir de filesel, debe cambiar unidad activa a la local, y no a mmc.
+Esto podria provocar que otros sitios que usan ZVFS (por ejemplo esxdos handler) accedieran a la mmc si lo ultimo que se ha accedido
+desde filesel era la mmc
+Quiza solo el menu (y no esxdos handler , zxpand u otros) debe usar ZVFS. El resto, rutinas de sistema? -> esxdos, zxpand etc ya NO usan ZVFS
+
+-En debug cpu, quizá al mover rueda de ratón tiene que volver de menú espera tecla. Si no,
+es lo que hace que al moverse con la rueda por vista debug cpu, haya que hacer movimiento de raton para que funcione
+El problema es que mouse_wheel_vertical se lee y luego siempre se debe poner a 0
+Si la ponemos a 0 en bucle de leer tecla, luego no se lee realmente del menu debug cpu
+
+
+-agregar sensor temperatura cpu linux
+
+
+-frecuencias chips audio como sensores? no sé si vale la pena pues los valores de frecuencias son exponenciales y por ejemplo
+las ultimas dos notas, una es el doble de la otra. Por tanto si usamos un widget de speedometer, estaria casi al 0 siempre excepto para
+frecuencias muy altas.
+
+-quiza linea cursor en debug cpu ubicar en el centro
+
+- realtape browser que pille el setting de improved algorithm yes/no
+
+-file browser no muestra dispositivos. importante para uart
+Por alguna razón, en /dev no llega a leerlos ni entrando antes del filtro. Quiza algun parametro especial del directorio
+o algo que no hago bien al leer directorio. La solución pasa por escribir el nombre directamente en el file selector (pulsando TAB o click de raton
+arriba)
+-no lee enlaces simbolicos en filesystem: ejemplo /home/pi/PREPARADOS de raspiboy
+-no se ven enlaces simbólicos en navegador de archivos. Como mínimo de Mac no se ven. Y en Linux?
+-quiza get_file_type deberia excluir sockets y devices, no considerarlos archivos normales,
+asi en smartload y similares no aparecerian -> pero en caso de UART si que deben salir dispositivos!!
+
+- Tape Improved algorithm quizá renombrar a “alternate” algorithm
+
+-ula settings visible en otras maquinas no-spectrum?
+
+
+-Opción no marcar registros en rojo que se van  a modificar en debug cpu
+
+
+-Ventana ayuda teclado:
+* que se pudiera hacer sin multiplicar por zoom_gui? asi en next, cpc, ql etc no se verian el doble de grande
+
+-algun tipo de indicacion en un menu que diga que no debe activar salir_todos_menus al pulsar ESC, por ejemplo en algunos no quiero
+que se cierren los anteriores, ejemplo:
+*cambio de zona de memoria desde debug cpu o hexdump
+*breakpoints
+*watches
+En estos casos de momento lo que he hecho es que al final de cada menu se haga un "salir_todos_menus=0"
+
+
+-Mostrar info en menu network de descargas, commits etc. Solo si hay ssl (porque github solo esta con https)
+
+-Info video mode Pentagon 16c ventana. Que diga modo activo en ventana vídeo info. Problema: en maquina no tsconf o tbblue no hay ventana de video info
+
+-AY partitura:
+*para el beeper tambien -> no hasta que se mejore la rutina de deteccion de nota
+*ideal para probar duraciones: golden axe
+
+
+-temperatura cpu en mac
+https://github.com/lavoiesl/osx-cpu-temp
+
+
+-En info file de file utils, decir tipo de archivo. Usar alguna llamada común para tipo archivo y visor archivo
+
+-hex editor: muestra pagina entera cuando una zona de memoria por ejemplo solo es de 2 bytes. Probar por ejemplo con debug memory zone
+
+-real video render
+Que en vez de ir siempre al offset 0,0 pueda ir al offset de una ventana abierta, la de video output
+Esto permitira mover el render a una ventana. Pero requiere:
+-que esa ventana aunque esté arriba no "tape" el render de pixeles: por defecto toda ventana arriba tapa el render de abajo. quiza atributo nuevo de ventana tipo "transparente"
+o solo un atributo especial para este render
+-que el render no salga de los limites de esa ventana ni de la ventana principal
+-alguna manera de conmutar entre el render normal y el de esa ventana
+
+-ventana status esxdos handler:
+*archivos abiertos. asi como la info de cada uno. ya hay un comando de zrcp que lo retorna. esxdoshandler-get-open-files
+*cwd?
+
+-keyboard help
+- pulsar , o . en ZX81 con ventana abierta, deja apretada la N o M
+- chloe. completar teclas extendidas. ver que hacer con combinaciones de shift...
+- keyboard help no hace por ejemplo en cpc 664 teclas [ ] pulsando esas teclas en el teclado fisico: esto sucede porque en menu
+no genera codigo de tecla al pulsar esas extendidas
+
+-ventana midi output status
+*mejorarla quizá dibujando piano? aunque será lo mismo que la ventana Audio Chip Piano
+
+-menu display. teclado en pantalla. quiza poner aqui el nuevo de help keyboard. dejar ese viejo solo para drivers de video de tipo texto, cacalib, etc. considerar ademas que ese antiguo solo sale para spectrum y zx80/81. Ojo que el teclado en pantalla de texto debería también salir al pulsar tecla de OSD teclado (F8), pero solo cuando es driver texto. Pero la gestion de teclado cuando se pulsa F8 es un tanto especial, porque
+envia la tecla abajo y vale en cualquier parte de menu. Quiza en F8 se deberia conservar el viejo de texto aun
+
+
+
+-Al insertar mmc o ide debe ir primero a rutas shared, tal y como hace smartload por ejemplo. y tambien ir a ultima ruta al abrir selector archivos
+
+-alguna vez al abrir ay piano, pulsar boton derecho fuera de la ventana, desaparece la ventana y no vuelve a menu anterior
+y no vuelve a abrir el menu, y parece que tampoco envia teclado a maquina emulada
+
+-filtro AY se sigue escuchando cosas aun desactivando los 3 canales->tienen que ver envolventes y speech
+
+
+-para comprobar coordenada y footer, calcular desde abajo de alto ventana. Y usar funcion comun en screen.c
+-quiza funcion footer a scr_putchar_footer_comun_zoom se tiene que hacer con coordenadas 0,1 o 2 simplemente
+
+-De alguna manera que se vea una miniatura de la pantalla del juego cargado
+En alguna ventana nueva quizá
+
+-Ventana que permita agregar notas de texto, que permita quedarse en background
+Problema: donde se guardan las notas? En config no puede ser, ocuparia demasiado
+Deberia ir vinculado a un archivo de texto. Basicamente se trata de hacer un mini editor de texto
+
+-Conversion de audio datos ZX81
+*Cuando encuentre un pulso sospechoso, llamar a un callback y que pregunte al usuario qué hacer
+*poder editar la onda cuando haya un error - que se pare si hay un error (numero de pulsos desconocidos para valor de bit). Requeriria otra ventana diferente de la waveform?
+No sé si vale la pena, porque los casos que veo suele ser de 5 pulsos (que convierte automáticamente a un bit 0) o de 9-10 pulsos (que convierte automáticamente a un bit 1). Creo que otros errores ya resultarían en archivos de audio de poca calidad que tendría que preguntar al usuario
+miles de veces
+*poder convertir audio de zx80? No sé si tiene mucho sentido, aunque se podría pero hay pocas cintas de zx80 por ahí para recuperar...
+*poder convertir por linea de comandos. convert RWA a P/P81. Automático sin preguntar amplitud. Con --convert-...
+*Luego también se podría integrar en visual real tape, la función que obtiene el nombre del programa y su longitud
+*en menu_file_realtape_browser_show, con tecla V de view muestra los bloques de datos de un rwa, si es zx8081 o spectrum. creo que aqui
+se llama tambien al usar visual real tape, esa info de bloques
+*al insertar en standard tape un archivo smp/rwa, llama a snap_load_zx80_zx81_load_smp: ahi se deberia autodetectar,
+y en algun sitio indicar si se usa el algoritmo viejo o el nuevo. OJO! que es comun a zx80 y zx81
+*unkatris.wav, no es capaz de convertirlo. Quiza esto quiero que siga siendo asi, esa señal no tiene transiciones a valor 0 por ejemplo
+
+
+-------------
+
+--- menu items - fallos ---
+-Error: Abrir menú debug cpu con tecla F
+Luego pulsar botón salir emulador
+Y cierra menus pero no sale
+
+-menu about: sin zx desktop, sale muy ancho pues ancho por defecto en zxvision_generic_message_tooltip es ahora 40
+-quiza se deberia hacer mas uso de menu_center_x_from_width, en ventanas que ya no caben con ancho 32 con zxdesktop ancho 256 y abrir ventanas en zxdesktop
+
+
+-al cargar smartload, por ejemplo ultimo cargado es thelosttapesofalbion. situa el cursor ahi bien,
+pero al subir para arriba desplaza desde scroll sin mover
+cursor hasta que esta arriba. O sea, deberia mover siempre cursor y no empezar a hacer scroll hasta que no esta arriba
+
+
+-con daad debug, si hago un cambio de gui style, se activa la opcion de watch en daad debug... quiza no está gestionando bien el overlay??
+
+
+-en daad debug, pulsar m de condmessage, sale dos veces (con cozumel 1 y inventario)
+
+-Visual real tape: con cinta cdt de CPC (zynaps.cdt) dice que hay bloques de spectrum y no es asi
+
+
+-------------
+
+
+
+
+Otros TODO menos prioritarios, de aqui hasta el final del archivo:
+
+
+-Snapshots automáticos de nombre que depende del archivo cargado. Para tener siempre uno cuando se cambia de juego
+
+-Waveform que vaya haciendo fade out (sin scroll) de píxeles anteriores. Para esto require tener varios niveles de color de un pixel
+
+
+-Buscar bytes en memory zone -> problema: ahora las direcciones en memory zone pueden ser > 65535
+En ql llega a buscar?
+
+-Algo para poder generar mapas de todas pantallas
+Tipo:
+https://simonowen.com/spectrum/tilemap/
+
+Pero para cualquier juego
+
+Del estilo:
+Hacer captura. Luego hacer captura de la derecha, etc
+
+
+
+-Convertir automático de cinta a wav, mediante uso de mantransfe
+
+
+-ventana debug cpu: si se estaba en vista 8, y luego cargamos un juego que no sea de paws/daad/quill,
+la vista 1 sera ventana grande pero con alto total reducido. Parecido a lo que sucedia al cambiar de vista
+
+-mejorar render paws/gac/daad/quill:
+*uso atributos igual que spectrum: 8x8 paper+tinta
+*implementar relleno: mapa de puntos rellenos, y mostrar con tramado adecuado. solo fill cuando ventana esté dirty (misma logica que Location Image o ZXLife por ejemplo).
+algoritmo relleno recursivo? habria que tener un mapa de pixeles de spectrum de 256x192 tal cual
+
+-gac debug con condactos y paso a paso
+
+
+
+-text adventure map: texto en mapa deberia seguir char filter. Pero char filter
+esta pensado solo para print char y mostrarlo en consola. deberia haber una funcion que teniendo un caracter, retornase otro pasado por el filtro
+
+-paws debug que funcione con aventuras en 128k. Ver manual de paws para esto
+-daad no usa 128kb. Aunque hay un nuevo parser de daad (hecho en zxbasic) que si usa 128kb. comentar con Carlos-uto
+
+
+-estadisticas memoria etc con getrusage: aunque esto solo vale para Linux
+
+-mejorar deteccion frecuencia sonido en audio wave form
+
+
+-poder hacer hotswap de una maquina a zx-uno
+
+
+-visualmem podria tener en cuenta toda la ram de una maquina: 128kb en +2, Z88 etc.... aunque dificil para +2 y Z88.... y necesario?
+-visualmem que siga memory zone
+
+-lectura de nombre de archivo en fileselector para stdout no admite espacios
+
+-Process management: Render emulated display incluye tiempo de todas las ventanas? Si abro el text adventure map, que consume 6 ms con la guerra
+de las vajillas, el tiempo de render dice 8 ms. si cierro text adventure map, el render baja a 3 ms
+
+-Debug console quizá ancho debería considerar siempre el Máximo al calcular posición siguiente línea, esto en print y scroll
+Asi se podría redimensionar siempre sin que se descuadren los textos anteriores . hecho?
+
+
+

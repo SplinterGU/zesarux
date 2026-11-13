@@ -46,6 +46,9 @@
 #include "sms.h"
 #include "svi.h"
 #include "pcw.h"
+#include "baseconf.h"
+#include "scorpion.h"
+#include "atmturbo.h"
 
 
 aa_context *context;
@@ -259,6 +262,18 @@ void scraa_refresca_pantalla(void)
 
 		if (MACHINE_IS_TSCONF)	screen_tsconf_refresca_pantalla();
 
+        else if (MACHINE_IS_BASECONF)	{
+            baseconf_refresca_pantalla();
+        }
+
+        else if (MACHINE_IS_SCORPION_GMX)	{
+            scorpiongmx_refresca_pantalla();
+        }
+
+        else if (MACHINE_IS_ATM_TURBO)	{
+            atmturbo_refresca_pantalla();
+        }
+
 
 		  else { //Spectrum no TSConf
 
@@ -280,7 +295,7 @@ void scraa_refresca_pantalla(void)
 
                 else {
                         //modo rainbow - real video
-                        scr_refresca_pantalla_rainbow_comun();
+                        scr_refresca_pantalla_rainbow_comun_spectrum();
                 }
 
 		}
@@ -697,21 +712,16 @@ void scraa_detectedchar_print(z80_byte caracter)
 //Estos valores no deben ser mayores de OVERLAY_SCREEN_MAX_WIDTH y OVERLAY_SCREEN_MAX_HEIGTH
 int scraa_get_menu_width(void)
 {
-        return 32;
+        return 32/screen_reduce_menu_ancho;
 }
 
 
 int scraa_get_menu_height(void)
 {
-        return 24;
+        return 24/screen_reduce_menu_alto;
 }
 
-/*
-int scraa_driver_can_ext_desktop (void)
-{
-        return 0;
-}
-*/
+
 
 
 int scraa_init (void)
@@ -778,6 +788,8 @@ scr_putchar_footer=scraa_putchar_footer;
 
         scr_get_menu_width=scraa_get_menu_width;
         scr_get_menu_height=scraa_get_menu_height;
+        scr_update_window_title=NULL;
+        scr_get_text_clipboard=NULL;
 	//scr_driver_can_ext_desktop=scraa_driver_can_ext_desktop;
 
 rparams = aa_getrenderparams();

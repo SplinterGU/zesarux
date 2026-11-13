@@ -55,6 +55,7 @@ extern int joystick_autoleftright_frequency;
 extern int joystick_autoleftright_counter;
 extern int joystick_autoleftright_status;
 
+extern int joystick_barato;
 
 extern char *joystick_texto[];
 
@@ -70,26 +71,41 @@ extern void joystick_release_up(int si_enviar_zeng_event);
 extern void joystick_set_fire(int si_enviar_zeng_event,int fire_button);
 extern void joystick_release_fire(int si_enviar_zeng_event,int fire_button);
 
-extern int gunstick_emulation;
+extern z80_bit lightgun_emulation_enabled;
+extern int lightgun_emulation_type;
+extern z80_bit lightgun_scope;
+extern int lightgun_vertical_threshold;
 
-#define GUNSTICK_TOTAL 4
-#define GUNSTICK_SINCLAIR_1 1
-#define GUNSTICK_SINCLAIR_2 2
-#define GUNSTICK_KEMPSTON 3
-#define GUNSTICK_AYCHIP 4
+#define LIGHTGUN_TOTAL 10
+#define GUNSTICK_SINCLAIR_1 0
+#define GUNSTICK_SINCLAIR_2 1
+#define GUNSTICK_KEMPSTON 2
+#define MAGNUM_AUX 3
+#define MAGNUM_EAR 4
+#define DEFENDER_LIGHTGUN 5
+#define STACK_LIGHT_RIFLE 6
+#define TROJAN_LIGHT_PEN_EAR 7
+#define DATEL_LIGHTWRITER 8
+#define SPECTRUM_DOODLER 9
 
-//Puerto DF como lightgun no implementado
-//#define GUNSTICK_PORT_DF 5
 
-extern char *gunstick_texto[];
+extern void lightgun_draw_scope(void);
 
-//extern z80_byte puerto_especial_gunstick;
-extern int gunstick_x;
-extern int gunstick_y;
-extern int gunstick_view_white(void);
-extern int gunstick_view_electron(void);
+extern char *lightgun_types_list[];
+extern void lightgun_print_types(void);
 
-extern int gunstick_range_x,gunstick_range_y,gunstick_y_offset,gunstick_solo_brillo;
+extern int lightgun_set_type(char *tipo);
+
+
+extern int lightgun_x;
+extern int lightgun_y;
+extern int lightgun_view_white(void);
+extern int lightgun_view_electron(void);
+
+//extern int lightgun_range_x;
+//extern int lightgun_range_y;
+//extern int lightgun_y_offset;
+//extern int lightgun_solo_brillo;
 
 
 

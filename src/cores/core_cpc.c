@@ -180,6 +180,11 @@ void core_cpc_end_scanline_stuff(void)
         //printf("sonido_mic: %d\n",sonido_mic);
     }
 
+    if (audio_nagra_effect.v) {
+        audio_apply_nagra_effect();
+        audio_apply_nagra_effect_next();
+    }
+
     int leer_cinta_real=0;
 
     if (realtape_inserted.v && realtape_playing.v) leer_cinta_real=1;
@@ -491,7 +496,7 @@ void cpu_core_loop_cpc(void)
 #endif
 
             //Si la cpu está detenida por señal HALT, reemplazar opcode por NOP
-            if (z80_halt_signal.v) {
+            if (z80_halt_signal.v || paused_cpu_emulation.v) {
                 byte_leido_core_cpc=0;
             }
             else {

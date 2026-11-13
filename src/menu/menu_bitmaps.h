@@ -55,6 +55,9 @@ extern char *bitmap_button_ext_desktop_audioregisters[];
 extern char *bitmap_button_ext_desktop_audiosheet[];
 extern char *bitmap_button_ext_desktop_zxeyes[];
 extern char *bitmap_button_ext_desktop_watches[];
+extern char *bitmap_button_ext_desktop_view_basic[];
+extern char *bitmap_button_ext_desktop_view_basic_variables[];
+extern char *bitmap_button_ext_desktop_view_gosub_stack[];
 extern char *bitmap_button_ext_desktop_visualmem[];
 extern char *bitmap_button_ext_desktop_memorycheat[];
 extern char *bitmap_button_ext_desktop_mdvrawmap[];
@@ -81,6 +84,8 @@ extern char *bitmap_button_ext_desktop_loadbinary[];
 extern char *bitmap_button_ext_desktop_savebinary[];
 extern char *bitmap_button_ext_desktop_snapinramrewind[];
 extern char *bitmap_button_ext_desktop_snapinramffw[];
+extern char *bitmap_button_ext_desktop_snapinramsave[];
+extern char *bitmap_button_ext_desktop_snapinrambrowse[];
 extern char *bitmap_button_ext_desktop_pause[];
 extern char *bitmap_button_ext_desktop_debugcpu[];
 extern char *bitmap_button_ext_desktop_debugdma[];
@@ -90,6 +95,7 @@ extern char *bitmap_button_ext_desktop_geneneralsoundregisters[];
 extern char *bitmap_button_ext_desktop_nextdac[];
 extern char *bitmap_button_ext_desktop_cpustatistics[];
 extern char *bitmap_button_ext_desktop_corestatistics[];
+extern char *bitmap_button_ext_desktop_runninginfo[];
 extern char *bitmap_button_ext_desktop_debugcpu_view_adventure[];
 extern char *bitmap_button_ext_desktop_text_adventure_map[];
 extern char *bitmap_button_ext_desktop_hexeditor[];
@@ -131,6 +137,7 @@ extern char *bitmap_button_ext_desktop_zx81_online[];
 extern char *bitmap_button_ext_desktop_visualrealtape[];
 extern char *bitmap_button_ext_desktop_poke[];
 extern char *bitmap_button_ext_desktop_openwindow[];
+extern char *bitmap_button_ext_desktop_sendkeysmenu[];
 extern char *bitmap_button_ext_desktop_processmanagement[];
 extern char *bitmap_button_ext_desktop_processswitcher[];
 extern char *bitmap_button_ext_desktop_videoinfo[];
@@ -147,6 +154,7 @@ extern char *bitmap_button_ext_desktop_zengonline[];
 
 extern char *bitmap_button_ext_desktop_backgroundwindow[];
 extern char *bitmap_button_ext_desktop_showbackgroundwindows[];
+extern char *bitmap_button_ext_desktop_midi_output_status[];
 
 extern char **zxdesktop_buttons_bitmaps[];
 
@@ -214,6 +222,14 @@ extern char *bitmap_lowericon_ext_desktop_dandanator_inactive[];
 extern char *bitmap_lowericon_ext_desktop_zxunoflash[];
 
 extern char *bitmap_lowericon_ext_desktop_zxmmcplusflash[];
+extern char *bitmap_lowericon_ext_desktop_samram[];
+extern char *bitmap_lowericon_ext_desktop_esxdoshandler[];
+extern char *bitmap_lowericon_ext_desktop_kartusho[];
+extern char *bitmap_lowericon_ext_desktop_ifrom[];
+extern char *bitmap_lowericon_ext_desktop_ql_external_rom_active[];
+extern char *bitmap_lowericon_ext_desktop_ql_external_rom_inactive[];
+extern char *bitmap_lowericon_ext_desktop_lec_memory[];
+extern char *bitmap_lowericon_ext_desktop_superupgrade[];
 
 extern char *bitmap_lowericon_ext_desktop_hilow_active[];
 extern char *bitmap_lowericon_ext_desktop_hilow_inactive[];
@@ -233,6 +249,8 @@ extern char *bitmap_button_ext_desktop_my_machine_tk82[];
 extern char *bitmap_button_ext_desktop_my_machine_zx81[];
 extern char *bitmap_button_ext_desktop_my_machine_ts1000[];
 extern char *bitmap_button_ext_desktop_my_machine_ts1500[];
+extern char *bitmap_button_ext_desktop_my_machine_didaktikgama[];
+extern char *bitmap_button_ext_desktop_my_machine_scorpion[];
 
 extern char *bitmap_button_ext_desktop_my_machine_cz1000[];
 extern char *bitmap_button_ext_desktop_my_machine_cz1500[];
@@ -268,6 +286,8 @@ extern char *bitmap_button_ext_desktop_my_machine_svi318[];
 extern char *bitmap_button_ext_desktop_my_machine_svi328[];
 extern char *bitmap_button_ext_desktop_my_machine_timex_ts2068[];
 extern char *bitmap_button_ext_desktop_my_machine_timex_tc2048[];
+extern char *bitmap_button_ext_desktop_my_machine_atmturbo1[];
+extern char *bitmap_button_ext_desktop_my_machine_atmturbo2p[];
 extern char *bitmap_button_ext_desktop_my_machine_z88[];
 extern char *bitmap_button_ext_desktop_my_machine_zxuno[];
 extern char *bitmap_button_ext_desktop_my_machine_tsconf[];
@@ -277,6 +297,53 @@ extern char *bitmap_button_ext_desktop_my_machine_pentagon[];
 extern char *bitmap_button_ext_desktop_my_machine_spectrum_next[];
 extern char *bitmap_button_ext_desktop_my_machine_sam[];
 
+extern char *bitmap_button_ext_desktop_mirilla_lightgun[];
+extern char *bitmap_button_ext_desktop_mirilla_lightgun_disparada[];
+extern char *bitmap_button_ext_desktop_sendtextkeystrokesstatus[];
+extern char *bitmap_button_ext_desktop_paste_keystrokes[];
+extern char *bitmap_button_ext_desktop_clock[];
+extern char *bitmap_button_ext_desktop_calculator[];
+extern char *bitmap_button_ext_desktop_simon[];
+
+extern char *bitmap_button_ext_desktop_other_sad_mac[];
+extern char *bitmap_button_ext_desktop_other_clive_down_left[];
+extern char *bitmap_button_ext_desktop_other_clive_down_right[];
+extern char *bitmap_button_ext_desktop_other_clive_up_left[];
+extern char *bitmap_button_ext_desktop_other_clive_up_right[];
+extern char *bitmap_button_ext_desktop_other_clive_cry[];
+extern char *bitmap_button_ext_desktop_other_clive_sad[];
+extern char *bitmap_button_ext_desktop_other_clive_surprised[];
+extern char *bitmap_button_ext_desktop_other_clive_laugh[];
+extern char *bitmap_button_ext_desktop_other_clive_wink[];
+extern char *bitmap_button_ext_desktop_other_clive_heart[];
+extern char *bitmap_button_ext_desktop_other_clive_sunglasses[];
+extern char *bitmap_button_ext_desktop_other_clive_tongue[];
+extern char *bitmap_button_ext_desktop_other_clive_angel[];
+extern char *bitmap_button_ext_desktop_other_clive_angry[];
+extern char *bitmap_button_ext_desktop_other_clive_speccy[];
+extern char *bitmap_button_ext_desktop_other_clive_sleep[];
+extern char *bitmap_button_ext_desktop_other_clive_sleep2[];
+extern char *bitmap_button_ext_desktop_other_clive_sing1[];
+extern char *bitmap_button_ext_desktop_other_clive_sing2[];
+extern char *bitmap_button_ext_desktop_other_c5[];
+extern char *bitmap_button_ext_desktop_other_sinclair[];
+extern char *bitmap_button_ext_desktop_other_spectrum[];
+extern char *bitmap_button_ext_desktop_other_spectrum2[];
+extern char *bitmap_button_ext_desktop_other_clive_talk1[];
+extern char *bitmap_button_ext_desktop_other_clive_talk2[];
+extern char *bitmap_button_ext_desktop_other_clive_talk3[];
+extern char *bitmap_button_ext_desktop_other_clive_talk4[];
+extern char *bitmap_button_ext_desktop_other_clive_talk5[];
+extern char *bitmap_button_ext_desktop_other_clive_talk6[];
+extern char *bitmap_button_ext_desktop_other_clive_talk7[];
+extern char *bitmap_button_ext_desktop_other_clive_talk8[];
+extern char *bitmap_button_ext_desktop_other_clive_mute[];
+
+extern char *bitmap_button_ext_desktop_debugcpu_info[];
+extern char *bitmap_button_ext_desktop_cpu_z80[];
+extern char *bitmap_button_ext_desktop_cpu_m68k[];
+extern char *bitmap_button_ext_desktop_cpu_scmp[];
+
 #define EXT_DESKTOP_TOTAL_BUTTONS 14
 
 #define EXT_DESKTOP_BUTTONS_ANCHO 26
@@ -285,5 +352,19 @@ extern char *bitmap_button_ext_desktop_my_machine_sam[];
 #define EXT_DESKTOP_BUTTONS_TOTAL_SIZE 32
 
 #define EXT_DESKTOP_BUTTON_CLOSE_ALL_ID 12
+
+
+#define OTHER_ICONS_NAME_MAX_LENGHT 30
+
+struct s_zxdesktop_other_icons {
+    //usado de momento para alternate bitmaps
+    //nombre sin espacios
+    char name[OTHER_ICONS_NAME_MAX_LENGHT];
+    char **bitmap;
+};
+
+extern struct s_zxdesktop_other_icons zxdesktop_other_icons_list[];
+
+extern int zxdesktop_other_icons_count_list(void);
 
 #endif

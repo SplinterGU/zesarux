@@ -296,7 +296,7 @@ void cpu_core_loop_ace(void)
 
 
             //Si la cpu está detenida por señal HALT, reemplazar opcode por NOP
-            if (z80_halt_signal.v) {
+            if (z80_halt_signal.v || paused_cpu_emulation.v) {
                 byte_leido_core_ace=0;
             }
             else {
@@ -355,6 +355,8 @@ void cpu_core_loop_ace(void)
     //normalmente
     if ( (t_estados/screen_testados_linea)>t_scanline  ) {
 
+        if (rainbow_enabled.v) screen_store_scanline_rainbow_ace();
+
         t_scanline++;
 
 
@@ -363,6 +365,11 @@ void cpu_core_loop_ace(void)
         audio_valor_enviar_sonido=0;
 
         audio_valor_enviar_sonido +=da_output_ay();
+
+        if (audio_nagra_effect.v) {
+            audio_apply_nagra_effect_mono();
+            audio_apply_nagra_effect_next();
+        }
 
 
         if (beeper_enabled.v) {

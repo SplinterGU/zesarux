@@ -27,25 +27,27 @@
 #include <stdlib.h>
 #include <stdio.h>
 #ifndef MINGW
-	#include <unistd.h>
+    #include <unistd.h>
+    #include <sys/utsname.h>
 #endif
 #include <string.h>
 
 #include <time.h>
 #include <sys/time.h>
+
 #include <errno.h>
 
 #include <signal.h>
 
 #ifdef MINGW
-	//Para llamar a FreeConsole
-	#include <windows.h>
+    //Para llamar a FreeConsole
+    #include <windows.h>
 #endif
 
 
 #if defined(__APPLE__)
-	//Para _NSGetExecutablePath
-	#include <mach-o/dyld.h>
+    //Para _NSGetExecutablePath
+    #include <mach-o/dyld.h>
 #endif
 
 
@@ -62,11 +64,14 @@
 #include "audio.h"
 #include "audio_ayplayer.h"
 #include "screen.h"
+#include "screen_fx.h"
 #include "ay38912.h"
 #include "mem128.h"
 #include "zx8081.h"
 #include "snap.h"
+#include "snap_zsf.h"
 #include "zxvision.h"
+#include "zxvision_topbar.h"
 #include "menu_debug_cpu.h"
 #include "core_spectrum.h"
 #include "core_zx8081.h"
@@ -138,6 +143,7 @@
 #include "samram.h"
 #include "snap_ram.h"
 #include "menu_items.h"
+#include "menu_items_settings.h"
 #include "charset.h"
 #include "menu_filesel.h"
 #include "hilow_barbanegra.h"
@@ -158,6 +164,11 @@
 #include "microdrive_raw.h"
 #include "debug_nested_functions.h"
 #include "zxmmcplus.h"
+#include "tv.h"
+#include "ql_zx8302.h"
+#include "qsound.h"
+#include "zxevo.h"
+
 
 
 #ifdef COMPILE_STDOUT
@@ -194,11 +205,11 @@
 
 #ifdef COMPILE_SDL
 
-	#ifdef COMPILE_SDL2
-		#include "scrsdl2.h"
-	#else
-		#include "scrsdl.h"
-	#endif
+    #ifdef COMPILE_SDL2
+        #include "scrsdl2.h"
+    #else
+        #include "scrsdl.h"
+    #endif
 #endif
 
 
@@ -343,7 +354,14 @@ z80_bit command_line_ayplayer_start_playlist={0};
 
 z80_bit command_line_start_zeng_online_server={0};
 
-z80_bit parameter_disable_allbetawarningsleep={0};
+z80_bit command_line_snapshots_in_ram={0};
+
+z80_bit command_line_keystrokes_turbo={0};
+
+
+int se_abre_emulated_display=0;
+
+//z80_bit parameter_disable_allbetawarningsleep={0};
 
 //Fin command_line flags
 
@@ -369,23 +387,23 @@ void ver_si_enable_thread_main_loop(void)
 
 void emulator_main_loop(void)
 {
-	while (1) {
-		if (menu_abierto==1) menu_inicio();
+    while (1) {
+        if (menu_abierto==1) menu_inicio();
 
-    		//Bucle principal de ejecución de la cpu
-    		while (menu_abierto==0 && ending_emulator_flag==0) {
-    			cpu_core_loop();
-    		}
+            //Bucle principal de ejecución de la cpu
+            while (menu_abierto==0 && ending_emulator_flag==0) {
+                cpu_core_loop();
+            }
 
-			//Nos quedamos aqui cerrados cuando se ha salido con ctrl-c, donde este
-			//thread aun sigue vivo, pero no hay que andar refrescando ya nada del emulador, para
-			//no generar segfault en cuanto se cierre el driver de video
-			while (ending_emulator_flag) {
-				//printf("Finalizando\n");
-				sleep(1);
-			}
+            //Nos quedamos aqui cerrados cuando se ha salido con ctrl-c, donde este
+            //thread aun sigue vivo, pero no hay que andar refrescando ya nada del emulador, para
+            //no generar segfault en cuanto se cierre el driver de video
+            while (ending_emulator_flag) {
+                //printf("Finalizando\n");
+                sleep(1);
+            }
 
-	}
+    }
 
 
 }
@@ -395,53 +413,55 @@ void emulator_main_loop(void)
 void init_randomize_noise_value(void)
 {
 
-                int chips=ay_retorna_numero_chips();
+    int chips=ay_retorna_numero_chips();
 
-                int i;
+    int i;
 
-                for (i=0;i<chips;i++) {
+    for (i=0;i<chips;i++) {
 
-	                gettimeofday(&z80_interrupts_timer_antes, NULL);
-        	        randomize_noise[i]=z80_interrupts_timer_antes.tv_sec & 0xFFFF;
-                	//printf ("randomize vale: %d\n",randomize_noise);
+        gettimeofday(&z80_interrupts_timer_antes, NULL);
+        randomize_noise[i]=z80_interrupts_timer_antes.tv_sec & 0xFFFF;
+        //printf ("randomize vale: %d\n",randomize_noise);
 
-		}
+    }
+
+    //printf("Init random : %d %3d %3d\n",randomize_noise[0],value_16_to_8h(randomize_noise[0]),value_16_to_8l(randomize_noise[0]));
 }
 
 void random_ram(z80_byte *puntero,int longitud)
 {
 
-	//Cada vez que se inicializa una maquina, reasignar valor randomize
-	init_randomize_noise_value();
+    //Cada vez que se inicializa una maquina, reasignar valor randomize
+    init_randomize_noise_value();
 
-	z80_byte valor;
+    z80_byte valor;
 
-	z80_byte valor_h, valor_l;
+    z80_byte valor_h, valor_l;
 
-	for (;longitud;longitud--,puntero++) {
+    for (;longitud;longitud--,puntero++) {
 
 
-		ay_randomize(0);
+        ay_randomize(0);
 
-		//randomize_noise es valor de 16 bits. sacar uno de 8 bits
-		valor_h=value_16_to_8h(randomize_noise[0]);
-		valor_l=value_16_to_8l(randomize_noise[0]);
+        //randomize_noise es valor de 16 bits. sacar uno de 8 bits
+        valor_h=value_16_to_8h(randomize_noise[0]);
+        valor_l=value_16_to_8l(randomize_noise[0]);
 
-		//valor=randomize_noise & 0xFF;
+        //valor=randomize_noise & 0xFF;
 
-		//Solo hacemos random en determinadas maquinas
-		if (MACHINE_IS_SPECTRUM_16_48) {
-			//hacemos xor con los dos
-			valor=valor_h ^ valor_l;
-		}
+        //Solo hacemos random en determinadas maquinas
+        if (MACHINE_IS_SPECTRUM_16_48) {
+            //hacemos xor con los dos
+            valor=valor_h ^ valor_l;
+        }
 
-		else {
-			valor=0;
-		}
+        else {
+            valor=0;
+        }
 
-		//printf ("random:%d\n",valor);
-		*puntero=valor;
-	}
+        //printf ("random:%d\n",valor);
+        *puntero=valor;
+    }
 
 }
 
@@ -479,42 +499,39 @@ void set_last_dimensiones_ventana(void)
 }
 
 void avisar_opcion_obsoleta(char *texto){
-	//Solo avisa si no hay guardado de configuracion
-	//Porque si hay guardado, al guardarlo ya lo grabara como toca
-	if (save_configuration_file_on_exit.v==0) debug_printf (VERBOSE_ERR,"%s",texto);
+    //Solo avisa si no hay guardado de configuracion
+    //Porque si hay guardado, al guardarlo ya lo grabara como toca
+    if (save_configuration_file_on_exit.v==0) debug_printf (VERBOSE_ERR,"%s",texto);
 }
 
 
 void print_funny_message(void)
 {
-	//Mensaje gracioso de arranque que empezó con la ZXSpectr edition (ZEsarUX 4.1)
-	//El primero era: Detected SoundBlaster at A220 I5 D1 T2
+    //Mensaje gracioso de arranque que empezó con la ZXSpectr edition (ZEsarUX 4.1)
+    //El primero era: Detected SoundBlaster at A220 I5 D1 T2
 
-	//printf ("random: %d\n",randomize_noise[0]);
-
-	//mensajes random de broma
-	#define MAX_RANDOM_FUNNY_MESSAGES 32
-	char *random_funny_messajes[MAX_RANDOM_FUNNY_MESSAGES]={
-		"Detected SoundBlaster at A220 I5 D1 T2",
-		"DOS/4GW Protected Mode Run-time  Version 1.97",		//2
-		"Detected 4 MB expanded memory (EMS)",
-		"64K High Memory Area is available",								//4
-		"Detected Hercules Video Card 720x350",
-		"Detected Enhanced Graphics Adapter (EGA) 640x350",	//6
-		"Uncompressing Linux... done, booting the kernel",
-		"PhoenixBIOS 4.0 Release 6.0",											//8
-		"301-Keyboard not detected. Press F1 to continue",
-		"Error: IRQL NOT LESS OR EQUAL",   //10
-		"R Tape loading error, 0:1",
-		"Software Failure. Press left mouse button to continue. Guru Meditation #00000004.000AAC0", //12
-		"RAMTOP no good",
-		"   < Sistema preparado >   ", //14
-		"Sorry, a system error ocurred. unimplemented trap",
-		"Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(179,2)", //16
-		"Invalid MSX-DOS call",
-		"B Integer out of range, 0:1", //18
-		"Your System ate a SPARC! Gah!",
-		"CMOS checksum error - Defaults loaded", //20
+    #define MAX_RANDOM_FUNNY_MESSAGES 45
+    char *random_funny_messajes[MAX_RANDOM_FUNNY_MESSAGES]={
+        "Detected SoundBlaster at A220 I5 D1 T2",
+        "DOS/4GW Protected Mode Run-time  Version 1.97",		//2
+        "Detected 4 MB expanded memory (EMS)",
+        "64K High Memory Area is available",								//4
+        "Detected Hercules Video Card 720x350",
+        "Detected Enhanced Graphics Adapter (EGA) 640x350",	//6
+        "Uncompressing Linux... done, booting the kernel",
+        "PhoenixBIOS 4.0 Release 6.0",											//8
+        "301-Keyboard not detected. Press F1 to continue",
+        "Error: IRQL NOT LESS OR EQUAL",   //10
+        "R Tape loading error, 0:1",
+        "Software Failure. Press left mouse button to continue. Guru Meditation #00000004.000AAC0", //12
+        "RAMTOP no good",
+        "   < Sistema preparado >   ", //14
+        "Sorry, a system error ocurred. unimplemented trap",
+        "Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(179,2)", //16
+        "Invalid MSX-DOS call",
+        "B Integer out of range, 0:1", //18
+        "Your System ate a SPARC! Gah!",
+        "CMOS checksum error - Defaults loaded", //20
         "Proudly Made on Earth",
         "Made From 100% Recycled Pixels", //22
         "You have died of dysentery",
@@ -526,17 +543,30 @@ void print_funny_message(void)
         "Not enough memory to display the error m",
         "ERROR 1164 HOW IN THE HELL DID YOU GET HERE", //30
         "Good afternoon, gentlemen, I'm a HAL 9000 Computer",
-        "Neo-Geo. MAX 330 MEGA - PRO GEAR SPEC"
-	};
+        "Neo-Geo. MAX 330 MEGA - PRO GEAR SPEC",
+        "Workbench disk not present",
+        "GEMDOS: File not found", //34
+        "Z80 ERROR",
+        "WORK RAM TEST ERROR",
+        "Blitter overload",
+        "Track 0 not found", //38
+        "?Redo from start",
+        "Reading FAT",
+        "68000 Exception: Privilege violation",
+        "Bombs: 8 (Double bus fault)", //42
+        "Too many sprites on scanline",
+        "Printer not ready",
+        "Insert side B" //45
+    };
 
 
-	int mensaje_gracioso=randomize_noise[0] % MAX_RANDOM_FUNNY_MESSAGES;
-	//printf ("indice mensaje gracioso: %d\n",mensaje_gracioso);
-	printf ("%s ... Just kidding ;)\n\n",random_funny_messajes[mensaje_gracioso]);
-							/*
-							printf ("386 Processor or higher detected\n"
-											"Using expanded memory (EMS)\n");
-							*/
+    int mensaje_gracioso=randomize_noise[0] % MAX_RANDOM_FUNNY_MESSAGES;
+    //printf ("indice mensaje gracioso: %d\n",mensaje_gracioso);
+    printf ("%s ... Just kidding ;)\n\n",random_funny_messajes[mensaje_gracioso]);
+                            /*
+                            printf ("386 Processor or higher detected\n"
+                                            "Using expanded memory (EMS)\n");
+                            */
 }
 
 char os_release_name[MAX_OS_RELEASE_NAME+1]=""; //Por si acaso definida inicialmente en blanco
@@ -550,48 +580,80 @@ void get_os_release(void)
     debug_printf(VERBOSE_INFO,"Running OS Release: %s",os_release_name);
 }
 
+
+//MAX_MACHINE_HARDWARE_NAME
+char running_machine_hardware_name[MAX_MACHINE_HARDWARE_NAME+1]=""; //Por si acaso definida inicialmente en blanco
+
+#ifdef MINGW
+void get_machine_hardware_name(void)
+{
+    //Mingw no tiene llamada al sistema uname()
+    //Lo sacamos de COMPILATION_MACHINE_HARDWARE_NAME, que obviamente, no tiene por que coincidir, que viene del comando "uname" del script configure
+    //Le ponemos el sufijo -win para saber que es de windows y no real del todo
+    sprintf(running_machine_hardware_name,"%s-win",COMPILATION_MACHINE_HARDWARE_NAME);
+}
+
+#else
+void get_machine_hardware_name(void)
+{
+    struct utsname buffer;
+
+    if (uname(&buffer) != 0) {
+        //perror("uname");
+        return;
+    }
+
+    if (strlen(buffer.machine)<=MAX_MACHINE_HARDWARE_NAME) {
+        strcpy(running_machine_hardware_name,buffer.machine);
+    }
+    debug_printf(VERBOSE_INFO,"Running machine hardware name: %s",running_machine_hardware_name);
+
+}
+#endif
+
+
 int siguiente_parametro(void)
 {
-	argc--;
-	if (argc==0) {
-		//printf ("Error sintaxis\n");
-		return 1;
-	}
-	puntero_parametro++;
-	return 0;
+    argc--;
+    if (argc==0) {
+        //printf ("Error sintaxis\n");
+        return 1;
+    }
+    puntero_parametro++;
+    return 0;
 }
 
 void siguiente_parametro_argumento(void)
 {
-	if (siguiente_parametro()) {
-		printf ("Syntax error. Parameter %s missing value\n",argv[puntero_parametro]);
-		exit(1);
-	}
+    if (siguiente_parametro()) {
+        printf ("Syntax error. Parameter %s missing value\n",argv[puntero_parametro]);
+        exit(1);
+    }
 }
 
 
 void zesarux_cmdline_help(void)
 {
-	printf ("Usage:\n"
-		"[--tape] file           Insert input standard tape file. Supported formats: Spectrum: .PZX, .TAP, .TZX -- ZX80: .O, .80, .Z81 -- ZX81: .P, .81, .Z81 -- Jupiter Ace: .TAP -- All machines: .RWA, .SMP, .WAV\n"
-		"[--realtape] file       Insert input real tape file. Supported formats: Spectrum: .PZX, .TAP, .TZX -- ZX80: .O, .80, .Z81 -- ZX81: .P, .81, .Z81 -- CPC: .CDT -- All machines: .RWA, .SMP, .WAV\n"
-		"[--snap] file           Load snapshot file. Supported formats: Spectrum: .ZSF, .ZX, .NEX, .SNA, .SNX, .SP, .SPG, .RZX, .Z80 -- ZX80: .ZSF, .ZX, .O, .80 -- ZX81: .ZSF, .ZX, .P, .81, .Z81 -- Jupiter Ace: .ACE\n"
-		"[--slotcard] file       Insert Z88 EPROM/Flash file in the first slot. Supported formats: .EPR, .63, .EPROM, .FLASH\n"
-		"Note: if you write a tape/snapshot/card file name without --tape, --realtape, --snap or --slotcard parameters, ZEsarUX will try to guess file type (it's the same as SmartLoad on the menu)\n"
-		"\n"
+    printf ("Usage:\n"
+        "[--tape] file           Insert input standard tape file. Supported formats: Spectrum: .PZX, .TAP, .TZX -- ZX80: .O, .80, .Z81 -- ZX81: .P, .81, .Z81 -- Jupiter Ace: .TAP -- All machines: .RWA, .SMP, .WAV\n"
+        "[--realtape] file       Insert input real tape file. Supported formats: Spectrum: .PZX, .TAP, .TZX -- ZX80: .O, .80, .Z81 -- ZX81: .P, .81, .Z81 -- CPC: .CDT -- All machines: .RWA, .SMP, .WAV\n"
+        "[--snap] file           Load snapshot file. Supported formats: Spectrum: .ZSF, .ZX, .NEX, .SNA, .SNX, .SP, .SPG, .RZX, .Z80 -- ZX80: .ZSF, .ZX, .O, .80 -- ZX81: .ZSF, .ZX, .P, .81, .Z81 -- Jupiter Ace: .ACE\n"
+        "[--slotcard] file       Insert Z88 EPROM/Flash file in the first slot. Supported formats: .EPR, .63, .EPROM, .FLASH\n"
+        "Note: if you write a tape/snapshot/card file name without --tape, --realtape, --snap or --slotcard parameters, ZEsarUX will try to guess file type (it's the same as SmartLoad on the menu)\n"
+        "\n"
         "--slotcard-num file n   Same as --slotcard but insert card on the slot number n (1,2 or 3)\n"
 
-		"--outtape file          Insert output standard tape file. Supported formats: Spectrum: .TAP, .TZX, .PZX -- ZX80: .O -- ZX81: .P\n"
+        "--outtape file          Insert output standard tape file. Supported formats: Spectrum: .TAP, .TZX, .PZX -- ZX80: .O -- ZX81: .P\n"
 
-		"--zoom n                Total Zoom Factor\n"
-		"--vo driver             Video output driver. Valid drivers: ");
+        "--zoom n                Total Zoom Factor\n"
+        "--vo driver             Video output driver. Valid drivers: ");
 
 #ifdef USE_COCOA
-	printf ("cocoa ");
+    printf ("cocoa ");
 #endif
 
 #ifdef COMPILE_XWINDOWS
-	printf ("xwindows ");
+    printf ("xwindows ");
 #endif
 
 #ifdef COMPILE_SDL
@@ -600,7 +662,7 @@ void zesarux_cmdline_help(void)
 
 
 #ifdef COMPILE_FBDEV
-	printf ("fbdev ");
+    printf ("fbdev ");
 #endif
 
 
@@ -613,12 +675,12 @@ void zesarux_cmdline_help(void)
 #endif
 
 #ifdef COMPILE_CURSES
-	printf ("curses ");
+    printf ("curses ");
 #endif
 
 
 #ifdef COMPILE_STDOUT
-	printf ("stdout ");
+    printf ("stdout ");
 #endif
 
 #ifdef COMPILE_SIMPLETEXT
@@ -626,15 +688,15 @@ void zesarux_cmdline_help(void)
 #endif
 
 
-	printf ("null\n");
+    printf ("null\n");
 
 
-	printf ("--vofile file           Also output video to raw file\n");
-	printf ("--vofilefps n           FPS of the output video [1|2|5|10|25|50] (default:5)\n");
+    printf ("--vofile file           Also output video to raw file\n");
+    printf ("--vofilefps n           FPS of the output video [1|2|5|10|25|50] (default:5)\n");
 
 
 
-	printf ("--ao driver             Audio output driver. Valid drivers: ");
+    printf ("--ao driver             Audio output driver. Valid drivers: ");
 
 #ifdef COMPILE_PULSE
         printf ("pulse ");
@@ -666,40 +728,36 @@ void zesarux_cmdline_help(void)
 
 
 
-#ifdef USE_SNDFILE
-	printf ("--aofile file           Also output sound to wav or raw file\n");
-#else
-	printf ("--aofile file           Also output sound to raw file\n");
-#endif
 
-	printf ("--version               Get emulator version and exit. Must be the first command line setting\n");
 
-	printf ("\n");
+    printf ("--version               Get emulator version and exit. Must be the first command line setting\n");
 
-	printf ("--machine id            Machine type: \n\n"
+    printf ("\n");
+
+    printf ("--machine id            Machine type: \n\n"
             " ID       Description\n"
             " -------- -----------\n"
             "\n");
 
-	printf ("%s",string_machines_list_description);
+    printf ("%s",string_machines_list_description);
 
 
 
-		printf ("\n"
-		"--noconfigfile          Do not load configuration file. This parameter must be the first and it's ignored if written on config file\n"
-		"--configfile f          Use the specified config file. This parameter must be the first and it's ignored if written on config file\n"
-		"--experthelp            Show expert options\n"
+        printf ("\n"
+        "--noconfigfile          Do not load configuration file. This parameter must be the first and it's ignored if written on config file\n"
+        "--configfile f          Use the specified config file. This parameter must be the first and it's ignored if written on config file\n"
+        "--experthelp            Show expert options\n"
         "--helpcustomconfig      Show help for autoconfig files\n"
         "--helpzmenufiles        Show help for zmenu files\n"
-		"\n"
-		"Any command line setting shown here or on experthelp can be written on a configuration file,\n"
-		"this configuration file is on your home directory with name: " DEFAULT_ZESARUX_CONFIG_FILE "\n"
+        "\n"
+        "Any command line setting shown here or on experthelp can be written on a configuration file,\n"
+        "this configuration file is on your home directory with name: " DEFAULT_ZESARUX_CONFIG_FILE "\n"
 
-		"\n"
+        "\n"
 
 #ifdef MINGW
-		"Note: On Windows command prompt, all emulator messages are supressed (except the initial copyright message).\n"
-		"To avoid this, you must specify at least one parameter on command line.\n\n"
+        "Note: On Windows command prompt, all emulator messages are supressed (except the initial copyright message).\n"
+        "To avoid this, you must specify at least one parameter on command line.\n\n"
 #endif
 
               );
@@ -709,7 +767,7 @@ void zesarux_cmdline_help(void)
 void zesarux_cmdline_help_expert(void)
 {
 
-	printf (
+    printf (
         "The following are expert options, these are classified as \"expert\" only maybe because a regular user won't use them, "
         "just expert users, but are used the same way as the settings on the normal --help.\n"
         "All the options (both from --help and --experthelp) can be used from command line or from a configuration file.\n"
@@ -723,19 +781,19 @@ void zesarux_cmdline_help_expert(void)
         "\n"
         "So, the expert options are:\n"
 
-		"\n"
-		"\n"
-		"Accessibility - Print char traps\n"
-		"--------------------------------\n"
-		"\n"
+        "\n"
+        "\n"
+        "Accessibility - Print char traps\n"
+        "--------------------------------\n"
+        "\n"
 
-		"--enableprintchartrap      Enable traps for standard ROM print char calls and non standard second & third traps. On Spectrum, ZX80, ZX81 machines, standard ROM calls are those using RST10H. On Z88, are those using OS_OUT and some other functions. Note: it is enabled by default on stdout & simpletext drivers\n"
-		"--disableprintchartrap     Disable traps for ROM print char calls and second & third traps.\n"
+        "--enableprintchartrap      Enable traps for standard ROM print char calls and non standard second & third traps. On Spectrum, ZX80, ZX81 machines, standard ROM calls are those using RST10H. On Z88, are those using OS_OUT and some other functions. Note: it is enabled by default on stdout & simpletext drivers\n"
+        "--disableprintchartrap     Disable traps for ROM print char calls and second & third traps.\n"
         "--chardetectcompatnum      Enable ROM trap compatibility for printing numbers (but not good for printing from games, like PAWS)\n"
-		"--automaticdetectchar      Enable automatic detection & try all method to find print character routines, for games not using RST 10H\n"
-		"--secondtrapchar n         Print Char second trap address\n"
-		"--secondtrapsum32          Print Char second trap sum 32 to character\n"
-		"--thirdtrapchar n          Print Char third trap address\n"
+        "--automaticdetectchar      Enable automatic detection & try all method to find print character routines, for games not using RST 10H\n"
+        "--secondtrapchar n         Print Char second trap address\n"
+        "--secondtrapsum32          Print Char second trap sum 32 to character\n"
+        "--thirdtrapchar n          Print Char third trap address\n"
         "--chartrapfilter s         Set Print Char trap filter, to a one of: ");
 
         charfilter_print_list();
@@ -746,86 +804,106 @@ void zesarux_cmdline_help_expert(void)
         "--linewidth n              Print char line width\n"
 
         //estos dos settings tienen tambien opcion para desactivar el setting por cambios en valor por defecto a partir ZEsarUX 9.3
-		"--linewidthwaitspace       Text will be sent to speech when line is larger than line width and a space, comma or semicolon is detected\n"
+        "--linewidthwaitspace       Text will be sent to speech when line is larger than line width and a space, comma or semicolon is detected\n"
         "--linewidthnowaitspace     Just disable previous setting\n"
         "--linewidthwaitdot         Text will be sent to speech when line is larger than line width and dot is detected\n"
         "--linewidthnowaitdot       Just disable previous setting\n"
 
-		"\n"
-		"\n"
-		"Accessibility - Text to Speech\n"
-		"------------------------------\n"
-		"\n"
+        "\n"
+        "\n"
+        "Accessibility - Text to Speech\n"
+        "------------------------------\n"
+        "\n"
 
 
-		"--textspeechprogram p      Specify a path to a program or script to be sent the emulator text shown. For example, for text to speech: speech_filters/festival_filter.sh or speech_filters/macos_say_filter.sh\n"
-		"--textspeechstopprogram p  Specify a path to a program or script in charge of stopping the running speech program. For example, speech_filters/stop_festival_filter.sh\n"
+        "--textspeechprogram p      Specify a path to a program or script to be sent the emulator text shown. For example, for text to speech: speech_filters/festival_filter.sh or speech_filters/macos_say_filter.sh\n"
+        "--textspeechstopprogram p  Specify a path to a program or script in charge of stopping the running speech program. For example, speech_filters/stop_festival_filter.sh\n"
         "--textspeechgetstdout      Send stdout from script to debug console window\n"
-		"--textspeechwait           Wait and pause the emulator until the Speech program returns\n"
-		"--textspeechmenu           Also send text menu entries to Speech program\n"
-		"--textspeechtimeout n      After some seconds the text will be sent to the Speech program when no new line is sent. Between 0 and 99. 0 means never\n"
+        "--textspeechwait           Wait and pause the emulator until the Speech program returns\n"
+        "--textspeechmenu           Also send text menu entries to Speech program\n"
+        "--textspeechtimeout n      After some seconds the text will be sent to the Speech program when no new line is sent. Between 0 and 99. 0 means never\n"
 
-		"\n"
-		"\n"
-		"Accessibility - Others\n"
-		"------------------------------\n"
-		"\n"
+        "\n"
+        "\n"
+        "Accessibility - Others\n"
+        "------------------------------\n"
+        "\n"
 
         "--accessibility-gui-sounds  Enable sounds for GUI events\n"
 
 
-		"\n"
-		"\n"
-		"Audio Features\n"
-		"--------------\n"
-		"\n"
+        "\n"
+        "\n"
+        "Audio Features\n"
+        "--------------\n"
+        "\n"
 
-		"--disableayspeech                Disable AY Speech sounds\n"
-		"--disableenvelopes               Disable AY Envelopes\n"
-		"--disablebeeper                  Disable Beeper\n"
+        "--disableayspeech                Disable AY Speech sounds\n"
+        "--disableenvelopes               Disable AY Envelopes\n"
+        "--disablebeeper                  Disable Beeper\n"
         "--disablerealbeeper              Disable real Beeper sound\n"
-		"--totalaychips  n                Number of ay chips. Default 1\n"
-		"--ay-stereo-mode n               Mode of AY stereo emulated: 0=Mono, 1=ACB, 2=ABC, 3=BAC, 4=Custom. Default Mono\n"
-		"--ay-stereo-channel X n          Position of AY channel X (A, B or C) in case of Custom Stereo Mode. 0=Left, 1=Center, 2=Right\n"
-		"--enableaudiodac                 Enable DAC emulation. By default Specdrum\n"
-		"--audiodactype type              Select one of audiodac types: "
+        "--beepermicmode n                Controls the audio output for beeper&mic on Spectrum. n must be: ");
+        beeper_mic_mixer_modes_strings_print();
+
+
+    printf("\n"
+        "--ay-autoenable                  Enable AY Chip automatically when it is needed\n"
+        "--totalaychips  n                Number of ay chips. Default 1\n"
+        "--ay-stereo-mode n               Mode of AY stereo emulated: 0=Mono, 1=ACB, 2=ABC, 3=BAC, 4=Custom. Default Mono\n"
+        "--ay-stereo-channel X n          Position of AY channel X (A, B or C) in case of Custom Stereo Mode. 0=Left, 1=Center, 2=Right\n"
+        "--ql-qsound-enabled              Enable QL Qsound emulation\n"
+        "--ql-qsound-rom f                Sets a custom QL Qsound ROM\n"
+        "--enableaudiodac                 Enable DAC emulation. By default Specdrum\n"
+        "--audiodactype type              Select one of audiodac types: "
 );
-		audiodac_print_types();
+        audiodac_print_types();
 
 printf (
-		"\n"
-		"--audiovolume n                  Sets the audio output volume to percentage n\n"
-		"--zx8081vsyncsound               Enable vsync/tape sound on ZX80/81\n"
+        "\n"
+        "--audiovolume n                  Sets the audio output volume to percentage n\n"
+        "--nagraaudio                     Enable Nagravision audio filter\n"
+        "--zx8081vsyncsound               Enable vsync/tape sound on ZX80/81\n"
+        "--zx8081vsyncsounddetection      Enable vsync/tape sound detection on ZX80/81\n"
         "--ayplayer-add-dir d             Add directory containing AY files to playlist\n"
         "--ayplayer-load-playlist f       Load playlist file\n"
         "--ayplayer-start-playlist        Start playing playlist when start ZEsarUX\n"
         "--ayplayer-shuffle               Random playback\n"
         "--ayplayer-no-silence-detection  Do not jump to next track if silence detected during 10 seconds\n"
-		"--ayplayer-end-exit              Exit emulator when end playing all ay files in playlist\n"
-		"--ayplayer-end-repeat            Repeat playing from the beginning when end playing current ay file\n"
-		"--ayplayer-inf-length n          Limit to n seconds to ay tracks with infinite length\n"
-		"--ayplayer-any-length n          Limit to n seconds to all ay tracks\n"
+        "--ayplayer-end-exit              Exit emulator when end playing all ay files in playlist\n"
+        "--ayplayer-end-repeat            Repeat playing from the beginning when end playing current ay file\n"
+        "--ayplayer-inf-length n          Limit to n seconds to ay tracks with infinite length\n"
+        "--ayplayer-any-length n          Limit to n seconds to all ay tracks\n"
         "--ayplayer-add-to-track n        Add n seconds length to all tracks\n"
-		"--ayplayer-cpc                   Set AY Player to CPC mode (default: Spectrum)\n"
+        "--ayplayer-cpc                   Set AY Player to CPC mode (default: Spectrum)\n"
         "--ayplayer-show-info-console     Show AY Player information about current file and song on console\n"
         "--audiopiano-zoom n              Set zoom for Audio Chip Piano and Wave Piano (1-3)\n"
-		"--enable-midi                    Enable midi output\n"
-		"--midi-client n                  Set midi client value to n. Needed only on Linux with Alsa audio driver\n"
-		"--midi-port n                    Set midi port value to n. Needed on Windows and Linux with Alsa audio driver\n"
-		"--midi-raw-device s              Set midi raw device to s. Needed on Linux with Alsa audio driver\n"
-		"--midi-allow-tone-noise          Allow tone+noise channels on midi\n"
-		"--midi-no-raw-mode               Do not use midi in raw mode. Raw mode is required on Linux to emulate AY midi registers\n"
+        "--enable-midi                    Enable midi output\n"
+        "--midi-client n                  Set midi client value to n. Needed only on Linux with Alsa audio driver\n"
+        "--midi-port n                    Set midi port value to n. Needed on Windows and Linux with Alsa audio driver\n"
+        "--midi-raw-device s              Set midi raw device to s. Needed on Linux with Alsa audio driver\n"
+        "--midi-allow-tone-noise          Allow tone+noise channels on midi\n"
+        "--midi-no-raw-mode               Do not use midi in raw mode. Raw mode is required on Linux to emulate AY midi registers\n"
+    );
 
 
-		"\n"
-		"\n"
-		"Audio Driver Settings\n"
-		"---------------------\n"
-		"\n"
 
-		"--noreset-audiobuffer-full  Do not reset audio buffer when it's full. By default it does reset the buffer when full, it helps reducing latency\n"
-		"--enable-silencedetector    Enable silence detector. Silence detector is disabled by default\n"
-		"--disable-silencedetector   Disable silence detector. Silence detector is disabled by default\n"
+#ifdef USE_SNDFILE
+    printf ("--aofile file                Also output sound to wav or raw file\n");
+#else
+    printf ("--aofile file                Also output sound to raw file\n");
+#endif
+
+
+    printf(
+        "\n"
+        "\n"
+        "Audio Driver Settings\n"
+        "---------------------\n"
+        "\n"
+
+        "--noreset-audiobuffer-full  Do not reset audio buffer when it's full. By default it does reset the buffer when full, it helps reducing latency\n"
+        "--enable-silencedetector    Enable silence detector. Silence detector is disabled by default\n"
+        "--disable-silencedetector   Disable silence detector. Silence detector is disabled by default\n"
 
 
 #ifdef COMPILE_ONEBITSPEAKER
@@ -839,13 +917,13 @@ printf (
 
 
 #ifdef COMPILE_ALSA
-        "--alsacapturedevice s       Define alsa capture device for audio input (default: hw0)\n"
-		"--alsaperiodsize n          Alsa audio periodsize multiplier (2 or 4). Default 2. Lower values reduce latency but can increase cpu usage\n"
+        "--alsacapturedevice s       Define alsa capture device for audio input (default: hw:0)\n"
+        "--alsaperiodsize n          Alsa audio periodsize multiplier (2 or 4). Default 2. Lower values reduce latency but can increase cpu usage\n"
 
 
 #ifdef USE_PTHREADS
 
-		"--fifoalsabuffersize n      Alsa fifo buffer size multiplier (4 to 10). Default 4. Lower values reduce latency but can increase cpu usage\n"
+        "--fifoalsabuffersize n      Alsa fifo buffer size multiplier (4 to 10). Default 4. Lower values reduce latency but can increase cpu usage\n"
 
 #endif
 #endif
@@ -864,95 +942,116 @@ printf (
 #endif
 
 #ifdef COMPILE_SDL
-		);
+        );
 
 
-		//Cerramos el printf para que quede mas claro que hacemos un printf con un parametro
-		printf (
-		"--sdlsamplesize n           SDL audio sample size (128 to 2048). Default %d. Lower values reduce latency but can increase cpu usage\n",DEFAULT_AUDIOSDL_SAMPLES);
-		printf (
-		"--fifosdlbuffersize n       SDL fifo buffer size multiplier (2 to 10). Default 2. Lower values reduce latency but can increase cpu usage\n"
+        //Cerramos el printf para que quede mas claro que hacemos un printf con un parametro
+        printf (
+        "--sdlsamplesize n           SDL audio sample size (128 to 2048). Default %d. Lower values reduce latency but can increase cpu usage\n",DEFAULT_AUDIOSDL_SAMPLES);
+        printf (
+        "--fifosdlbuffersize n       SDL fifo buffer size multiplier (2 to 10). Default 2. Lower values reduce latency but can increase cpu usage\n"
         "--sdl-use-callback-new      SDL audio use new callback (usually better results on Windows)\n"
         "--sdl-use-callback-old      SDL audio use old callback\n"
-		"--sdlrawkeyboard            SDL read keyboard in raw mode, needed for ZX Recreated to work well\n");
+        "--sdlrawkeyboard            SDL read keyboard in raw mode, needed for ZX Recreated to work well\n"
+        "--sdl-8bit-color            SDL initialize video mode with 8 bit color palette\n"
+        "--sdl-force-win-size w h    SDL force window size to width (w) and heigth (h).\n"
+        "                            Note: This only affects usable window size, other components like GUI menus, emulated display, etc would think they have the \"usual\" size although they may not be fully visible\n"
+        "--sdl-hwsurface             SDL surface is stored in video memory instead of system memory\n"
 
 
-		printf (
+        );
+
+
+        printf (
 #endif
 
 
+        "\n"
+        "\n"
+        "Configuration File Settings\n"
+        "---------------------------\n"
+        "\n"
 
-		"\n"
-		"\n"
-		"CPU Settings\n"
-		"------------\n"
-		"\n"
+        "--saveconf-on-exit         Always save configuration when exiting emulator\n"
+        "--no-saveconf-on-exit      Do not save configuration when exiting emulator (default setting). Can be used to override a previous --saveconf-on-exit for example\n"
+        "--load-additional-config   Loads an additional .zesaruxdevrc config file (if exists) after loading .zesaruxrc and parsing command line settings\n"
 
-		"--denyturbozxunoboot        Deny setting turbo mode on ZX-Uno boot\n"
-		"--denyturbotbbluerom        Limit setting turbo mode on TBBlue ROM (default setting denied)\n"
+
+        "\n"
+        "\n"
+        "CPU Settings\n"
+        "------------\n"
+        "\n"
+
+        "--denyturbozxunoboot        Deny setting turbo mode on ZX-Uno boot\n"
+        "--denyturbotbbluerom        Limit setting turbo mode on TBBlue ROM (default setting denied)\n"
         "--allowturbotbbluerom       Do not limit setting turbo mode on TBBlue ROM\n"
-		"--tbblue-max-turbo-rom n    Max allowed turbo speed mode on TBBlue ROM when enabling --denyturbotbbluerom (default value: 2)\n"
+        "--tbblue-max-turbo-rom n    Max allowed turbo speed mode on TBBlue ROM when enabling --denyturbotbbluerom (default value: 2)\n"
 
-		"--denyturbotbblueeverywhere Limit setting turbo mode on TBBlue everywhere (default setting allowed)\n"
-		"--tbblue-max-turbo-everywhere n    Max allowed turbo speed mode on TBBlue everywhere when enabling --denyturbotbblueeverywhere (default value: 4)\n"
+        "--denyturbotbblueeverywhere Limit setting turbo mode on TBBlue everywhere (default setting allowed)\n"
+        "--tbblue-max-turbo-everywhere n    Max allowed turbo speed mode on TBBlue everywhere when enabling --denyturbotbblueeverywhere (default value: 4)\n"
+        "--ql-cpu-turbo-extension    Add CPU_TURBO extension to Sinclair QL Super Basic to allow to change CPU speed\n"
 
-		"--tbblue-fast-boot-mode     Boots tbblue directly to a 48 rom but with all the Next features enabled (except divmmc)\n"
-		//no uso esto de momento "--tbblue-123b-port n        Sets the initial value for port 123b on hard reset, for tbblue-fast-boot-mode\n"
-		"--random-r-register         Generate random value for R register on every cold start, instead of the normal 0 value. Useful to avoid same R register in the start of games, when they use that register as a random value\n"
-		"--spectrum-reduced-core     Use Spectrum reduced core. It uses less cpu, ideal for slow devices like Raspberry Pi One and Zero\n"
-		"                            The following features will NOT be available or will NOT be properly emulated when using this core:\n"
-		"                            Debug t-states, Char detection, +3 Disk, Save to tape, Divide, Divmmc, RZX, Raster interrupts, TBBlue Copper, Audio DAC, Video out to file\n"
-		"--no-spectrum-reduced-core  Do not use Spectrum reduced core\n"
+        "--tbblue-fast-boot-mode     Boots tbblue directly to a 48 rom but with all the Next features enabled (except divmmc)\n"
+        //no uso esto de momento "--tbblue-123b-port n        Sets the initial value for port 123b on hard reset, for tbblue-fast-boot-mode\n"
+        "--random-r-register         Generate random value for R register on every cold start, instead of the normal 0 value. Useful to avoid same R register in the start of games, when they use that register as a random value\n"
+        "--spectrum-reduced-core     Use Spectrum reduced core. It uses less cpu, ideal for slow devices like Raspberry Pi One and Zero\n"
+        "                            The following features will NOT be available or will NOT be properly emulated when using this core:\n"
+        "                            Debug t-states, Char detection, +3 Disk, Save to tape, Divide, Divmmc, RZX, Raster interrupts, TBBlue Copper, Audio DAC, Video out to file\n"
+        "--no-spectrum-reduced-core  Do not use Spectrum reduced core\n"
 
 
-		"\n"
-		"\n"
-		"Debugging\n"
-		"---------\n"
-		"\n"
-		"--verbose n                         Verbose level n (0=only errors, 1=warning and errors, 2=info, warning and errors, 3=debug, 4=lots of messages)\n"
+        "\n"
+        "\n"
+        "Debugging\n"
+        "---------\n"
+        "\n"
+        "--verbose n                         Verbose level n (0=only errors, 1=warning and errors, 2=info, warning and errors, 3=debug, 4=lots of messages)\n"
         "--debug-filter s                    Filter type for debug messages, can be exclude or include\n"
         "--debug-filter-exclude-mask n       Filter mask for excluding debug messages\n"
         "--debug-filter-include-mask n       Filter mask for including debug messages\n"
         "--disable-debug-console-win         Disable debug console window\n"
-		"--verbose-always-console            Always show messages in console (using simple printf) additionally to the default video driver, interesting in some cases as curses, aa or caca video drivers\n"
-		"--debugregisters                    Debug CPU Registers on text console\n"
-	    "--showcompileinfo                   Show compilation information\n"
-		"--debugconfigfile                   Debug parsing of configuration file (and .config files). This parameter must be the first and it's ignored if written on config file\n"
-		"--testconfig                        Test configuration and exit without starting emulator\n"
-		"--romfile file                      Select custom ROM file\n"
-		"--loadbinary file addr len          Load binary file \"file\" at address \"addr\" with length \"len\". Set ln to 0 to load the entire file in memory\n"
-		"--loadbinarypath path               Select initial Load Binary path\n"
-		"--savebinarypath path               Select initial Save Binary path\n"
-		"--keyboardspoolfile file            Insert spool file for keyboard presses\n"
-		"--keyboardspoolfile-play            Play spool file right after starting the emulated machine\n"
-        "--keyboardspoolfile-keylength n     Length of every key pressed. n is in intervals of 1/50 seconds, from 1 to 100. So, a value of 1 means 20 ms, and 100 means 2000 ms\n"
-        "--keyboardspoolfile-nodelay         Do not send delay after every key press\n"
+        "--verbose-always-console            Always show messages in console (using simple printf) additionally to the default video driver, interesting in some cases as curses, aa or caca video drivers\n"
+        "--debugregisters                    Debug CPU Registers on text console\n"
+        "--showcompileinfo                   Show compilation information\n"
+        "--debugconfigfile                   Debug parsing of configuration file (and .config files). This parameter must be the first and it's ignored if written on config file\n"
+        "--testconfig                        Test configuration and exit without starting emulator\n"
+        "--romfile file                      Select custom ROM file\n"
+        "--loadbinary file addr len          Load binary file \"file\" at address \"addr\" with length \"len\". Set len to 0 to load the entire file in memory\n"
+        "--loadbinarypath path               Select initial Load Binary path\n"
+        "--savebinarypath path               Select initial Save Binary path\n"
+        "--sendtextkeystrokes-file file      Insert spool file for keyboard presses\n"
+        "--sendtextkeystrokes-play           Play spool file right after starting the emulated machine\n"
+        "--sendtextkeystrokes-turbo          Allow turbo mode for sending keystrokes on Spectrum models\n"
+        "--sendtextkeystrokes-keylength n    Length of every key pressed. n is in intervals of 1/50 seconds, from 1 to 100. So, a value of 1 means 20 ms, and 100 means 2000 ms\n"
+        "--sendtextkeystrokes-nodelay        Do not send delay after every key press\n"
 
 #ifdef USE_PTHREADS
-		"--enable-remoteprotocol             Enable ZRCP remote protocol\n"
-		"--remoteprotocol-port n             Set remote protocol port (default: 10000)\n"
+        "--enable-remoteprotocol             Enable ZRCP remote protocol\n"
+        "--remoteprotocol-port n             Set remote protocol port (default: 10000)\n"
         "--remoteprotocol-prompt p           Change the command prompt shown on remote protocol\n"
         "--remoteprotocol-linemode-telnet    Enables Linemode Telnet (char mode) connection\n"
 
 #endif
 
-		"--showfiredbreakpoint n             Tells to show the breakpoint condition when it is fired. Possible values: \n"
-		"                                    0: always shows the condition\n"
-		"                                    1: only shows conditions that are not like PC=XXXX\n"
-		"                                    2: never shows conditions\n"
+        "--showfiredbreakpoint n             Tells to show the breakpoint condition when it is fired. Possible values: \n"
+        "                                    0: always shows the condition\n"
+        "                                    1: only shows conditions that are not like PC=XXXX\n"
+        "                                    2: never shows conditions\n"
 
 #ifdef MINGW
-		"--nodisableconsole                  Do not disable text output on this console. On Windows, text output is disabled unless you specify "
-		"at least one parameter on command line, or this parameter on command line or on configuration file. \n"
+        "--nodisableconsole                  Do not disable text output on this console. On Windows, text output is disabled unless you specify "
+        "at least one parameter on command line, or this parameter on command line or on configuration file. \n"
 #endif
 
-	    "--enable-breakpoints                Enable breakpoints handling.\n"
-	    "--brkp-always                       Fire a breakpoint when it is fired always, not only when the condition changes from false to true\n"
-		"--show-display-debug                Shows emulated screen on every key action on debug registers menu\n"
-		"--show-electron-debug               Shows TV electron position when debugging, using a coloured line\n"
+        "--enable-breakpoints                Enable breakpoints handling.\n"
+        "--brkp-always                       Fire a breakpoint when it is fired always, not only when the condition changes from false to true\n"
+        "--show-display-debug                Shows emulated screen on every key action on debug registers menu\n"
+        "--show-electron-debug               Shows TV electron position when debugging, using a coloured line\n"
         "--show-basic-address                Shows location address of every basic line on menu View Basic\n"
-	    "--show-invalid-opcode               If running invalid cpu opcodes will generate a warning message\n"
+        "--step-over-rst8-plus-two           When step over RST 8, it will stop on PC+2\n"
+        "--debug-show-timing-opcodes         Show timings of opcodes on Debug CPU window\n"
+        "--show-invalid-opcode               If running invalid cpu opcodes will generate a warning message\n"
 
 );
 
@@ -964,15 +1063,15 @@ printf (
 
 
 printf(
-		"--set-breakpoint n s                Set breakpoint with string s at position n. n must be between 1 and %d. string s must be written in \"\" if has spaces. Used normally with --enable-breakpoints\n",MAX_BREAKPOINTS_CONDITIONS
+        "--set-breakpoint n s                Set breakpoint with string s at position n. n must be between 1 and %d. string s must be written in \"\" if has spaces. Used normally with --enable-breakpoints\n",MAX_BREAKPOINTS_CONDITIONS
 );
 
 printf(
-		"--set-breakpointaction n s          Set breakpoint action with string s at position n. n must be between 1 and %d. string s must be written in \"\" if has spaces. Used normally with --enable-breakpoints\n",MAX_BREAKPOINTS_CONDITIONS
+        "--set-breakpointaction n s          Set breakpoint action with string s at position n. n must be between 1 and %d. string s must be written in \"\" if has spaces. Used normally with --enable-breakpoints\n",MAX_BREAKPOINTS_CONDITIONS
 );
 
 printf(
-		"--set-breakpointpasscount n m       Set breakpoint pass count m at position n. n must be between 1 and %d. Used normally with --enable-breakpoints\n",MAX_BREAKPOINTS_CONDITIONS
+        "--set-breakpointpasscount n m       Set breakpoint pass count m at position n. n must be between 1 and %d. Used normally with --enable-breakpoints\n",MAX_BREAKPOINTS_CONDITIONS
 );
 
 printf(
@@ -980,23 +1079,24 @@ printf(
 );
 
 printf(
-		"--set-watch n s                     Set watch with string s at position n. n must be between 1 and %d. string s must be written in \"\" if has spaces\n",DEBUG_MAX_WATCHES
+        "--set-watch n s                     Set watch with string s at position n. n must be between 1 and %d. string s must be written in \"\" if has spaces\n",DEBUG_MAX_WATCHES
 );
 
 printf(
-		"--set-watch-label n s               Set watch label with string s at position n. n must be between 1 and %d. string s must be written in \"\" if has spaces\n",DEBUG_MAX_WATCHES
+        "--set-watch-label n s               Set watch label with string s at position n. n must be between 1 and %d. string s must be written in \"\" if has spaces\n",DEBUG_MAX_WATCHES
 );
 
 printf (
         "--watch-show-decimal-results        Shows results in decimal in window Watches\n"
-	    "--set-mem-breakpoint a n            Set memory breakpoint at address a for type n\n"
+        "--set-mem-breakpoint a n            Set memory breakpoint at address a for type n\n"
         "--load-source-code f                Load source code from file\n"
         "--load-symbol-table f               Load symbol table from file\n"
-	    "--hardware-debug-ports              These ports are used to interact with ZEsarUX, for example showing a ASCII character on console, read ZEsarUX version, etc. "
-		"Read file extras/docs/zesarux_zxi_registers.txt for more information\n"
-	    "--hardware-debug-ports-byte-file f  Sets the file used on register HARDWARE_DEBUG_BYTE_FILE\n"
-	    "--dump-ram-to-file f                Dump memory from 4000h to ffffh to a file, when exiting emulator\n"
-	    "--dump-snapshot-panic               Dump .zsf snapshot when a cpu panic is fired\n"
+        "--hardware-debug-ports              These ports are used to interact with ZEsarUX, for example showing a ASCII character on console, read ZEsarUX version, etc. "
+        "Read file extras/docs/zesarux_zxi_registers.txt for more information\n"
+        "--hardware-debug-ports-byte-file f  Sets the file used on register HARDWARE_DEBUG_BYTE_FILE\n"
+        "--dump-ram-to-file f                Dump memory from 4000h to ffffh to a file, when exiting emulator\n"
+        "--dump-snapshot-panic               Dump .zsf snapshot when a cpu panic is fired\n"
+        "--show-visualmem-text               Shows Visualmem menu with text instead of graphic\n"
         "--textadvmap-zoom n                 Text adventure map: zoom level\n"
         "--textadvmap-follow                 Text adventure map: follow the current position on the map\n"
         "--textadvmap-show-unconnected       Text adventure map: show unconnected rooms\n"
@@ -1006,93 +1106,794 @@ printf (
 
 
 
-		"\n"
-		"\n"
-		"Display Settings\n"
-		"----------------\n"
-		"\n"
+        "\n"
+        "\n"
+        "External Tools\n"
+        "--------------\n"
+        "\n"
 
-		"--realvideo                            Enable real video display - for Spectrum (rainbow and other advanced effects) and ZX80/81 (non standard & hi-res modes)\n"
-		"--no-detect-realvideo                  Disable real video autodetection\n"
-		"--tbblue-legacy-hicolor                Allow legacy hi-color effects on pixel/attribute display zone\n"
-		"--tbblue-legacy-border                 Allow legacy border effects on tbblue machine\n"
-        "--tbblue-no-sprite-optimization        Disable tbblue sprite render optimization\n"
+        "--tool-sox-path p     Set external tool sox path. Path can not include spaces\n"
+        "--tool-gunzip-path p  Set external tool gunzip path. Path can not include spaces\n"
+        "--tool-tar-path p     Set external tool tar path. Path can not include spaces\n"
+        "--tool-unrar-path p   Set external tool unrar path. Path can not include spaces\n"
 
-		//"--tsconf-fast-render       Enables fast render of Tiles and Sprites for TSConf. Uses less host cpu but it's less realistic: doesn't do scanline render but full frame render\n"
 
-		"--snoweffect                           Enable snow effect support for Spectrum\n"
-		"--enablegigascreen                     Enable Gigascreen video support\n"
-		"--enableinterlaced                     Enable Interlaced video support\n"
-		"--enableulaplus                        Enable ULAplus video modes\n"
-		"--enablespectra                        Enable Spectra video modes\n"
-		"--enabletimexvideo                     Enable Timex video modes\n"
-		"--disablerealtimex512                  Disable real Timex mode 512x192. In this case, it's scalled to 256x192 but allows scanline effects\n"
-		"--enable16c                            Enable 16C video mode support\n"
-		"--enablezgx                            Enable ZGX Sprite chip\n"
-		"--autodetectwrx                        Enable WRX autodetect setting on ZX80/ZX81\n"
-		"--wrx                                  Enable WRX mode on ZX80/ZX81\n"
-		"--vsync-minimum-length n               Set ZX80/81 Vsync minimum length in t-states (minimum 100, maximum 999)\n"
-		"--chroma81                             Enable Chroma81 support on ZX80/ZX81\n"
-		"--videozx8081 n                        Emulate ZX80/81 Display on Spectrum. n=pixel threshold (1..16. 4=normal)\n"
-		"--videofastblack                       Emulate black screen on fast mode on ZX80/ZX81\n"
-		"--no-ocr-alternatechars                Disable looking for an alternate character set other than the ROM default on OCR functions\n"
-        "--z88-hide-shortcuts                   Hide Z88 shortcuts from the display\n"
-		"--scr file                             Load Screen File at startup\n"
-	    "--arttextthresold n                    Pixel threshold for artistic emulation for curses & stdout & simpletext (1..16. 4=normal)\n"
-	    "--disablearttext                       Disable artistic emulation for curses & stdout & simpletext\n"
-		"--allpixeltotext                       Enable all pixel to text mode\n"
-		"--allpixeltotext-scale n               All pixel to text mode scale\n"
-		"--allpixeltotext-invert                All pixel to text mode invert mode\n"
-        "--allpixeltotext-width n               All pixel to text max width (in chars) (minimum 1, maximum 9999)\n"
-        "--allpixeltotext-x-offset n            All pixel to text X-Offset (in chars) (minimum 0, maximum 9999)\n"
-        "--allpixeltotext-height n              All pixel to text max height (in chars) (minimum 1, maximum 9999)\n"
-        "--allpixeltotext-y-offset n            All pixel to text Y-Offset (in chars) (minimum 0, maximum 9999)\n"
-		"--text-keyboard-add text               Add a string to the Adventure Text OSD Keyboard. The first addition erases the default text keyboard.\n"
-		" You can use hotkeys by using double character ~~ just before the letter, for example:\n"
-		" --text-keyboard-add ~~north   --text-keyboard-add e~~xamine\n");
+
+
+        "\n"
+        "\n"
+        "File Browser Settings\n"
+        "---------------------\n"
+        "\n"
+
+        "--filebrowser-hide-dirs            Do not show directories on file selector menus\n"
+        "--filebrowser-hide-size            Do not show file sizes on file selector menus\n"
+        "--filebrowser-allow-folder-delete  Allows deleting folders on the file utilities browser. Enable it AT YOUR OWN RISK\n"
+        "--fileviewer-hex                   File viewer always shows file contents in hexadecimal+ascii\n"
+        "--no-file-previews                 Do not show file previews on file selector menus\n"
+        "--reduce-file-previews             Reduce file previews to half size\n"
+        "--file-previews-on-zxdesktop       Show previews also on ZX Desktop\n"
+
+
+        "\n"
+        "\n"
+        "Function Keys Settings\n"
+        "----------------------\n"
+        "\n"
+
+
+        );
+
+        int i;
+        printf (
+        "--def-f-function key action                 Define F key to do an action. Action must be one of: ");
+
+
+        print_defined_direct_functions();
+
+        printf (
+        "\n\n"
+
+        "--def-f-function-parameters key extra-info  Define extra info associated to an action of a F key"
+
+
+        "\n"
+        "\n"
+        "General Settings\n"
+        "----------------\n"
+        "\n"
+
+
+        "--advancedmenus                Show advanced menu items\n"
+        "--simplemenus                  Show very simple menus\n"
+        "--language language            Select menu language. Available languages: es (Spanish), ca (Catalan). Default language if not set: English\n"
+        "--online-download-path p       Where to download files from the speccy and zx81 online browser. If not set, they are download to a temporary folder\n"
+
+        "--disable-search-menu          Disable search menu feature (enabled by default)\n"
+        "--enable-search-menu           Enable search menu feature (enabled by default)\n"
+
+        "--nowelcomemessage             Disable welcome logo & message\n"
+        "--fastwelcomemessage           Sets fast welcome message\n"
+        "--quickexit                    Exit emulator quickly: no yes/no confirmation and no fadeout\n"
+
+        "--enable-xanniversary-logo     Enable X Anniversary logo (enabled by default only on X version)\n"
+        "--disable-xanniversary-logo    Disable X Anniversary logo. It's the default behaviour, only kept here for backwards compatibility\n"
+        "--disablemenufileutils         Disable File Utilities menu\n"
+
+
+        "\n"
+        "\n"
+        "Hardware Settings\n"
+        "-----------------\n"
+        "\n"
+
+        "--emulatorspeed n               Set Emulator speed in percentage\n"
+        "--printerbitmapfile f           Sends printer output to image file. Supported formats: pbm, txt\n"
+        "--printertextfile f             Sends printer output to text file using OCR method. Printer output is saved to a text file using OCR method to guess text.\n"
+        "--redefinekey src dest          Redefine key scr to be key dest. You can write maximum 10 redefined keys\n"
+        "                                Key must be ascii character numbers or a character included in escaped quotes, like: 97 (for 'a') or \\'q\\'\n"
+        "                                (the escaped quotes are used only in command line; on configuration file, they are normal quotes '')\n"
+        "--recreatedzx                   Enable support for Recreated ZX Spectrum Keyboard\n"
+        "--recreatedzx-also-on-menu      Use ZX Recreated mode also on menu\n"
+        "--keyboard-issue2               Emulate ZX Spectrum Keyboard issue 2. Default issue 3\n"
+        "--keymap n                      Which kind of physical keyboard you have. Default 0 (English) or 1 (Spanish)\n"
+        "--azerty-kbd-num-no-shift       Only used on xwindows driver by now. Enables to use numeric keys on Azerty keyboard, without having to press Shift. "
+                                         "Note we are referring to the numeric keys (up to letter A, Z, etc) and not to the numeric keypad\n"
+
+        "--enable-optical-input          Enable optical input emulation\n"
+        "--opticalinput-scope            Show optical input scope\n"
+        "--opticalinput-scan-threshold n Scanline Threshold, only used on Magnum (value from 0 to 10)\n"
+        "--opticalinputtype type         Type of emulated optical input. Type can be one of: ");
+
+    lightgun_print_types();
+        printf (" . Default: %s\n",lightgun_types_list[lightgun_emulation_type]);
+        printf ("  Note: if a lightgun type has spaces in its name, you must write it between \"\"\n");
+
+        printf(
+
+        "--enablekempstonmouse           Enable kempston mouse emulation\n"
+        "--kempstonmouse-sens n          Set kempston mouse sensitivity (1-%d)\n",MAX_KMOUSE_SENSITIVITY);
+        printf (
+        "--tbblue-machine-id n           Set machine id n for Spectrum Next\n"
+        "--ql-rtc-timezone n             Sets timezone offset for QL RTC\n"
+        "--ql-no-rtc-pc                  Do not use PC real-time clock\n"
+        "--ql-qimi-mouse                 Enable QL QIMI mouse emulation\n"
+        "--ql-qimi-mouse-sensitivity n   Sets QL QIMI mouse sensitivity (1-%d)\n",QL_QIMI_MOUSE_MAX_SENSIBILITY);
+
+        printf (
+
+        "\n"
+        "\n"
+        "Hardware - Joystick\n"
+        "-------------------\n"
+        "\n"
+
+        "--joystickemulated type         Type of emulated joystick. Type can be one of: ");
+
+    joystick_print_types();
+        printf (" . Default: %s\n",joystick_texto[joystick_emulation]);
+        printf ("  Note: if a joystick type has spaces in its name, you must write it between \"\"\n");
+
+
+    printf(
+        "--joystickfirekey n             Define which key triggers the first fire function for the joystick: -1=None, 0=Home, 1=RightAlt, 2=RightCtrl, 3=RightShift, 4=LeftAlt, 5=LeftCtrl, 6=LeftShift, 7=Tab\n"
+        "--joystickfirekey2 n            Define which key triggers the second fire function for the joystick: -1=None, 0=Home, 1=RightAlt, 2=RightCtrl, 3=RightShift, 4=LeftAlt, 5=LeftCtrl, 6=LeftShift, 7=Tab\n"
+        "--joystickfirekey3 n            Define which key triggers the third fire function for the joystick: -1=None, 0=Home, 1=RightAlt, 2=RightCtrl, 3=RightShift, 4=LeftAlt, 5=LeftCtrl, 6=LeftShift, 7=Tab\n"
+        "--joystickfirekey4 n            Define which key triggers the fourth fire function for the joystick: -1=None, 0=Home, 1=RightAlt, 2=RightCtrl, 3=RightShift, 4=LeftAlt, 5=LeftCtrl, 6=LeftShift, 7=Tab\n"
+        "--sms-swap-controls             Sega Master System swap controls player 1 <-> player 2\n"
+        "--disablerealjoystick           Disable real joystick emulation\n"
+        "--realjoystickpath f            Change default real joystick device path (used on Linux)\n"
+        "--realjoystickindex n           Change default real joystick device id (used on Windows and other OS with SDL driver)\n"
+        "--realjoystick-calibrate n      Parameter to autocalibrate joystick axis. Axis values read from joystick less than n and greater than -n are considered as 0. Default: 16384. Not used on native linux real joystick\n"
+
+#ifdef USE_LINUXREALJOYSTICK
+        "--no-native-linux-realjoy       Do not use native linux real joystick support. Instead use the video driver joystick support (currently only SDL)\n"
+#endif
+        "--joystickevent but evt         Set a joystick button or axis to an event (changes joystick to event table)\n"
+        "                                If it's a button (not axis), must be specified with its number, without sign, for example: 2\n"
+        "                                If it's axis, must be specified with its number and sign, for example: +2 or -2\n"
+        "                                Event must be one of: ");
+
+        realjoystick_print_event_keys();
+
+    printf ("\n"
+
+
+        "--joystickaction but act parms  Triggers an action when a joystick button or axis is pressed, action can have parameters (set it to \"\" if no parameters).\n"
+        "                                If it's a button (not axis), must be specified with its number, without sign, for example: 2\n"
+        "                                If it's axis, must be specified with its number and sign, for example: +2 or -2\n"
+        "                                Action must be one of: ");
+
+        print_defined_direct_functions();
+
+
+    printf ("\n"
+
+
+        "--joystickkeybt but key         Define a key pressed when a joystick button pressed (changes joystick to key table)\n"
+        "                                If it's a button (not axis), must be specified with its number, without sign, for example: 2\n"
+        "                                If it's axis, must be specified with its number and sign, for example: +2 or -2\n"
+        "                                Key must be an ascii character number or a character included in escaped quotes, like: 13 (for enter) or \\'q\\'\n"
+        "                                (the escaped quotes are used only in command line; on configuration file, they are normal quotes '')\n"
+        "                                Note: to simulate Caps shift, use key value 128, and to simulate Symbol shift, use key value 129\n"
+        "--joystickkeyev evt key         Define a key pressed when a joystick event is generated (changes joystick to key table)\n"
+        "                                Event must be one of: ");
+
+        realjoystick_print_event_keys();
+
+
+    printf ("\n"
+        "                                Key must be an ascii character number or a character included in escaped quotes, like: 13 (for enter) or \\'q\\' \n"
+        "                                (the escaped quotes are used only in command line; on configuration file, they are normal quotes '')\n"
+        "                                Note: to simulate Caps shift, use key value 128, and to simulate Symbol shift, use key value 129\n"
+
+            "\n"
+        "  Note: As you may see, --joystickkeyev is not dependent on the real joystick type you use, because it sets an event to a key, "
+        "and --joystickkeybt, --joystickevent and --joystickaction are dependent on the real joystick type, because they set a button/axis number to "
+        "an event or key, and button/axis number changes depending on the joystick (the exception here is the axis up/down/left/right "
+        "which are the same for all joysticks: up: -1, down: +1, left: -1, right: +1)\n"
+
+        "\n"
+
+        "--steering-wheel-axis-number n  Set the axis number assigned to wheel movement\n"
+        "--clearkeylistonsmart           Clear all joystick (events and buttons) to keys table every smart loading.\n"
+        "                                Joystick to events table is never cleared using this setting\n"
+        "--cleareventlist                Clears joystick to events table\n"
+        "--enablejoysticksimulator       Enable real joystick simulator. Only useful on development\n"
+
+
+
+
+
+        "\n"
+        "\n"
+        "Hardware - Memory Settings\n"
+        "--------------------------\n"
+        "\n"
+
+        "--zx8081mem n       Emulate 1,2,...16 kb of memory on ZX80/ZX81\n"
+        "--zx8081ram8K2000   Emulate 8K RAM in 2000H for ZX80/ZX81\n"
+        "--zx8081ram16K8000  Emulate 16K RAM in 8000H for ZX80/ZX81\n"
+        "--zx8081ram16KC000  Emulate 16K RAM in C000H for ZX80/ZX81\n"
+        "--acemem n          Emulate 3, 19, 35 or 51 kb of memory on Jupiter Ace\n"
+        "--128kmem n         Set more than 128k RAM for Spectrum 128k machines. Allowed values: 128, 256, 512\n"
+        "--qlrammem n        Set RAM size on Sinclair QL. Minimum: 128KB, maximum: ");
+
+        printf("%d KB\n",ql_get_maximum_ram_kb() );
+
+
+        printf(
+
+
+        "\n"
+        "\n"
+        "Hardware - ULA Settings\n"
+        "-----------------------\n"
+        "\n"
+
+        "--ula-data-bus n   Sets the ula data bus value\n"
+
+
+        "\n"
+        "\n"
+        "Main Window Settings\n"
+        "--------------------------\n"
+        "\n"
+
+        "--fullscreen                                   Enable full screen\n"
+        "--zxdesktop-disable-on-fullscreen              Disable ZX Desktop when going to full screen\n"
+        "--zxdesktop-no-restore-win-after-fullscreen    Do not restore windows after disabling full screen, when --zxdesktop-disable-on-fullscreen setting is set\n"
+        "--disable-border-on-fullscreen                 Disable Border when going to full screen\n"
+        "--disable-footer-on-fullscreen                 Disable Footer when going to full screen\n"
+        "--no-disable-fullscreen-on-exit                Disable fullscreen on exit ZEsarUX\n"
+
+        "--disableborder                                Disable Border\n"
+        "--frameskip n                                  Set frameskip (0=none, 1=25 FPS, 2=16 FPS, etc)\n"
+        "--no-frameskip-zxdesktop-back                  Disable apply frameskip drawing ZX Desktop Background\n"
+        "--disable-autoframeskip                        Disable autoframeskip\n"
+        "--no-autoframeskip-moving-win                  Disable autoframeskip even when moving objects\n"
+
+        "--zoom-allow-different-xy                      Allow Zoom horizontal different to vertical\n"
+        "--zoomx n                                      Horizontal Zoom Factor\n"
+        "--zoomy n                                      Vertical Zoom Factor\n"
+
+        "--no-autochange-zoom-big-display               No autochange to zoom 1 when switching to machine with big display (Next, QL, CPC, ...)\n"
+
+
+        "--disablefooter                                Disable window footer\n"
+        "--no-cpu-temp                                  Do not show host CPU temperature on footer\n"
+        "--no-fps                                       Do not show FPS on footer\n"
+#ifndef MINGW
+        "--no-cpu-usage                                 Do not show host CPU usage on footer\n"
+#endif
+
+        "\n"
+        "\n"
+        "Main Window - Emulated Display FX Settings\n"
+        "------------------------------------------\n"
+        "\n"
+
+        "--video-fx-enable                              Enable special video effects on Emulated Display\n"
+        "For the following settings that use a effect name, the valid names are:\n"
+        );
+
+screen_effect_print_names();
+        printf(
+        "\n"
+
+        "--video-fx-set effect n 0/1                    Sets a effect on n position, and enabled/disabled (0/1)\n"
+        "--video-fx-follow-mouse effect                 Sets follow mouse setting on effect (Note: not all effects use that setting)\n"
+        "--video-fx-circular effect                     Sets circular setting on effect (Note: only Scroll Horizontal and Scroll Vertical support this parameter)\n"
+        "--video-fx-incremental effect                  Sets incremental setting on effect (Note: only Scroll Horizontal and Scroll Vertical support this parameter)\n"
+        "--video-fx-continuous effect                   Sets continuous setting on effect (Note: only Lens supports this parameter)\n"
+        "--video-fx-attraction effect value             Sets attraction value for effect: +1: attraction, -1: repulsion (Note: only Magnetic Field effect supports this parameter)\n"
+        "--video-fx-intensity effect intensity          Sets intensity setting on effect (Note: not all effects use that setting)\n"
+        "--video-fx-angle effect angle                  Sets rotation angle for effect (Note: only Rotate effect supports this parameter)\n"
+        "--video-fx-frames effect frames                Sets frames parameter for effect (Note: only Persistence effect supports this parameter)\n"
+        "--video-fx-follow-channel effect channel       Sets follow ay chip channel (A,B,C or 0) for effect (Note: only Lens effect supports this parameter)\n"
+        "--video-fx-offset effect offset                Sets offset for effect (Note: only Scroll Horizontal and Scroll Vertical support this parameter)\n"
+        "--video-fx-speed effect speed                  Sets speed parameter for effect (Note: only Vsync effect supports this parameter)\n"
+
+        "--video-fx-leftrightborder effect 0/1          Enables or disables effect on border left and right (Note: only Shader Border effect supports this parameter)\n"
+        "--video-fx-updownborder effect 0/1             Enables or disables effect on border up and down (Note: only Shader Border effect supports this parameter)\n"
+        "--video-fx-leftrightzoom effect zoom           Sets zoom level (multipled by 1000) on border left and right (Note: only Shader Border effect supports this parameter)\n"
+        "--video-fx-updownzoom effect zoom              Sets zoom level (multipled by 1000) on border up and down (Note: only Shader Border effect supports this parameter)\n"
+        "--video-fx-leftrightblur effect intensity      Sets blur intensity on border left and right (Note: only Shader Border effect supports this parameter)\n"
+        "--video-fx-updownblur effect intensity         Sets blur intensity on border up and down (Note: only Shader Border effect supports this parameter)\n"
+        "--video-fx-sizes effect tb bb lb rb dh dw      Sets sizes for effect: Top Border, Bottom Border, Left Border, Right Border, Display Height, Display Width (Note: only Shader Border effect supports this parameter)\n"
+        "--video-fx-rgb effect r g b                    Sets rgb values (0/1) for effect (Note: only RGB effect supports this parameter)\n"
+        "--video-fx-percentage effect percentage        Sets percentage for effect (Note: only Mix from buffer effect supports this parameter)\n"
+        "--video-fx-mix-type effect type                Sets mix type for effect (Note: only Mix from buffer effect supports this parameter)\n"
+        "--video-fx-file effect file                    Sets file for effect (Note: only Load BMP effect supports this parameter)\n"
+        "--video-fx-transparent-color effect color      Sets transparent color for effect, set to -1 to not use transparent color (Note: only Load BMP effect supports this parameter)\n"
+        "--video-fx-transparent-rectangle effect enabled x y width height       Sets enabled (0/1) and size of transparent rectable (Note: only Load BMP effect supports this parameter)\n"
+
+
+        "--video-fx-reduce-075                          Sets display size 4/3 for Reduce effect (divide by 4, multiply by 3)\n"
+        "--video-fx-reduce-050                          Sets display size 1/2 for Reduce effect\n"
+        "--video-fx-reduce-025                          Sets display size 1/4 for Reduce effect\n"
+        "--video-fx-reduce-display-no-antialias         Disable antialias for Reduce effect, enabled by default\n"
+
+
+        "\n"
+        "\n"
+        "Network\n"
+        "-------\n"
+        "\n"
+
+        "--zeng-remote-hostname s                        ZENG last remote hostname\n"
+        "--zeng-remote-port n                            ZENG last remote port\n"
+        "--zeng-snapshot-interval-frames n               ZENG snapshot interval, on video frames\n"
+        "--zeng-iam-master                               Tells this machine is a ZENG master\n"
+        "--zeng-not-send-input-events                    Do not send ZENG input events (keyboard, joystick) to other hosts\n"
+
+
+        "--zeng-online-hostname s                        Sets ZENG Online hostname to connect to\n"
+        "--zeng-online-nickname s                        Sets nickname for ZENG Online\n"
+        "--zeng-online-no-zip-snapshots                  Do not compress snapshots with zip format\n"
+        "--zeng-online-no-footer-lag-indicator           Show lag or dropout indicator on footer when snapshots are coming late\n"
+        "--zeng-online-no-streaming-create               Do not enable streaming mode when creating rooms\n"
+        "--zeng-online-no-autoadjust-display-quality     Do not autoadjust display quality\n"
+
+        "--enable-zeng-online-server                     Enable ZENG Online server. Requires ZRCP\n"
+        "--zeng-online-server-allow-create               Allows this ZENG Online server to allow create rooms from any ip address. By default, only creation from localhost is allowed\n"
+        "--zeng-online-server-max-rooms n                Set maximum rooms for this ZENG Online server\n"
+        "--zeng-online-server-max-players-room n         Set maximum players per room for this ZENG Online server\n"
+        "--zeng-online-server-destroy-rooms-no-players   This ZENG Online server destroys rooms without players\n"
+        "--zeng-online-server-allow-all-zrcp             Allow all ZRCP commands when enabling this ZENG Online server, not only ZENG commands\n"
+
+
+        "\n"
+        "\n"
+        "OSD Settings\n"
+        "------------\n"
+        "\n"
+
+
+        "--enable-watermark                     Adds a watermark to the display. Needs realvideo\n"
+        "--watermark-position n                 Where to put watermark. 0: Top left, 1: Top right. 2: Bottom left. 3: Bottom right\n"
+        "--watermark-only-when-device-activity  If watermark is enabled, it's only shown when loading and saving\n"
+        "--watermark-no-rotate-device-activity  Do not rotate watermark colors when loading or saving\n"
+        "--nosplash                             Disable all splash texts\n"
+
+
+
+        "\n"
+        "\n"
+        "Snapshot Settings\n"
+        "-----------------\n"
+        "\n"
+
+        "--smartloadpath path        Select initial smartload path\n"
+        "--smartloadhistoryfile f    Defines a file to store the history of quickload\n"
+        "--addlastfile file          Add a file to the last files used\n"
+        "--quicksavepath path        Select path for quicksave & continous autosave\n"
+        "--autoloadsnap              Load last snapshot on start\n"
+        "--autosavesnap              Save snapshot on exit\n"
+        "--autosnappath path         Folder to save/load automatic snapshots\n"
+        "--tempdir path              Folder to save temporary files. Folder must exist and have read and write permissions\n"
+        "--snap-no-change-machine    Do not change machine when loading sna or z80 snapshots. Just load it on memory\n"
+        "--nex-no-automount-esxdos   Do not mount esxdos folder when opening .nex/.snx files\n"
+        "--zsf-uncompressed          Save uncompressed ZSF snapshots\n"
+        "--zsf-save-rom              Include ROM contents in saved ZSF snapshot. Useful when running custom roms. Only available for Spectrum/Clones models 16k/48k/128k/+2/+2A/+3\n"
+        "--no-close-after-smartload  Do not close menu after SmartLoad\n"
+        "--z88-not-sync-clock-snap   Do not sync PC clock to Z88 clock after loading a snapshot\n"
+        "--snapram-enable            Enable snapshots in ram\n"
+        "--snapram-automatic         Enable automatic snapshots in ram\n"
+        "--snapram-interval n        Interval in seconds to generate automatic snapshots in ram\n"
+        "--snapram-max n             Maximum snapshots to keep in memory\n"
+        "--snapram-rewind-timeout n  After this time pressed rewind action, the rewind position is reset to current\n"
+
+
+        "\n"
+        "\n"
+        "Statistics\n"
+        "----------\n"
+        "\n"
+
+        "--total-minutes-use n                 Total minutes of use of ZEsarUX\n"
+        "--stats-send-already-asked            Do not ask to send statistics\n"
+        "--stats-send-enabled                  Enable send statistics\n"
+        "--stats-uuid s                        UUID to send statistics\n"
+        "--stats-disable-check-updates         Disable checking of available ZEsarUX updates\n"
+        "--stats-disable-check-yesterday-users Disable checking ZEsarUX yesterday users\n"
+        "--stats-last-avail-version s          ZEsarUX last available version to download\n"
+        "--stats-speccy-queries n              Total queries on the speccy online browser\n"
+        "--stats-zx81-queries n                Total queries on the zx81 online browser\n"
+
+
+        "\n"
+        "\n"
+        "Storage Settings\n"
+        "-----------------------\n"
+        "\n"
+        "--noautoload                No autoload file on Spectrum, ZX80 or ZX81\n"
+        "--fastautoload              Do the autoload process at top speed\n"
+        "--noautoselectfileopt       Do not autoselect emulation options for known files\n"
+        "--accelerate-loading        Accelerate loading files\n"
+        "--accelerate-saving         Accelerate saving files\n"
+
+
+
+        "\n"
+        "\n"
+        "Storage - +3 Disk Settings\n"
+        "--------------------------\n"
+        "\n"
+
+        "--dsk-file f                             Set 3\" CF2 Floppy DSK image file\n"
+        "--enable-dsk                             Enable 3\" CF2 Floppy DSK emulation. Usually requires --dsk-file\n"
+        "--dsk-write-protection                   Enable 3\" CF2 Floppy DSK write protection\n"
+        "--pd765-silent-write-protection          When write protect is enabled, do not notify the cpu, so behave as it is not write protected (but the data is not written)\n"
+        "--dsk-persistent-writes                  Enable 3\" CF2 Floppy DSK persistent writes\n"
+        "--dsk-no-persistent-writes               Disable 3\" CF2 Floppy DSK persistent writes\n"
+
+        "--dsk-pcw-no-boot-reinsert-previous-dsk  Do not reinsert previous dsk after booting CP/M\n"
+        "--dsk-pcw-no-failback-cpm-when-no-boot   Do not insert CP/M disk if selected disk is not bootable\n"
+
+
+        "\n"
+        "\n"
+        "Storage - Additional ROMS\n"
+        "-------------------------\n"
+        "\n"
+
+        "--ql-rom-c000-file f       Sets additional rom file for C000 address on QL\n"
+
+
+        "\n"
+        "\n"
+        "Storage - Betadisk Settings\n"
+        "---------------------------\n"
+        "\n"
+
+        "--enable-betadisk               Enable Betadisk emulation\n"
+        "--trd-file f                    Set trd image file\n"
+        "--enable-trd                    Enable TRD emulation. Usually requires --trd-file\n"
+        "--trd-write-protection          Enable TRD write protection\n"
+        "--trd-no-persistent-writes      Disable TRD persistent writes\n"
+
+
+        "\n"
+        "\n"
+        "Storage - Dandanator Settings\n"
+        "-----------------------------\n"
+        "\n"
+
+        "--dandanator-rom f              Set ZX Dandanator rom file\n"
+        "--enable-dandanator             Enable ZX Dandanator emulation. Requires --dandanator-rom\n"
+        "--dandanator-press-button       Simulates pressing button on ZX Dandanator. Requires --enable-dandanator\n"
+
+
+        "\n"
+        "\n"
+        "Storage - ESXDOS Handler Settings\n"
+        "---------------------------------\n"
+        "\n"
+
+        "--enable-esxdos-handler         Enable ESXDOS traps handler. Requires divmmc or divide paging emulation\n"
+        "--esxdos-root-dir p             Set ESXDOS root directory for traps handler. Uses current directory by default.\n"
+        "--esxdos-readonly               Forbid write operations on ESXDOS handler\n"
+        "--esxdos-local-dir p            Set ESXDOS local directory for traps handler. This is the relative directory used inside esxdos.\n"
+
+
+        "\n"
+        "\n"
+        "Storage - HiLow Settings\n"
+        "------------------------\n"
+        "\n"
+
+        "--hilow-file f                  Set HiLow Data Drive image file\n"
+        "--enable-hilow                  Enable HiLow Data Drive. Usually requires --hilow-file\n"
+        "--hilow-write-protection        Enable HiLow Data Drive write protection\n"
+        "--hilow-no-persistent-writes    Disable HiLow Data Drive persistent writes\n"
+
+
+        "\n"
+        "\n"
+        "Storage - IDE Settings\n"
+        "----------------------\n"
+        "\n"
+
+        "--ide-file f                    Set ide image file\n"
+        "--enable-ide                    Enable IDE emulation. Usually requires --ide-file\n"
+        "--ide-write-protection          Enable IDE write protection\n"
+        "--ide-no-persistent-writes      Disable IDE persistent writes\n"
+        "--enable-divide-ports           Enable DIVIDE emulation ports only, but not paging. Usually requires --enable-ide\n"
+        "--enable-divide-paging          Enable DIVIDE paging only\n"
+        "--enable-divide                 Enable DIVIDE emulation. Usually requires --enable-ide\n"
+        "--divide-rom f                  Sets divide firmware rom. If not set, uses default file\n"
+        "--enable-8bit-ide               Enable 8-bit simple IDE emulation. Requires --enable-ide\n"
+        "--diviface-ram-size n           Sets divide/divmmc ram size in kb. Allowed values: 32, 64, 128, 256 or 512\n"
+
+
+        "\n"
+        "\n"
+        "Storage - iFrom Settings\n"
+        "------------------------\n"
+        "\n"
+
+        "--ifrom-rom f                   Set iFrom rom file\n"
+        "--enable-ifrom                  Enable iFrom emulation. Requires --ifrom-rom\n"
+
+
+        "\n"
+        "\n"
+        "Storage - Kartusho Settings\n"
+        "---------------------------\n"
+        "\n"
+
+        "--kartusho-rom f                Set Kartusho rom file\n"
+        "--enable-kartusho               Enable Kartusho emulation. Requires --kartusho-rom\n"
+
+
+        "\n"
+        "\n"
+        "Storage - Microdrive Settings\n"
+        "-----------------------------s\n"
+        "\n"
+
+        "--zx-mdv-file n f               Set Microdrive n file (n between 1 and 4)\n"
+        "--zx-mdv-enable n               Enable mdv(n) (n between 1 and 4)\n"
+        "--zx-mdv-no-persistent-writes n Disable mdv(n) persistent writes (enabled by default) (n between 1 and 4)\n"
+        "--enable-interface1             Enable Interface 1 emulation\n"
+
+
+        "\n"
+        "\n"
+        "Storage - SD/MMC Settings\n"
+        "-------------------------\n"
+        "\n"
+
+        "--mmc-file f                    Set mmc image file\n"
+        "--mmc-file-2 f                  Set mmc image file for second card\n"
+        "--enable-mmc                    Enable MMC emulation. Usually requires --mmc-file\n"
+        "--enable-mmc-2                  Enable MMC emulation for second card. Usually requires --mmc-file-2\n"
+
+
+        "--sd-enable-sdhc-addressing     Enable SDHC addressing (block addressing instead of byte addressing)\n"
+        "--sd-enable-sdhc-addressing-2   Enable SDHC addressing (block addressing instead of byte addressing) for second card\n"
+        "--mmc-write-protection          Enable MMC write protection\n"
+        "--mmc-write-protection-2        Enable MMC write protection for second card\n"
+        "--mmc-no-persistent-writes      Disable MMC persistent writes\n"
+        "--mmc-no-persistent-writes-2    Disable MMC persistent writes for second card\n");
+
+        printf(
+            "--copy-file-to-mmc source dest  Add file from local filesystem to the mmc, before starting ZEsarUX. That copies the files in "
+            "the mmc image and syncs the changes. "
+            "You can use that setting up to %d times. Destination must not include 0:/ prefix. mmc file is set with setting --mmc-file\n",
+            MAX_COPY_FILES_TO_MMC);
+
+        printf(
+        "--enable-divmmc-ports           Enable DIVMMC emulation ports only, but not paging. Usually requires --enable-mmc\n"
+        "--enable-divmmc-paging          Enable DIVMMC paging only\n"
+        "--enable-divmmc                 Enable DIVMMC emulation: ports & paging. Usually requires --enable-mmc\n"
+        "--divmmc-rom f                  Sets divmmc firmware rom. If not set, uses default file\n"
+        "--enable-zxmmc                  Enable ZXMMC emulation. Usually requires --enable-mmc\n"
+
+
+        "\n"
+        "\n"
+        "Storage - QL MDV & FLP Settings\n"
+        "-------------------------------\n"
+        "\n"
+
+        "--enable-ql-mdv-flp             Enable QL Microdrive & Floppy emulation\n"
+        "--ql-mdv1-root-dir p            Set QL mdv1 root directory\n"
+        "--ql-mdv2-root-dir p            Set QL mdv2 root directory\n"
+        "--ql-flp1-root-dir p            Set QL flp1 root directory\n"
+        "--ql-flp2-root-dir p            Set QL flp2 root directory\n"
+        "--ql-mdv1-enable                Enable QL mdv1\n"
+        "--ql-mdv2-enable                Enable QL mdv2\n"
+        "--ql-flp1-enable                Enable QL flp1\n"
+        "--ql-flp2-enable                Enable QL flp2\n"
+        "--ql-mdv1-read-only             Mark mdv1 as read only\n"
+        "--ql-mdv2-read-only             Mark mdv2 as read only\n"
+        "--ql-flp1-read-only             Mark flp1 as read only\n"
+        "--ql-flp2-read-only             Mark flp2 as read only\n"
+        "--ql-win1-no-alias-mdv1         Do not handle win1_ device as an alias to mdv1_\n"
+        "--ql-flp1-dir-copied-mdv1       flp1 path parameter is copied from mdv1 path parameter\n"
+        "--ql-assume-mdv1-no-dev         If a file operation doesn't have device name, assume mdv1\n"
+
+
+
+
+        "\n"
+        "\n"
+        "Storage - Superupgrade Settings\n"
+        "-------------------------------\n"
+        "\n"
+
+        "--superupgrade-flash f          Set Superupgrade flash file\n"
+        "--enable-superupgrade           Enable Superupgrade emulation. Requires --superupgrade-flash\n"
+
+
+        "\n"
+        "\n"
+        "Storage - Tape Settings\n"
+        "-----------------------\n"
+        "\n"
+        "--no-fallbacktorealtape     Disable fallback to real tape setting\n"
+        "--anyflagloading            Enables tape load routine to load without knowing block flag\n"
+        "--autorewind                Autorewind tape when reaching end of tape\n"
+        "--simulaterealload          Simulate real tape loading\n"
+        "--simulaterealloadfast      Enable fast simulate real tape loading\n"
+        "--deletetzxpauses           Do not follow pauses on TZX tapes\n"
+        //"--realloadfast              Fast loading of real tape\n"
+
+
+        "\n"
+        "\n"
+        "Storage - ZXMMC+ Settings\n"
+        "-------------------------\n"
+        "\n"
+        "--enable-zxmmcplus                   Enable ZXMMC+ emulation\n"
+        "--zxmmcplus-flash-file               File to use on ZXMMC+ as Flash ROM. Default: zxmmcplus.flash\n"
+        "--zxmmcplus-flash-write-protection   Enable ZXMMC+ Flash ROM write protection\n"
+        "--zxmmcplus-flash-persistent-writes  Enable ZXMMC+ Flash ROM persistent writes\n"
+
+
+        "\n"
+        "\n"
+        "Storage - ZXPand Settings\n"
+        "-------------------------\n"
+        "\n"
+
+        "--enable-zxpand        Enable ZXpand emulation\n"
+        "--zxpand-root-dir p    Set ZXpand root directory for sd/mmc filesystem. Uses current directory by default.\n"
+        "                       Note: ZXpand does not use --mmc-file setting\n"
+
+
+        "\n"
+        "\n"
+        "Storage - ZX-Uno Flash Settings\n"
+        "-------------------------------\n"
+        "\n"
+
+        "--zxunospifile path             File to use on ZX-Uno as SPI Flash. Default: zxuno.flash\n"
+        "--zxunospi-write-protection     Enable ZX-Uno SPI Flash write protection\n"
+        "--zxunospi-persistent-writes    Enable ZX-Uno SPI Flash persistent writes\n"
+        "--zxuno-initial-64k f           Load a 64kb file that will be written on the initial 64kb space\n"
+
+
+        "\n"
+        "\n"
+        "Storage - Z88 Cards\n"
+        "-------------------------------\n"
+        "\n"
+
+        "--z88-no-persistent-writes      Disable Z88 persistent writes\n"
+
+
+        "\n"
+        "\n"
+        "TV Settings\n"
+        "------------\n"
+        "\n"
+
+        "--tv-maximum-scanlines n                Maximum scanlines (counting even non visible scanlines). Range from 200 to 399\n"
+        "--tv-maximum-scanline-period n          Maximum scanline duration, in microseconds. Range from 10 to 99\n"
+        "--tv-minimum-accepted-vsync-length n    Minimum accepted vsync length, in microseconds. Range from 10 to 999\n"
+        "--tv-minimum-accepted-vsync-interval n  Minimum accepted vsync interval (in %% of 20ms) between every vsync start. Range from 1 to 100\n"
+
+
+
+
+
+        "\n"
+        "\n"
+        "Video Settings\n"
+        "----------------\n"
+        "\n"
+
+        "--realvideo                             Enable real video display - for Spectrum (rainbow and other advanced effects), ZX80/81 (non standard & hi-res modes) and other machines\n"
+        "--no-realvideo                          Disable real video display (setting by default)\n"
+        "--no-detect-realvideo                   Disable real video autodetection\n"
+        "--tbblue-legacy-hicolor                 Allow legacy hi-color effects on pixel/attribute display zone\n"
+        "--tbblue-legacy-border                  Allow legacy border effects on tbblue machine\n"
+        "--tbblue-no-sprite-optimization         Disable tbblue sprite render optimization\n"
+
+        "--ql-aspect-ratio n                     Sets QL display aspect ratio. Possible values: 0=Real (1.476), 1=4:3, 2=1:1\n"
+        "--ql-border-color n                     QL border color (0..15)\n"
+
+        //"--tsconf-fast-render       Enables fast render of Tiles and Sprites for TSConf. Uses less host cpu but it's less realistic: doesn't do scanline render but full frame render\n"
+
+        "--tsconf-vdac-with-pwm                  Enable TSConf vdac with pwm\n"
+        "--snoweffect                            Enable snow effect support for Spectrum\n"
+        "--enablegigascreen                      Enable Gigascreen video support\n"
+        "--enableinterlaced                      Enable Interlaced video support\n"
+        "--enableinterlaced-scanlines            Enable Interlaced scanline effect. Requires --enableinterlaced\n"
+        "--enableinterlaced-scanlines-aggressive Enable Interlaced aggressive scanline effect. Requires --enableinterlaced-scanlines\n"
+        "--enableulaplus                         Enable ULAplus video modes\n"
+        "--enablespectra                         Enable Spectra video modes\n"
+        "--enabletimexvideo                      Enable Timex video modes\n"
+        "--disablerealtimex512                   Disable real Timex mode 512x192. In this case, it's scalled to 256x192 but allows scanline effects\n"
+        "--enable16c                             Enable 16C video mode support\n"
+        "--enablezgx                             Enable ZGX Sprite chip\n"
+        "--autodetectwrx                         Enable WRX autodetect setting on ZX80/ZX81\n"
+        "--wrx                                   Enable WRX mode on ZX80/ZX81\n"
+        //"--vsync-minimum-length n               Set ZX80/81 Vsync minimum length in t-states (minimum 100, maximum 999)\n"
+        "--chroma81                              Enable Chroma81 support on ZX80/ZX81\n"
+        "--disable-flash                         Disable flash\n"
+
+        "--videozx8081 n                         Emulate ZX80/81 Display on Spectrum. n=pixel threshold (1..16. 4=normal)\n"
+        "--videofastblack                        Emulate black screen on fast mode on ZX80/ZX81\n"
+        "--no-ocr-alternatechars                 Disable looking for an alternate character set other than the ROM default on OCR functions\n"
+        "--z88-hide-shortcuts                    Hide Z88 shortcuts from the display\n"
+        "--scr file                              Load Screen File at startup\n"
+        "--arttextthresold n                     Pixel threshold for artistic emulation for curses & stdout & simpletext (1..16. 4=normal)\n"
+        "--disablearttext                        Disable artistic emulation for curses & stdout & simpletext\n"
+        "--allpixeltotext                        Enable all pixel to text mode\n"
+        "--allpixeltotext-scale n                All pixel to text mode scale\n"
+        "--allpixeltotext-invert                 All pixel to text mode invert mode\n"
+        "--allpixeltotext-width n                All pixel to text max width (in chars) (minimum 1, maximum 9999)\n"
+        "--allpixeltotext-x-offset n             All pixel to text X-Offset (in chars) (minimum 0, maximum 9999)\n"
+        "--allpixeltotext-height n               All pixel to text max height (in chars) (minimum 1, maximum 9999)\n"
+        "--allpixeltotext-y-offset n             All pixel to text Y-Offset (in chars) (minimum 0, maximum 9999)\n"
+        "--text-keyboard-add text                Add a string to the Adventure Text OSD Keyboard. The first addition erases the default text keyboard.\n"
+        " You can use hotkeys by using double character ~~ just before the letter, for example:\n"
+        " --text-keyboard-add ~~north   --text-keyboard-add e~~xamine\n");
 
 printf (
-		"--text-keyboard-length n               Define the duration for every key press on the Adventure Text OSD Keyboard, in 1/50 seconds (default %d). Minimum 10, maximum 100\n"
-		"The half of this value, the key will be pressed, the other half, released. Example: --text-keyboard-length 50 to last 1 second\n",
-		DEFAULT_ADV_KEYBOARD_KEY_LENGTH);
+        "--text-keyboard-length n                Define the duration for every key press on the Adventure Text OSD Keyboard, in 1/50 seconds (default %d). Minimum 10, maximum 100\n"
+        "The half of this value, the key will be pressed, the other half, released. Example: --text-keyboard-length 50 to last 1 second\n",
+        DEFAULT_ADV_KEYBOARD_KEY_LENGTH);
 
 printf (
-		"--text-keyboard-finalspc               Sends a space after every word on the Adventure Text OSD Keyboard\n"
-        "--textimageprogram p                   Specify a path to a program or script to be sent the emulator text shown to generate images\n"
-        "--textimage-method-location s          Set the method to detect location text, one of: ");
+        "--text-keyboard-finalspc                Sends a space after every word on the Adventure Text OSD Keyboard\n"
+        "--textimageprogram p                    Specify a path to a program or script to be sent the emulator text shown to generate images\n"
+        "--textimage-method-location s           Set the method to detect location text, one of: ");
 
         textadv_location_print_method_strings();
 
 printf("\n"
-        "--textimage-min-time-between-images n  Minimum time (in miliseconds) between every image to avoid too much cost usage by external API\n"
-        "--textimage-min-no-char-time n         After that time (in miliseconds) without receiving any character, we can guess it's the end of the location description. Increase it if the descriptions are not full read\n"
-        "--textimage-min-after-room-time n      After change room and after that time (in miliseconds), we can guess it's the end of the location description. Increase it if the descriptions are blank or not full read\n"
-        "--textimage-total-count n              Define the total executions of the textimageprogram, used only for your own information\n"
-		"--red                                  Force display mode with red colour\n"
-		"--green                                Force display mode with green colour\n"
-		"--blue                                 Force display mode with blue colour\n"
-		"  Note: You can combine colours, for example, --red --green for Yellow display, or --red --green --blue for Gray display\n"
-		"--inversevideo                         Inverse display colours\n"
-		"--realpalette                          Use real Spectrum colour palette according to info by Richard Atkinson\n"
+        "--textimage-min-time-between-images n   Minimum time (in miliseconds) between every image to avoid too much cost usage by external API\n"
+        "--textimage-min-no-char-time n          After that time (in miliseconds) without receiving any character, we can guess it's the end of the location description. Increase it if the descriptions are not full read\n"
+        "--textimage-min-after-room-time n       After change room and after that time (in miliseconds), we can guess it's the end of the location description. Increase it if the descriptions are blank or not full read\n"
+        "--textimage-total-count n               Define the total executions of the textimageprogram, used only for your own information\n"
+        "--red                                   Force display mode with red colour\n"
+        "--green                                 Force display mode with green colour\n"
+        "--blue                                  Force display mode with blue colour\n"
+        "  Note: You can combine colours, for example, --red --green for Yellow display, or --red --green --blue for Gray display\n"
+        "--inversevideo                          Inverse display colours\n"
+        "--rgb8bit-color                         Draw colours using RGB 8 bit, but the internal palette still uses RGB 24 bit, it's just pixel colors are drawn using 8 bit\n"
+        "--dithering                             Only black and white colors with dithering, and requires zoom >=2\n"
+        "--realpalette                           Use real Spectrum colour palette according to info by Richard Atkinson\n"
+        "--visionql-palette                      Use Vision-QL color palette on the Sinclair QL. Vision-QL was the official monitor for the Sinclair QL\n"
 
 #ifdef COMPILE_AA
-        "--aaslow                               Use slow rendering on aalib\n"
+        "--aaslow                                Use slow rendering on aalib\n"
 #endif
 
 
 
 #ifdef COMPILE_CURSESW
-		"--curses-ext-utf                       Use extended utf characters to have 64x48 display, only on Spectrum and curses drivers\n"
+        "--curses-ext-utf                        Use extended utf characters to have 64x48 display, only on Spectrum and curses drivers\n"
 #endif
 
 
-		"--autoredrawstdout                     Enable automatic display redraw for stdout & simpletext drivers\n"
-		"--sendansi                             Sends ANSI terminal control escape sequences for stdout & simpletext drivers, to use colours and cursor control\n"
-		"--textfps n                            Sets FPS for stdout and simpletext text drivers\n"
+        "--autoredrawstdout                      Enable automatic display redraw for stdout & simpletext drivers\n"
+        "--sendansi                              Sends ANSI terminal control escape sequences for stdout & simpletext drivers, to use colours and cursor control\n"
+        "--textfps n                             Sets FPS for stdout and simpletext text drivers\n"
 
 
 
+        "\n"
+        "\n"
+        "Video Driver Settings\n"
+        "---------------------\n"
+        "\n"
 
+
+#ifdef USE_XEXT
+        "--disableshm                Disable X11 Shared Memory\n"
+#endif
+
+        "--nochangeslowparameters    Do not change any performance parameters (frameskip, realvideo, etc) "
+        "on slow machines like raspberry pi 1, etc\n"
+
+        "--changeslowparameters      Change some performance parameters (frameskip, realvideo, etc) "
+        "on slow machines like raspberry pi 1, etc\n"
 
 #ifdef COMPILE_FBDEV
         "--no-use-ttyfbdev                      Do not use a tty on fbdev driver. It disables keyboard\n"
@@ -1109,596 +1910,30 @@ printf("\n"
 #endif
 
 
-
-
-		"\n"
-        "\n"
-        "External Tools\n"
-        "--------------\n"
-        "\n"
-
-        "--tool-sox-path p     Set external tool sox path. Path can not include spaces\n"
-        "--tool-gunzip-path p  Set external tool gunzip path. Path can not include spaces\n"
-        "--tool-tar-path p     Set external tool tar path. Path can not include spaces\n"
-        "--tool-unrar-path p   Set external tool unrar path. Path can not include spaces\n"
-
-
-
-
-
-
-		"\n"
-		"\n"
-		"File Browser Settings\n"
-		"---------------------\n"
-		"\n"
-
-		"--filebrowser-hide-dirs            Do not show directories on file selector menus\n"
-        "--filebrowser-hide-size            Do not show file sizes on file selector menus\n"
-        "--filebrowser-allow-folder-delete  Allows deleting folders on the file utilities browser. Enable it AT YOUR OWN RISK\n"
-        "--fileviewer-hex                   File viewer always shows file contents in hexadecimal+ascii\n"
-		"--no-file-previews                 Do not show file previews on file selector menus\n"
-        "--reduce-file-previews             Reduce file previews to half size\n"
-
-
-		"\n"
-		"\n"
-		"Function Keys Settings\n"
-		"----------------------\n"
-		"\n"
-
-
-		);
-
-        int i;
-		printf (
-	    "--def-f-function key action                 Define F key to do an action. action can be: ");
-
-
-        for (i=0;i<MAX_F_FUNCTIONS;i++) {
-            printf ("%s ",defined_direct_functions_array[i].texto_funcion);
-        }
-
-
-
-		printf (
-		"\n"
-
-		"--def-f-function-parameters key extra-info  Define extra info associated to an action of a F key"
-
-
-		"\n"
-		"\n"
-		"General Settings\n"
-		"----------------\n"
-		"\n"
-
-		"--zoomx n                                      Horizontal Zoom Factor\n"
-		"--zoomy n                                      Vertical Zoom Factor\n"
-        "--zoom-allow-different-xy                      Allow Zoom horizontal different to vertical\n"
-        "--no-autochange-zoom-big-display               No autochange to zoom 1 when switching to machine with big display (Next, QL, CPC, ...)\n"
-
-		"--reduce-075                                   Reduce display size 4/3 (divide by 4, multiply by 3)\n"
-		"--reduce-075-no-antialias                      Disable antialias for reduction, enabled by default\n"
-		"--reduce-075-offset-x n                        Destination offset x on reduced display\n"
-		"--reduce-075-offset-y n                        Destination offset y on reduced display\n"
-
-		"--frameskip n                                  Set frameskip (0=none, 1=25 FPS, 2=16 FPS, etc)\n"
-        "--no-frameskip-zxdesktop-back                  Disable apply frameskip drawing ZX Desktop Background\n"
-		"--disable-autoframeskip                        Disable autoframeskip\n"
-        "--no-autoframeskip-moving-win                  Disable autoframeskip even when moving windows\n"
-        "--disable-flash                                Disable flash\n"
-		"--fullscreen                                   Enable full screen\n"
-		"--zxdesktop-disable-on-fullscreen              Disable ZX Desktop when going to full screen\n"
-        "--zxdesktop-no-restore-win-after-fullscreen    Do not restore windows after disabling full screen, when --zxdesktop-disable-on-fullscreen setting is set\n"
-		"--disable-border-on-fullscreen                 Disable Border when going to full screen\n"
-        "--disable-footer-on-fullscreen                 Disable Footer when going to full screen\n"
-		"--disableborder                                Disable Border\n"
-        "--disablefooter                                Disable window footer\n"
-        "--ignoremouseclickopenmenu                     Ignore mouse clicking to open menu or ZX Desktop buttons\n"
-        "--limitopenmenu                                Limit the action to open menu (F5 by default, joystick button). To open it, you must press the key 3 times in one second\n"
-		"--advancedmenus                                Show advanced menu items\n"
-        "--simplemenus                                  Show very simple menus\n"
-        "--language language                            Select alternate language for menu. Available languages: es (Spanish), ca (Catalan). Default language if not set: English\n"
-        "--online-download-path p                       Where to download files from the speccy and zx81 online browser. If not set, they are download to a temporary folder\n"
-
-#ifndef MINGW
-		"--no-cpu-usage                                 Do not show host CPU usage on footer\n"
-#endif
-
-		"--no-cpu-temp                                  Do not show host CPU temperature on footer\n"
-		"--no-fps                                       Do not show FPS on footer\n"
-        "--nowelcomemessage                             Disable welcome logo & message\n"
-        "--fastwelcomemessage                           Sets fast welcome message\n"
-        "--enable-xanniversary-logo                     Enable X Anniversary logo (enabled by default only on X version)\n"
-        "--disable-xanniversary-logo                    Disable X Anniversary logo. It's the default behaviour, only kept here for backwards compatibility\n"
-        "--disablemenufileutils                         Disable File Utilities menu\n"
-        "--disable-search-menu                          Disable search menu feature (enabled by default)\n"
-        "--enable-search-menu                           Enable search menu feature\n"
-		"--load-additional-config                       Loads an additional .zesaruxdevrc config file (if exists) after loading .zesaruxrc and parsing command line settings\n"
-
-
-		"\n"
-		"\n"
-		"Hardware Settings\n"
-		"-----------------\n"
-		"\n"
-
-        "--emulatorspeed n           Set Emulator speed in percentage\n"
-		"--printerbitmapfile f       Sends printer output to image file. Supported formats: pbm, txt\n"
-		"--printertextfile f         Sends printer output to text file using OCR method. Printer output is saved to a text file using OCR method to guess text.\n"
-		"--redefinekey src dest      Redefine key scr to be key dest. You can write maximum 10 redefined keys\n"
-        "                            Key must be ascii character numbers or a character included in escaped quotes, like: 97 (for 'a') or \\'q\\'\n"
-        "                            (the escaped quotes are used only in command line; on configuration file, they are normal quotes '')\n"
-        "--recreatedzx               Enable support for Recreated ZX Spectrum Keyboard\n"
-        "--recreatedzx-also-on-menu  Use ZX Recreated mode also on menu\n"
-        "--keyboard-issue2           Emulate ZX Spectrum Keyboard issue 2. Default issue 3\n"
-		"--keymap n                  Which kind of physical keyboard you have. Default 0 (English) or 1 (Spanish)\n"
-		"--enablekempstonmouse       Enable kempston mouse emulation\n"
-		"--kempstonmouse-sens n      Set kempston mouse sensitivity (1-%d)\n",MAX_KMOUSE_SENSITIVITY);
-		printf (
-
-
-
-
-		"\n"
-		"\n"
-		"Hardware - Joystick\n"
-		"-------------------\n"
-		"\n"
-
-		"--joystickemulated type         Type of emulated joystick. Type can be one of: ");
-
-	joystick_print_types();
-		printf (" (default: %s).\n",joystick_texto[joystick_emulation]);
-		printf ("  Note: if a joystick type has spaces in its name, you must write it between \"\"\n");
-
-
-	printf(
-        "--joystickfirekey n             Define which key triggers the first fire function for the joystick: -1=None, 0=Home, 1=RightAlt, 2=RightCtrl, 3=RightShift, 4=LeftAlt, 5=LeftCtrl, 6=LeftShift, 7=Tab\n"
-        "--joystickfirekey2 n            Define which key triggers the second fire function for the joystick: -1=None, 0=Home, 1=RightAlt, 2=RightCtrl, 3=RightShift, 4=LeftAlt, 5=LeftCtrl, 6=LeftShift, 7=Tab\n"
-        "--joystickfirekey3 n            Define which key triggers the third fire function for the joystick: -1=None, 0=Home, 1=RightAlt, 2=RightCtrl, 3=RightShift, 4=LeftAlt, 5=LeftCtrl, 6=LeftShift, 7=Tab\n"
-        "--joystickfirekey4 n            Define which key triggers the fourth fire function for the joystick: -1=None, 0=Home, 1=RightAlt, 2=RightCtrl, 3=RightShift, 4=LeftAlt, 5=LeftCtrl, 6=LeftShift, 7=Tab\n"
-        "--sms-swap-controls             Sega Master System swap controls player 1 <-> player 2\n"
-		"--disablerealjoystick           Disable real joystick emulation\n"
-		"--realjoystickpath f            Change default real joystick device path (used on Linux)\n"
-        "--realjoystickindex n           Change default real joystick device id (used on Windows and other OS with SDL driver)\n"
-		"--realjoystick-calibrate n      Parameter to autocalibrate joystick axis. Axis values read from joystick less than n and greater than -n are considered as 0. Default: 16384. Not used on native linux real joystick\n"
-
-#ifdef USE_LINUXREALJOYSTICK
-		"--no-native-linux-realjoy       Do not use native linux real joystick support. Instead use the video driver joystick support (currently only SDL)\n"
-#endif
-        "--joystickevent but evt         Set a joystick button or axis to an event (changes joystick to event table)\n"
-        "                                If it's a button (not axis), must be specified with its number, without sign, for example: 2\n"
-        "                                If it's axis, must be specified with its number and sign, for example: +2 or -2\n"
-        "                                Event must be one of: ");
-
-        realjoystick_print_event_keys();
-
-	printf ("\n"
-		"--joystickkeybt but key         Define a key pressed when a joystick button pressed (changes joystick to key table)\n"
-		"                                If it's a button (not axis), must be specified with its number, without sign, for example: 2\n"
-        "                                If it's axis, must be specified with its number and sign, for example: +2 or -2\n"
-        "                                Key must be an ascii character number or a character included in escaped quotes, like: 13 (for enter) or \\'q\\'\n"
-		"                                (the escaped quotes are used only in command line; on configuration file, they are normal quotes '')\n"
-		"                                Note: to simulate Caps shift, use key value 128, and to simulate Symbol shift, use key value 129\n"
-        "--joystickkeyev evt key         Define a key pressed when a joystick event is generated (changes joystick to key table)\n"
-        "                                Event must be one of: ");
-
-        realjoystick_print_event_keys();
-
-
-	printf ("\n"
-		"                                Key must be an ascii character number or a character included in escaped quotes, like: 13 (for enter) or \\'q\\' \n"
-		"                                (the escaped quotes are used only in command line; on configuration file, they are normal quotes '')\n"
-		"                                Note: to simulate Caps shift, use key value 128, and to simulate Symbol shift, use key value 129\n"
-
-        	"\n"
-		"  Note: As you may see, --joystickkeyev is not dependent on the real joystick type you use, because it sets an event to a key, "
-		"and --joystickkeybt and --joystickevent are dependent on the real joystick type, because they set a button/axis number to "
-		"an event or key, and button/axis number changes depending on the joystick (the exception here is the axis up/down/left/right "
-		"which are the same for all joysticks: up: -1, down: +1, left: -1, right: +1)\n"
-
-		"\n"
-
-        "--steering-wheel-axis-number n  Set the axis number assigned to wheel movement\n"
-		"--clearkeylistonsmart           Clear all joystick (events and buttons) to keys table every smart loading.\n"
-		"                                Joystick to events table is never cleared using this setting\n"
-		"--cleareventlist                Clears joystick to events table\n"
-		"--enablejoysticksimulator       Enable real joystick simulator. Only useful on development\n"
-
-
-
-
-
         "\n"
         "\n"
-        "Hardware - Memory Settings\n"
-        "--------------------------\n"
+        "ZX Desktop Settings\n"
+        "-------------------\n"
         "\n"
 
-        "--zx8081mem n       Emulate 1,2,...16 kb of memory on ZX80/ZX81\n"
-        "--zx8081ram8K2000   Emulate 8K RAM in 2000H for ZX80/ZX81\n"
-        "--zx8081ram16K8000  Emulate 16K RAM in 8000H for ZX80/ZX81\n"
-        "--zx8081ram16KC000  Emulate 16K RAM in C000H for ZX80/ZX81\n"
-		"--acemem n          Emulate 3, 19, 35 or 51 kb of memory on Jupiter Ace\n"
-		"--128kmem n         Set more than 128k RAM for Spectrum 128k machines. Allowed values: 128, 256, 512\n"
-        "--qlrammem n        Set RAM size on Sinclair QL. Minimum: 128KB, maximum: ");
 
-        printf("%d KB\n",ql_get_maximum_ram_kb() );
-
-
-        printf(
-		"\n"
-		"\n"
-		"Network\n"
-		"-------\n"
-		"\n"
-
-		"--zeng-remote-hostname s                        ZENG last remote hostname\n"
-		"--zeng-remote-port n                            ZENG last remote port\n"
-		"--zeng-snapshot-interval-frames n               ZENG snapshot interval, on video frames\n"
-		"--zeng-iam-master                               Tells this machine is a ZENG master\n"
-        "--zeng-not-send-input-events                    Do not send ZENG input events (keyboard, joystick) to other hosts\n"
-
-
-        "--zeng-online-hostname s                        Sets ZENG Online hostname to connect to\n"
-        "--zeng-online-nickname s                        Sets nickname for ZENG Online\n"
-        "--zeng-online-no-zip-snapshots                  Do not compress snapshots with zip format\n"
-        "--zeng-online-no-footer-lag-indicator           Show lag or dropout indicator on footer when snapshots are coming late\n"
-        "--zeng-online-no-streaming-create               Do not enable streaming mode when creating rooms\n"
-        "--zeng-online-no-autoadjust-display-quality     Do not autoadjust display quality\n"
-
-        "--enable-zeng-online-server                     Enable ZENG Online server. Requires ZRCP\n"
-        "--zeng-online-server-allow-create               Allows this ZENG Online server to allow create rooms from any ip address. By default, only creation from localhost is allowed\n"
-        "--zeng-online-server-max-rooms n                Set maximum rooms for this ZENG Online server\n"
-        "--zeng-online-server-max-players-room n         Set maximum players per room for this ZENG Online server\n"
-        "--zeng-online-server-destroy-rooms-no-players   This ZENG Online server destroys rooms without players\n"
-		"--zeng-online-server-allow-all-zrcp             Allow all ZRCP commands when enabling this ZENG Online server, not only ZENG commands\n"
-
-
-		"\n"
-		"\n"
-		"OSD Settings\n"
-		"------------\n"
-		"\n"
-
-
-		"--enable-watermark                     Adds a watermark to the display. Needs realvideo\n"
-		"--watermark-position n                 Where to put watermark. 0: Top left, 1: Top right. 2: Bottom left. 3: Bottom right\n"
-        "--watermark-only-when-device-activity  If watermark is enabled, it's only shown when loading and saving\n"
-        "--watermark-no-rotate-device-activity  Do not rotate watermark colors when loading or saving\n"
-        "--nosplash                             Disable all splash texts\n"
-
-
-
-
-
-		"\n"
-		"\n"
-		"Snapshot Settings\n"
-		"-----------------\n"
-		"\n"
-
-		"--smartloadpath path        Select initial smartload path\n"
-		"--addlastfile file          Add a file to the last files used\n"
-		"--quicksavepath path        Select path for quicksave & continous autosave\n"
-		"--autoloadsnap              Load last snapshot on start\n"
-		"--autosavesnap              Save snapshot on exit\n"
-		"--autosnappath path         Folder to save/load automatic snapshots\n"
-		"--tempdir path              Folder to save temporary files. Folder must exist and have read and write permissions\n"
-		"--snap-no-change-machine    Do not change machine when loading sna or z80 snapshots. Just load it on memory\n"
-        "--nex-no-automount-esxdos   Do not mount esxdos folder when opening .nex/.snx files\n"
-        "--zsf-save-rom              Include ROM contents in saved ZSF snapshot. Useful when running custom roms. Only available for Spectrum/Clones models 16k/48k/128k/+2/+2A/+3\n"
-		"--no-close-after-smartload  Do not close menu after SmartLoad\n"
-        "--z88-not-sync-clock-snap   Do not sync PC clock to Z88 clock after loading a snapshot\n"
-        "--snapram-interval n        Generate a snapshot in ram every n seconds\n"
-        "--snapram-max n             Maximum snapshots to keep in memory\n"
-        "--snapram-rewind-timeout n  After this time pressed rewind action, the rewind position is reset to current\n"
-
-
-		"\n"
-		"\n"
-		"Statistics\n"
-		"----------\n"
-		"\n"
-
-		"--total-minutes-use n                 Total minutes of use of ZEsarUX\n"
-		"--stats-send-already-asked            Do not ask to send statistics\n"
-		"--stats-send-enabled                  Enable send statistics\n"
-		"--stats-uuid s                        UUID to send statistics\n"
-		"--stats-disable-check-updates         Disable checking of available ZEsarUX updates\n"
-		"--stats-disable-check-yesterday-users Disable checking ZEsarUX yesterday users\n"
-		"--stats-last-avail-version s          ZEsarUX last available version to download\n"
-		"--stats-speccy-queries n              Total queries on the speccy online browser\n"
-		"--stats-zx81-queries n                Total queries on the zx81 online browser\n"
-
-
-		"\n"
-		"\n"
-		"Storage - +3 Disk Settings\n"
-		"--------------------------\n"
-		"\n"
-
-        "--dsk-file f                             Set 3\" CF2 Floppy DSK image file\n"
-        "--enable-dsk                             Enable 3\" CF2 Floppy DSK emulation. Usually requires --dsk-file\n"
-        "--dsk-write-protection                   Enable 3\" CF2 Floppy DSK write protection\n"
-        "--pd765-silent-write-protection          When write protect is enabled, do not notify the cpu, so behave as it is not write protected (but the data is not written)\n"
-        "--dsk-persistent-writes                  Enable 3\" CF2 Floppy DSK persistent writes\n"
-		"--dsk-no-persistent-writes               Disable 3\" CF2 Floppy DSK persistent writes\n"
-
-		"--dsk-pcw-no-boot-reinsert-previous-dsk  Do not reinsert previous dsk after booting CP/M\n"
-		"--dsk-pcw-no-failback-cpm-when-no-boot   Do not insert CP/M disk if selected disk is not bootable\n"
-
-		"\n"
-		"\n"
-		"Storage - Betadisk Settings\n"
-		"---------------------------\n"
-		"\n"
-
-        "--enable-betadisk               Enable Betadisk emulation\n"
-        "--trd-file f                    Set trd image file\n"
-        "--enable-trd                    Enable TRD emulation. Usually requires --trd-file\n"
-        "--trd-write-protection          Enable TRD write protection\n"
-		"--trd-no-persistent-writes      Disable TRD persistent writes\n"
-
-
-		"\n"
-		"\n"
-		"Storage - Dandanator Settings\n"
-		"-----------------------------\n"
-		"\n"
-
-        "--dandanator-rom f              Set ZX Dandanator rom file\n"
-        "--enable-dandanator             Enable ZX Dandanator emulation. Requires --dandanator-rom\n"
-        "--dandanator-press-button       Simulates pressing button on ZX Dandanator. Requires --enable-dandanator\n"
-
-
-		"\n"
-		"\n"
-		"Storage - ESXDOS Handler Settings\n"
-		"---------------------------------\n"
-		"\n"
-
-		"--enable-esxdos-handler         Enable ESXDOS traps handler. Requires divmmc or divide paging emulation\n"
-		"--esxdos-root-dir p             Set ESXDOS root directory for traps handler. Uses current directory by default.\n"
-        "--esxdos-readonly               Forbid write operations on ESXDOS handler\n"
-        "--esxdos-local-dir p            Set ESXDOS local directory for traps handler. This is the relative directory used inside esxdos.\n"
-
-
-		"\n"
-		"\n"
-		"Storage - HiLow Settings\n"
-		"------------------------\n"
-		"\n"
-
-        "--hilow-file f                  Set HiLow Data Drive image file\n"
-        "--enable-hilow                  Enable HiLow Data Drive. Usually requires --hilow-file\n"
-		"--hilow-write-protection        Enable HiLow Data Drive write protection\n"
-		"--hilow-no-persistent-writes    Disable HiLow Data Drive persistent writes\n"
-
-
-		"\n"
-		"\n"
-		"Storage - IDE Settings\n"
-		"----------------------\n"
-		"\n"
-
-		"--ide-file f                    Set ide image file\n"
-		"--enable-ide                    Enable IDE emulation. Usually requires --ide-file\n"
-		"--ide-write-protection          Enable IDE write protection\n"
-		"--ide-no-persistent-writes      Disable IDE persistent writes\n"
-		"--enable-divide-ports           Enable DIVIDE emulation ports only, but not paging. Usually requires --enable-ide\n"
-		"--enable-divide-paging          Enable DIVIDE paging only\n"
-		"--enable-divide                 Enable DIVIDE emulation. Usually requires --enable-ide\n"
-		"--divide-rom f                  Sets divide firmware rom. If not set, uses default file\n"
-		"--enable-8bit-ide               Enable 8-bit simple IDE emulation. Requires --enable-ide\n"
-		"--diviface-ram-size n           Sets divide/divmmc ram size in kb. Allowed values: 32, 64, 128, 256 or 512\n"
-
-
-		"\n"
-		"\n"
-		"Storage - iFrom Settings\n"
-		"------------------------\n"
-		"\n"
-
-        "--ifrom-rom f                   Set iFrom rom file\n"
-        "--enable-ifrom                  Enable iFrom emulation. Requires --ifrom-rom\n"
-
-
-		"\n"
-		"\n"
-		"Storage - Kartusho Settings\n"
-		"---------------------------\n"
-		"\n"
-
-        "--kartusho-rom f                Set Kartusho rom file\n"
-        "--enable-kartusho               Enable Kartusho emulation. Requires --kartusho-rom\n"
-
-
-		"\n"
-		"\n"
-		"Storage - Microdrive Settings\n"
-		"-----------------------------s\n"
-		"\n"
-
-        "--zx-mdv-file n f               Set Microdrive n file (n between 1 and 4)\n"
-        "--zx-mdv-enable n               Enable mdv(n) (n between 1 and 4)\n"
-        "--zx-mdv-no-persistent-writes n Disable mdv(n) persistent writes (enabled by default) (n between 1 and 4)\n"
-        "--enable-interface1             Enable Interface 1 emulation\n"
-
-
-		"\n"
-		"\n"
-		"Storage - SD/MMC Settings\n"
-		"-------------------------\n"
-		"\n"
-
-		"--mmc-file f                    Set mmc image file\n"
-        "--mmc-file-2 f                  Set mmc image file for second card\n"
-		"--enable-mmc                    Enable MMC emulation. Usually requires --mmc-file\n"
-        "--enable-mmc-2                  Enable MMC emulation for second card. Usually requires --mmc-file-2\n"
-
-
-        "--sd-enable-sdhc-addressing     Enable SDHC addressing (block addressing instead of byte addressing)\n"
-        "--sd-enable-sdhc-addressing-2   Enable SDHC addressing (block addressing instead of byte addressing) for second card\n"
-		"--mmc-write-protection          Enable MMC write protection\n"
-        "--mmc-write-protection-2        Enable MMC write protection for second card\n"
-		"--mmc-no-persistent-writes      Disable MMC persistent writes\n"
-        "--mmc-no-persistent-writes-2    Disable MMC persistent writes for second card\n");
-
-        printf(
-            "--copy-file-to-mmc source dest  Add file from local filesystem to the mmc, before starting ZEsarUX. That copies the files in "
-            "the mmc image and syncs the changes. "
-            "You can use that setting up to %d times. Destination must not include 0:/ prefix. mmc file is set with setting --mmc-file\n",
-            MAX_COPY_FILES_TO_MMC);
-
-        printf(
-		"--enable-divmmc-ports           Enable DIVMMC emulation ports only, but not paging. Usually requires --enable-mmc\n"
-		"--enable-divmmc-paging          Enable DIVMMC paging only\n"
-		"--enable-divmmc                 Enable DIVMMC emulation: ports & paging. Usually requires --enable-mmc\n"
-		"--divmmc-rom f                  Sets divmmc firmware rom. If not set, uses default file\n"
-		"--enable-zxmmc                  Enable ZXMMC emulation. Usually requires --enable-mmc\n"
-
-
-		"\n"
-		"\n"
-		"Storage - QL MDV & FLP Settings\n"
-		"-------------------------------\n"
-		"\n"
-
-		"--enable-ql-mdv-flp             Enable QL Microdrive & Floppy emulation\n"
-		"--ql-mdv1-root-dir p            Set QL mdv1 root directory\n"
-        "--ql-mdv2-root-dir p            Set QL mdv2 root directory\n"
-		"--ql-flp1-root-dir p            Set QL flp1 root directory\n"
-        "--ql-mdv1-enable                Enable QL mdv1\n"
-        "--ql-mdv2-enable                Enable QL mdv2\n"
-        "--ql-flp1-enable                Enable QL flp1\n"
-        "--ql-mdv1-read-only             Mark mdv1 as read only\n"
-        "--ql-mdv2-read-only             Mark mdv2 as read only\n"
-        "--ql-flp1-read-only             Mark flp1 as read only\n"
-        "--ql-win1-no-alias-mdv1         Do not handle win1_ device as an alias to mdv1_\n"
-        "--ql-flp1-dir-copied-mdv1       flp1 path parameter is copied from mdv1 path parameter\n"
-
-
-		"\n"
-		"\n"
-		"Storage - Superupgrade Settings\n"
-		"-------------------------------\n"
-		"\n"
-
-		"--superupgrade-flash f          Set Superupgrade flash file\n"
-		"--enable-superupgrade           Enable Superupgrade emulation. Requires --superupgrade-flash\n"
-
-
-		"\n"
-		"\n"
-		"Storage - Tape Settings\n"
-		"-----------------------\n"
-		"\n"
-		"--noautoload                No autoload tape file on Spectrum, ZX80 or ZX81\n"
-		"--fastautoload              Do the autoload process at top speed\n"
-		"--noautoselectfileopt       Do not autoselect emulation options for known snap and tape files\n"
-        "--no-fallbacktorealtape     Disable fallback to real tape setting\n"
-        "--anyflagloading            Enables tape load routine to load without knowing block flag\n"
-        "--autorewind                Autorewind tape when reaching end of tape\n"
-		"--simulaterealload          Simulate real tape loading\n"
-		"--simulaterealloadfast      Enable fast simulate real tape loading\n"
-        "--deletetzxpauses           Do not follow pauses on TZX tapes\n"
-		"--realloadfast              Fast loading of real tape\n"
-
-
-		"\n"
-		"\n"
-		"Storage - ZXMMC+ Settings\n"
-		"-------------------------\n"
-		"\n"
-		"--enable-zxmmcplus                   Enable ZXMMC+ emulation\n"
-        "--zxmmcplus-flash-file               File to use on ZXMMC+ as Flash ROM. Default: zxmmcplus.flash\n"
-		"--zxmmcplus-flash-write-protection   Enable ZXMMC+ Flash ROM write protection\n"
-		"--zxmmcplus-flash-persistent-writes  Enable ZXMMC+ Flash ROM persistent writes\n"
-
-
-		"\n"
-		"\n"
-		"Storage - ZXPand Settings\n"
-		"-------------------------\n"
-		"\n"
-
-		"--enable-zxpand                 Enable ZXpand emulation\n"
-		"--zxpand-root-dir p             Set ZXpand root directory for sd/mmc filesystem. Uses current directory by default.\n"
-		"                                Note: ZXpand does not use --mmc-file setting\n"
-
-
-		"\n"
-		"\n"
-		"Storage - ZX-Uno Flash Settings\n"
-		"-------------------------------\n"
-		"\n"
-
-		"--zxunospifile path             File to use on ZX-Uno as SPI Flash. Default: zxuno.flash\n"
-		"--zxunospi-write-protection     Enable ZX-Uno SPI Flash write protection\n"
-		"--zxunospi-persistent-writes    Enable ZX-Uno SPI Flash persistent writes\n"
-        "--zxuno-initial-64k f           Load a 64kb file that will be written on the initial 64kb space\n"
-
-
-		"\n"
-		"\n"
-		"Storage - Z88 Cards\n"
-		"-------------------------------\n"
-		"\n"
-
-		"--z88-no-persistent-writes      Disable Z88 persistent writes\n"
-
-
-		"\n"
-		"\n"
-		"ULA Settings\n"
-		"------------\n"
-		"\n"
-
-		"--ula-data-bus n            Sets the ula data bus value\n"
-
-
-
-		"\n"
-		"\n"
-		"Video Driver Settings\n"
-		"---------------------\n"
-		"\n"
-
-
-#ifdef USE_XEXT
-        "--disableshm                Disable X11 Shared Memory\n"
-#endif
-
-		"--nochangeslowparameters    Do not change any performance parameters (frameskip, realvideo, etc) "
-		"on slow machines like raspberry, etc\n"
-
-		"--changeslowparameters      Change some performance parameters (frameskip, realvideo, etc) "
-		"on slow machines like raspberry, etc\n"
-
-
-
-		"\n"
-		"\n"
-		"ZX Desktop Settings\n"
-		"-------------------\n"
-		"\n"
-
-
-		"--enable-zxdesktop                             Enable ZX Desktop space\n"
-		"--zxdesktop-width n                            ZX Desktop width\n"
+        "--enable-zxdesktop                             Enable ZX Desktop space\n"
+        "--forbid-zxdesktop                             Do not allow to enable ZX Desktop\n"
+        "--zxdesktop-width n                            ZX Desktop width\n"
         "--zxdesktop-height n                           ZX Desktop height\n"
-		"--zxdesktop-fill-type n                        ZX Desktop fill type (0,1,2,3,4 or 5)\n"
-		"--zxdesktop-fill-primary-color n               ZX Desktop primary fill color (0-15)\n"
-		"--zxdesktop-fill-secondary-color n             ZX Desktop secondary fill color (0-15)\n"
+        "--zxdesktop-fill-type n                        ZX Desktop fill type (0,1,2,3,4 or 5)\n"
+        "--zxdesktop-fill-primary-color n               ZX Desktop primary fill color (0-15)\n"
+        "--zxdesktop-fill-secondary-color n             ZX Desktop secondary fill color (0-15)\n"
         "--zxdesktop-fill-degraded-inverted             ZX Desktop inverted colours on degraded fill type\n"
-		"--zxdesktop-new-items                          Try to place new menu items on the ZX Desktop space\n"
-		"--zxdesktop-disable-upper-buttons              Disable ZX Desktop direct access upper buttons\n"
+        "--zxdesktop-new-items                          Try to place new menu items on the ZX Desktop space\n"
+        "--zxdesktop-disable-upper-buttons              Disable ZX Desktop direct access upper buttons\n"
         "--zxdesktop-disable-lower-buttons              Disable ZX Desktop direct access lower buttons\n"
-		"--zxdesktop-transparent-upper-buttons          Make ZX Desktop upper buttons transparent\n"
-		"--zxdesktop-transparent-lower-buttons          Make ZX Desktop lower buttons transparent\n"
+        "--zxdesktop-transparent-upper-buttons          Make ZX Desktop upper buttons transparent or force background color\n"
+        "--zxdesktop-upper-buttons-bg-follow-gui        Background color for upper buttons follows GUI style\n"
+        "--zxdesktop-upper-buttons-bg-color n           Background color for upper buttons when no follow GUI style\n"
+        "--zxdesktop-transparent-lower-buttons          Make ZX Desktop lower buttons transparent or force background color\n"
+        "--zxdesktop-lower-buttons-bg-follow-gui        Background color for lower buttons follows GUI style\n"
+        "--zxdesktop-lower-buttons-bg-color n           Background color for lower buttons when no follow GUI style\n"
         "--zxdesktop-disable-box-upper-buttons          Disable box around ZX Desktop upper buttons\n"
         "--zxdesktop-disable-box-lower-buttons          Disable box around ZX Desktop lower buttons\n"
         "--zxdesktop-disable-footer-switch              Disable ZX Desktop footer enlarge/reduce buttons\n"
@@ -1711,164 +1946,182 @@ printf("\n"
         "--zxdesktop-scr-scalefactor n                  Scale manually for ZX Desktop SCR background\n"
         "--zxdesktop-scr-disable-flash                  Disable flash for ZX Desktop SCR background\n"
         "--zxdesktop-disable-configurable-icons         Disable configurable icons on ZX Desktop\n"
+        "--zxdesktop-auto-order-icons                   Automatic order icons on ZX Desktop\n"
         "--zxdesktop-empty-trash-on-exit                Empty Trash on exit ZEsarUX\n"
         "--zxdesktop-no-show-indicators-open-apps       Show icon indicators for open apps\n"
-        "--zxdesktop-no-transparent-configurable-icons  Make ZX Desktop configurable icons non transparent\n"
+        "--zxdesktop-no-transparent-configurable-icons  Make ZX Desktop configurable icons non transparent or force background color\n"
+        "--zxdesktop-configurable-icons-bg-follow-gui   Background color for configurable icons follows GUI style\n"
+        "--zxdesktop-configurable-icons-bg-color n      Background color for configurable icons when no follow GUI style\n"
         "--zxdesktop-no-configurable-icons-text-bg      Disable background on configurable icons text\n"
         "--zxdesktop-configurable-icons-short-text      Show short text on configurable icons\n"
+        "--zxdesktop-enable-icons-stroke                Sets a stroke on icons, useful to avoid blending with ZX Desktop\n"
+        "--zxdesktop-icons-stroke-color n               Define color icons stroke (0-15)\n"
 
-        "--zxdesktop-add-icon x y a n e s               Add icon to position x,y, to action a, icon name n, extra parameters e, status s. "
-          "Icon name and extra parameters are mandatory, so if they are blank, just write it as \"\". status can be: exists or deleted. action can be: ");
-
-
-        for (i=0;i<MAX_F_FUNCTIONS;i++) {
-            printf ("%s ",defined_direct_functions_array[i].texto_funcion);
-        }
-
-
-		printf (
-		"\n"
-
-	    "--def-button-function button action    Define Button to do an action. action can be: ");
+        "--zxdesktop-append-icon x y a n e s b          Add icon to position x,y, to action a, icon name n, extra parameters e, status s, alternate bitmap b. "
+          "Icon name, extra parameters and alternate bitmap are mandatory, so if they are blank, just write it as \"\". status can be: exists or deleted. "
+          "Alternate bitmap parameter can be a action name icon, a window name icon (preffix 'w '), a device name icon (preffix 'd '), a top button number ('b X'), "
+          "a machine name icon (preffix 'm ') or other icons (preffix 'o '); it's better to play with alternate bitmaps from the menu and see how configuration is generated. "
+          "Action must be one of: ");
 
 
-			for (i=0;i<MAX_F_FUNCTIONS;i++) {
-				printf ("%s ",defined_direct_functions_array[i].texto_funcion);
-			}
+        print_defined_direct_functions();
+
+
+        printf (
+        "\n\n"
+
+
+        "--def-button-function button action    Define Button to do an action. Action must be one of: ");
+
+
+        print_defined_direct_functions();
 
 
 
-        printf("\n"
+        printf("\n\n"
 
         "--def-button-function-parameters button extra-info  Define extra info associated to an action of a button\n"
 
 
-		"\n"
-		"\n"
-		"ZX Vision Settings\n"
-		"-------------------\n"
-		"\n"
+        "\n"
+        "\n"
+        "ZX Vision Settings\n"
+        "-------------------\n"
+        "\n"
 
 
-		//"--invespokerom n           Inves rom poke value\n"
+        //"--invespokerom n           Inves rom poke value\n"
 
-		"--menucharwidth n                        Character size width for menus valid values: 8,7,6 or 5\n"
+        "--menucharwidth n                        Character size width for menus valid values: 8,7,6 or 5\n"
         "--menucharheight n                       Character size height for menus valid values: 8,7 or 6\n"
-		"--hidemousepointer                       Hide Mouse Pointer. Not all video drivers support this\n"
-		"--disablemenumouse                       Disable mouse on emulator menu\n"
+        "--menu-half-width                        Reduce menu width to half\n"
+        "--menu-half-height                       Reduce menu height to half\n"
 
-		//"--overlayinfo              Overlay on screen some machine info, like when loading tape\n"
+        "--hidemousepointer                       Hide Mouse Pointer. Not all video drivers support this\n"
+        "--disablemenumouse                       Disable mouse on emulator menu\n"
+        "--ignoremouseclickopenmenu               Ignore mouse clicking to open menu or ZX Desktop buttons\n"
+        "--limitopenmenu                          Limit the action to open menu (F5 by default, joystick button). To open it, you must press the key 3 times in one second\n"
 
-		"--disablemultitaskmenu                   When multitask is disabled, both emulation, background windows and other menu features are stopped when opening the menu\n"
-		//"--disablebw-no-multitask   Disable changing to black & white colours on the emulator machine when menu open and multitask is off\n"
+        "--enable-top-menu                        Enable Top Menu\n"
+        "--no-show-top-menu-move-top              Do not show Top Menu when moving mouse to top\n"
+        "--top-menu-hide-item n                   Hide menu item, n=1 hides Smartload, n=2 hides Snapshot, etc\n"
+        "--top-menu-short-menu-names              Show Top Menu short menu names\n"
+
+        //"--overlayinfo              Overlay on screen some machine info, like when loading tape\n"
+
+        "--disablemultitaskmenu                   When multitask is disabled, both emulation, background windows and other menu features are stopped when opening the menu\n"
+        //"--disablebw-no-multitask   Disable changing to black & white colours on the emulator machine when menu open and multitask is off\n"
         "--stopemulationmenu                      When multitask is enabled, you can disable emulation when opening the menu\n"
         "--old-behaviour-menu-esc-etc             Old menu behaviour: ESC go back, Apps go back to previous menu\n"
-		"--hide-menu-percentage-bar               Hides vertical percentaje bar on the right of text windows and file selector\n"
+        "--hide-menu-percentage-bar               Hides vertical percentage bar on the right of text windows and file selector\n"
         "--hide-menu-submenu-indicator            Hides submenu indicator character (>) on menu items with submenus\n"
         "--no-show-previous-submenus              Do not show previous submenus\n"
-		"--hide-menu-minimize-button              Hides minimize button on the title window\n"
+        "--hide-menu-minimize-button              Hides minimize button on the title window\n"
         "--hide-menu-maximize-button              Hides maximize button on the title window\n"
-		"--hide-menu-close-button                 Hides close button on the title window\n"
-		"--hide-minimized-windows                 Hide minimized windows\n"
+        "--hide-menu-close-button                 Hides close button on the title window\n"
+        "--hide-minimized-windows                 Hide minimized windows\n"
         "--beyond-limits-windows                  Allow windows beyond limits of the ZEsarUX main window\n"
         "--show-menu-background-button            Shows background button on inactive windows\n"
         "--no-change-frame-resize-zone            Do not change frame window when mouse if over resize zone\n"
-		"--invert-menu-mouse-scroll               Inverts mouse scroll movement\n"
+        "--invert-menu-mouse-scroll               Inverts mouse scroll movement\n"
         "--right-mouse-esc                        Right button mouse simulates ESC key and not secondary actions\n"
         "--zxvision-use-speccy-keys               On menu interaction, use keys 5678 as cursors, caps shift+space for ESC, caps shift+ctrl for TAB, caps shift+ctrl+m for Open Menu (F5)\n"
         "--process-switcher-immutable             Massive actions on menu Windows, like minimize all, cascade, etc, don't affect the Process switcher window\n"
         "--process-switcher-always-visible        Process switcher is always visible (on top of all windows)\n"
         "--process-switcher-no-left-bottom        Do not force process switcher to be located at left-bottom part of the display\n"
-		"--allow-background-windows               Allow putting windows in background\n"
+        "--process-switcher-no-one-row            Do not limit process switcher to only one row of icons\n"
+        "--emulated-display-win-fit-image         Scale the emulated display (when windowed mode) to fill its window\n"
+        "--emulated-display-win-no-proportion     Do not keep proportions on the emulated display (when windowed mode) when fit image to window\n"
+        "--emulated-display-win-autoresize        Autoresize the emulated display when changing machine\n"
+        "--allow-background-windows               Allow putting windows in background\n"
         "--allow-background-windows-closed-menu   Allow these background windows even when menu closed\n"
-		);
+        );
 
-	printf (
-		"--menu-mix-method s                      How to mix menu and the layer below. s should be one of: ");
-
-
-		for (i=0;i<MAX_MENU_MIX_METHODS;i++) {
-			printf ("%s ",screen_menu_mix_methods_strings[i]);
-		}
-
-		printf ("\n");
+    printf (
+        "--menu-mix-method s                      How to mix menu and the layer below. s should be one of: ");
 
 
+        for (i=0;i<MAX_MENU_MIX_METHODS;i++) {
+            printf ("%s ",screen_menu_mix_methods_strings[i]);
+        }
 
-printf (
+        printf ("\n");
 
-		"--menu-transparency-perc n               Transparency percentage to apply to menu\n"
-		//"--menu-darken-when-open    Darken layer below menu when menu open\n"
-		"--menu-bw-multitask                      Grayscale layer below menu when menu opened and multitask is disabled\n"
-		"--disabletooltips                        Disable tooltips on menu\n"
-		"--no-first-aid s                         Disable first aid message s. Do not throw any error if invalid\n"
-		"--disable-all-first-aid                  Disable all first aid messages\n"
-		"--forcevisiblehotkeys                    Force always show hotkeys. By default it will only be shown after a timeout or wrong key pressed\n"
-		"--forceconfirmyes                        Force confirmation dialogs yes/no always to yes\n"
-		"--gui-style s                            Set GUI style. Available: ");
-
-		estilo_gui_retorna_nombres();
 
 
 printf (
-		"\n"
+
+        "--menu-transparency-perc n               Transparency percentage to apply to menu\n"
+        //"--menu-darken-when-open    Darken layer below menu when menu open\n"
+        "--menu-bw-multitask                      Grayscale layer below menu when menu opened and multitask is disabled\n"
+        "--disabletooltips                        Disable tooltips on menu\n"
+        "--no-first-aid s                         Disable first-use messages. Do not throw any error if invalid\n"
+        "--disable-all-first-aid                  Disable all first-use messages\n"
+        "--forcevisiblehotkeys                    Force always show hotkeys. By default it will only be shown after a timeout or wrong key pressed\n"
+        "--forceconfirmyes                        Force confirmation dialogs yes/no always to yes\n"
+        "--gui-style s                            Set GUI style. Available: ");
+
+        estilo_gui_retorna_nombres();
+
+
+printf (
+        "\n"
+        "--gui-style-day-night                    Change automatically to Solarized Light/Dark GUI style depending on current hour\n"
         "--charset s                              Set Charset. This setting must be after --gui-style (if used). Available: ");
 
         charset_retorna_nombres();
 
 printf (
-		"\n"
+        "\n"
         "--charset-customfile f                   Set file name for customfile charset\n"
 
 
-		"--setmachinebyname                       On machine list, select machine by name instead of manufacturer\n"
+        "--setmachinebyname                       On machine list, select machine by name instead of manufacturer\n"
         "--setmachinebyfamily                     On machine list, select machine by family instead of manufacturer\n"
-		"--disablemenu                            Disable menu\n"
-		"--disablemenuandexit                     Disable menu. Any event that opens the menu will exit the emulator\n"
+        "--disablemenu                            Disable menu\n"
+        "--disablemenuandexit                     Disable menu. Any event that opens the menu will exit the emulator\n"
 
-		//"--text-keyboard-clear      Clear all entries of the Adventure Text Keyboard\n"
+        //"--text-keyboard-clear      Clear all entries of the Adventure Text Keyboard\n"
 
-		//"--windowgeometry s x y w h Set window geometry. Parameters: window name (s), x coord, y coord, width (w), height (h)\n"
+        //"--windowgeometry s x y w h Set window geometry. Parameters: window name (s), x coord, y coord, width (w), height (h)\n"
         //"--windowgeometry-ext s x y w h m Set window geometry, extended version (old version only kept for compatibility). Parameters: window name (s), x coord, y coord, width (w), height (h), is minimized (m)\n"
         //"--windowgeometry-full s x y w h wb hb m  Set window geometry, full version (old versions only kept for compatibility). "
         "--window-geometry s x y w h wb hb mn mx  Set window geometry. "
         " Parameters: window name (s), x coord, y coord, width (w), height (h), width before minimize/maximize (wb), height before minimize/maximize (hb), is minimized (mn), is maximized (mx)\n"
-		"--disable-restore-windows                Disable restore windows on start\n"
+        "--disable-restore-windows                Disable restore windows on start\n"
         "--restorewindow s                        Restore window s on start\n"
-		"--clear-all-windowgeometry               Clear all windows geometry thay may be loaded from the configuration file\n"
+        "--clear-all-windowgeometry               Clear all windows geometry thay may be loaded from the configuration file\n"
         "--restore-all-known-windows              Restore all known windows on start. Use ONLY for debugging!\n"
 
 
 
 
-		"\n"
-		"\n"
-		"Miscellaneous\n"
-		"-------------\n"
-		"\n"
+        "\n"
+        "\n"
+        "Miscellaneous\n"
+        "-------------\n"
+        "\n"
 
-		"--saveconf-on-exit                       Always save configuration when exiting emulator\n"
-        "--no-saveconf-on-exit                    Do not save configuration when exiting emulator (default setting). Can be used to override a previous --saveconf-on-exit for example\n"
-		"--quickexit                              Exit emulator quickly: no yes/no confirmation and no fadeout\n"
-		"--exit-after n                           Exit emulator after n seconds\n"
+
+        "--exit-after n                           Exit emulator after n seconds\n"
         "--disable-first-start-wizard             Disable first start wizard\n"
-		"--last-version s                         String which identifies last build version run. Usually doesnt need to change it, used to show the start popup of the new version changes\n"
+        "--last-version s                         String which identifies last build version run. Usually doesnt need to change it, used to show the start popup of the new version changes\n"
         "--last-version-text s                    String which identifies last version run. Usually doesnt need to change it, used to show the start popup of the new version changes\n"
-		"--no-show-changelog                      Do not show changelog when updating version\n"
+        "--no-show-changelog                      Do not show changelog when updating version\n"
         "--no-show-david-in-memoriam              Do not show David in memoriam message\n"
-		"--machinelist                            Get machines list names whitespace separated, and exit\n"
+        "--machinelist                            Get machines list names whitespace separated, and exit\n"
         "--hexedit-follow e                       Hex Edit follow expression\n"
-		"--disablebetawarning text                Do not pause beta warning message on boot for version named as that parameter text\n"
-        "--disableallbetawarningpause             Do not pause beta warning message on boot for any version\n"
-		"--tbblue-autoconfigure-sd-already-asked  Do not ask to autoconfigure tbblue initial SD image\n"
+        //"--disablebetawarning text                Do not pause beta warning message on boot for version named as that parameter text\n"
+        //"--disableallbetawarningpause             Do not pause beta warning message on boot for any version\n"
+        "--tbblue-autoconfigure-sd-already-asked  Do not ask to autoconfigure tbblue initial SD image\n"
 
         "--enable-christmas-mode                  Force Christmas Mode\n"
         "--avoid-christmas-mode                   Do not activate Christmas Mode. Useful on machines without RTC that are always on 1 January and/or you don't want this mode to be enabled\n"
 
 
-		//Esto no hace falta que lo vea un usuario, solo lo uso yo para probar partes del emulador
-		//"--codetests                Run develoment code tests\n"
-		"--tonegenerator n                        Enable tone generator. Possible values: 1: generate max, 2: generate min, 3: generate min/max at 50 Hz\n");
+        //Esto no hace falta que lo vea un usuario, solo lo uso yo para probar partes del emulador
+        //"--codetests                Run develoment code tests\n"
+        "--tonegenerator n                        Enable tone generator. Possible values: 1: generate max, 2: generate min, 3: generate min/max at 50 Hz\n");
 
         printf(
         "--sensor-set position type               Set sensor for menu View sensors. Position must be 0 to %d. Type must be one of:\n",MENU_VIEW_SENSORS_TOTAL_ELEMENTS-1);
@@ -1881,30 +2134,30 @@ printf (
         widget_list_print();
 
         printf("\n"
-        "--sensor-set-abs position                Set widget type absolute instead of percentaje for menu View sensors. Position must be 0 to %d\n",MENU_VIEW_SENSORS_TOTAL_ELEMENTS-1);
+        "--sensor-set-abs position                Set widget type absolute instead of percentage for menu View sensors. Position must be 0 to %d\n",MENU_VIEW_SENSORS_TOTAL_ELEMENTS-1);
 
 
         printf(
         "--history-item-add-debugcpu-ptr s        Add string as history for debug cpu change pointer\n"
         "--history-item-add-hexeditor-ptr s       Add string as history for hexeditor change pointer\n"
         "--history-item-add-sprites-ptr s         Add string as history for sprites change pointer\n"
-		"--history-item-add-poke-ptr s            Add string as history for poke pointer\n"
-		"--history-item-add-poke-value s          Add string as history for poke value\n"
+        "--history-item-add-poke-ptr s            Add string as history for poke pointer\n"
+        "--history-item-add-poke-value s          Add string as history for poke value\n"
 
-		"\n"
-		"\n"
-		"Danger Zone\n"
-		"-----------\n"
-		"\n"
+        "\n"
+        "\n"
+        "Danger Zone\n"
+        "-----------\n"
+        "\n"
 
-		"--preferred-timer s   Set preferred timer\n"
+        "--preferred-timer s   Set preferred timer\n"
 
 
-		"\n\n"
+        "\n\n"
 
-		"One-time actions\n"
-		"----------------\n"
-		"\n"
+        "One-time actions\n"
+        "----------------\n"
+        "\n"
         "The following are actions that are executed from the console and don't start ZEsarUX:"
         "\n\n"
         "--convert-tap-tzx source destination           Convert tap source file to destination tzx\n"
@@ -1917,19 +2170,18 @@ printf (
 
         "\n\n"
 
-	);
+    );
 
 }
 
 
 
-void segint_signal_handler(int sig)
+void segint_signal_handler(int sig GCC_UNUSED)
 {
 
-	debug_printf (VERBOSE_INFO,"Sigint (CTRL+C) received");
+    debug_printf (VERBOSE_INFO,"Sigint (CTRL+C) received");
 
-        //para evitar warnings al compilar
-        sig++;
+
 
     //No detener threads, porque si no, el end_emulator puede fallar por miles de razones...
 
@@ -1938,9 +2190,9 @@ void segint_signal_handler(int sig)
 /*
 #ifdef USE_PTHREADS
         if (si_thread_main_loop) {
-        	debug_printf (VERBOSE_INFO,"Ending main loop thread");
-		pthread_cancel(thread_main_loop);
-	}
+            debug_printf (VERBOSE_INFO,"Ending main loop thread");
+        pthread_cancel(thread_main_loop);
+    }
 #endif
 */
     //salir sin fadeout, no queremos hacerlo en caso de salir desde aqui para que sea mas rapido
@@ -1949,18 +2201,17 @@ void segint_signal_handler(int sig)
     quickexit.v=1;
 
     //salir sin guardar config
-	end_emulator_saveornot_config(0);
+    end_emulator_saveornot_config(0);
 
 
 }
 
-void segterm_signal_handler(int sig)
+void segterm_signal_handler(int sig GCC_UNUSED)
 {
 
         debug_printf (VERBOSE_INFO,"Sigterm received");
 
-        //para evitar warnings al compilar
-        sig++;
+
 
         //No detener threads, porque si no, el end_emulator puede fallar por miles de razones...
 
@@ -1969,9 +2220,9 @@ void segterm_signal_handler(int sig)
 /*
 #ifdef USE_PTHREADS
         if (si_thread_main_loop) {
-        	debug_printf (VERBOSE_INFO,"Ending main loop thread");
-		pthread_cancel(thread_main_loop);
-	}
+            debug_printf (VERBOSE_INFO,"Ending main loop thread");
+        pthread_cancel(thread_main_loop);
+    }
 #endif
 */
 
@@ -1988,55 +2239,39 @@ void segterm_signal_handler(int sig)
 
 
 
-void segfault_signal_handler(int sig)
+void segfault_signal_handler(int sig GCC_UNUSED)
 {
-	//para evitar warnings al compilar
-	sig++;
-
-	cpu_panic("Segmentation fault");
+    cpu_panic("Segmentation fault");
 }
 
 
-void sigbus_signal_handler(int sig)
+void sigbus_signal_handler(int sig GCC_UNUSED)
 {
-	//Saltara por ejemplo si empezamos a escribir en un puntero que no se ha inicializado
-	//para evitar warnings al compilar
-	sig++;
-
-	cpu_panic("Bus error");
+    //Saltara por ejemplo si empezamos a escribir en un puntero que no se ha inicializado
+    cpu_panic("Bus error");
 }
 
 
-void sigpipe_signal_handler(int sig)
+void sigpipe_signal_handler(int sig GCC_UNUSED)
 {
-	//Saltara por ejemplo cuando se escribe en un socket que se ha cerrado
-	//para evitar warnings al compilar
-	sig++;
-
-	debug_printf (VERBOSE_DEBUG,"Received signal sigpipe");
-
-
+    //Saltara por ejemplo cuando se escribe en un socket que se ha cerrado
+    debug_printf (VERBOSE_DEBUG,"Received signal sigpipe");
 }
 
 
-void floatingpoint_signal_handler(int sig)
+void floatingpoint_signal_handler(int sig GCC_UNUSED)
 {
-        //para evitar warnings al compilar
-        sig++;
-
-        cpu_panic("Floating point exception");
+    cpu_panic("Floating point exception");
 }
 
 
 #ifdef USE_PTHREADS
-void *thread_main_loop_function(void *nada)
+void *thread_main_loop_function(void *nada GCC_UNUSED)
 {
         emulator_main_loop();
 
-	//aqui no llega nunca, lo hacemos solo para que no se queje el compilador
-        nada=0;
-        nada++;
-	return NULL;
+    //aqui no llega nunca, lo hacemos solo para que no se queje el compilador
+    return NULL;
 }
 #endif
 
@@ -2044,9 +2279,9 @@ void *thread_main_loop_function(void *nada)
 
 void dump_ram_file_on_exit(void)
 {
-	if (dump_ram_file[0]) {
+    if (dump_ram_file[0]) {
 
-			debug_printf (VERBOSE_INFO,"Dumping ram contents to file %s",dump_ram_file);
+            debug_printf (VERBOSE_INFO,"Dumping ram contents to file %s",dump_ram_file);
 
                         //Crear archivo vacio
                         FILE *ptr_ramfile;
@@ -2055,11 +2290,11 @@ void dump_ram_file_on_exit(void)
                         int totalsize=49152;
 
                         z80_byte valor_grabar;
-			z80_int dir=16384;
+            z80_int dir=16384;
 
                         if (ptr_ramfile!=NULL) {
                                 while (totalsize) {
-					valor_grabar=peek_byte_no_time(dir++);
+                    valor_grabar=peek_byte_no_time(dir++);
                                         totalsize--;
 
                                         fwrite(&valor_grabar,1,1,ptr_ramfile);
@@ -2067,26 +2302,26 @@ void dump_ram_file_on_exit(void)
                                 fclose(ptr_ramfile);
                         }
 
-			else {
-				debug_printf(VERBOSE_ERR,"Error writing dump ram file");
-			}
+            else {
+                debug_printf(VERBOSE_ERR,"Error writing dump ram file");
+            }
 
-	}
+    }
 }
 
 
 void add_scr_init_array(char *name,int (*funcion_init) () , int (*funcion_set) () )
 {
-	if (num_scr_driver_array==MAX_SCR_INIT) {
+    if (num_scr_driver_array==MAX_SCR_INIT) {
                 cpu_panic("Error. Maximum number of screen drivers");
-	}
+    }
 
 
-	strcpy(scr_driver_array[num_scr_driver_array].driver_name,name);
-	scr_driver_array[num_scr_driver_array].funcion_init=funcion_init;
-	scr_driver_array[num_scr_driver_array].funcion_set=funcion_set;
+    strcpy(scr_driver_array[num_scr_driver_array].driver_name,name);
+    scr_driver_array[num_scr_driver_array].funcion_init=funcion_init;
+    scr_driver_array[num_scr_driver_array].funcion_set=funcion_set;
 
-	num_scr_driver_array++;
+    num_scr_driver_array++;
 }
 
 
@@ -2107,33 +2342,33 @@ void add_audio_init_array(char *name,int (*funcion_init) () , int (*funcion_set)
 
 void do_fallback_video(void)
 {
-	debug_printf(VERBOSE_INFO,"Guessing video driver");
+    debug_printf(VERBOSE_INFO,"Guessing video driver");
 
-	int i;
+    int i;
 
-	for (i=0;i<num_scr_driver_array;i++) {
+    for (i=0;i<num_scr_driver_array;i++) {
 
         screen_este_driver_permite_ext_desktop=0;
 
-		screen_reset_scr_driver_params();
+        screen_reset_scr_driver_params();
 
-		int (*funcion_init) ();
-		int (*funcion_set) ();
+        int (*funcion_init) ();
+        int (*funcion_set) ();
 
-		funcion_init=scr_driver_array[i].funcion_init;
-		funcion_set=scr_driver_array[i].funcion_set;
-		if ( (funcion_init()) ==0) {
-			debug_printf(VERBOSE_DEBUG,"Ok video driver i:%d %s",i,scr_new_driver_name);
-			funcion_set();
-			return;
-		}
+        funcion_init=scr_driver_array[i].funcion_init;
+        funcion_set=scr_driver_array[i].funcion_set;
+        if ( (funcion_init()) ==0) {
+            debug_printf(VERBOSE_DEBUG,"Ok video driver i:%d %s",i,scr_new_driver_name);
+            funcion_set();
+            return;
+        }
 
-		debug_printf(VERBOSE_INFO,"Fallback to next video driver");
-	}
+        debug_printf(VERBOSE_INFO,"Fallback to next video driver");
+    }
 
 
-	printf ("No valid video driver found\n");
-	exit(1);
+    printf ("No valid video driver found\n");
+    exit(1);
 }
 
 void do_fallback_audio(void)
@@ -2154,7 +2389,7 @@ void do_fallback_audio(void)
                         return;
                 }
 
-		debug_printf(VERBOSE_INFO,"Fallback to next audio driver");
+        debug_printf(VERBOSE_INFO,"Fallback to next audio driver");
         }
 
 
@@ -2548,7 +2783,7 @@ void main_init_video(void)
 
 void main_init_audio(void)
 {
-		debug_printf (VERBOSE_INFO,"Initializing Audio");
+        debug_printf (VERBOSE_INFO,"Initializing Audio");
                 //Audio init
                 audio_init=NULL;
                 audio_buffer_switch.v=0;
@@ -2561,7 +2796,7 @@ void main_init_audio(void)
 
                 set_active_audio_buffer();
 
-		audio_empty_buffer();
+        audio_empty_buffer();
 
                 //gestion de fallback y con driver indicado.
 
@@ -2639,7 +2874,7 @@ void main_init_audio(void)
                 //no probar. Inicializar driver indicado. Si falla, fallback a null
                 else {
                         if (audio_init()) {
-				fallback_audio_null();
+                fallback_audio_null();
                         }
                 }
 
@@ -2647,84 +2882,85 @@ void main_init_audio(void)
 
 
 //desde_commandline: si parsea desde commandline (1) o desde archivo de config (0)
-int parse_cmdline_options(int desde_commandline) {
+int parse_cmdline_options(int desde_commandline)
+{
 
-		while (!siguiente_parametro()) {
-			if (!strcmp(argv[puntero_parametro],"--help")) {
-				zesarux_cmdline_help();
-				exit(1);
-			}
+    while (!siguiente_parametro()) {
+            if (!strcmp(argv[puntero_parametro],"--help")) {
+                zesarux_cmdline_help();
+                exit(1);
+            }
 
-                        if (!strcmp(argv[puntero_parametro],"--experthelp")) {
-                                zesarux_cmdline_help_expert();
-                                exit(1);
+            if (!strcmp(argv[puntero_parametro],"--experthelp")) {
+                zesarux_cmdline_help_expert();
+                exit(1);
+            }
+
+            if (!strcmp(argv[puntero_parametro],"--helpcustomconfig")) {
+                customconfig_help();
+                exit(1);
+            }
+
+            if (!strcmp(argv[puntero_parametro],"--helpzmenufiles")) {
+                zmenufiles_help();
+                exit(1);
+            }
+
+
+            if (!strcmp(argv[puntero_parametro],"--showcompileinfo")) {
+                show_compile_info();
+                exit(1);
+            }
+
+
+
+            if (!strcmp(argv[puntero_parametro],"--debugconfigfile")) {
+                //Este parametro aqui se ignora, solo se lee antes del parseo del archivo de configuracion
                         }
 
-			if (!strcmp(argv[puntero_parametro],"--helpcustomconfig")) {
-				customconfig_help();
-				exit(1);
-			}
-
-			if (!strcmp(argv[puntero_parametro],"--helpzmenufiles")) {
-				zmenufiles_help();
-				exit(1);
-			}
-
-
-			if (!strcmp(argv[puntero_parametro],"--showcompileinfo")) {
-                                show_compile_info();
-                                exit(1);
-                        }
-
-
-
-			if (!strcmp(argv[puntero_parametro],"--debugconfigfile")) {
-				//Este parametro aqui se ignora, solo se lee antes del parseo del archivo de configuracion
-                        }
-
-			else if (!strcmp(argv[puntero_parametro],"--noconfigfile")) {
+            else if (!strcmp(argv[puntero_parametro],"--noconfigfile")) {
                                 //Este parametro aqui se ignora, solo se lee antes del parseo del archivo de configuracion
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--configfile")) {
+            else if (!strcmp(argv[puntero_parametro],"--configfile")) {
                                 //Este parametro aqui se ignora, solo se lee antes del parseo del archivo de configuracion
-					siguiente_parametro_argumento();
+                    siguiente_parametro_argumento();
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--saveconf-on-exit")) {
-				save_configuration_file_on_exit.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--saveconf-on-exit")) {
+                save_configuration_file_on_exit.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--no-saveconf-on-exit")) {
-				save_configuration_file_on_exit.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--no-saveconf-on-exit")) {
+                save_configuration_file_on_exit.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zoomx")) {
-				siguiente_parametro_argumento();
-
-                int valor=atoi(argv[puntero_parametro]);
-
-				if (valor<1 || valor>9) {
-					printf ("Invalid value for zoom\n");
-					exit(1);
-				}
-
-                zoom_x=valor;
-
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--zoomy")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--zoomx")) {
+                siguiente_parametro_argumento();
 
                 int valor=atoi(argv[puntero_parametro]);
 
-				if (valor<1 || valor>9) {
-					printf ("Invalid value for zoom\n");
-					exit(1);
-				}
+                if (valor<1 || valor>9) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for zoom: %d",valor);
+                }
+                else {
+                    zoom_x=valor;
+                }
 
-                zoom_y=valor;
-			}
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zoomy")) {
+                siguiente_parametro_argumento();
+
+                int valor=atoi(argv[puntero_parametro]);
+
+                if (valor<1 || valor>9) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for zoom: %d",valor);
+                }
+                else {
+                    zoom_y=valor;
+                }
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--zoom-allow-different-xy")) {
                 screen_keep_both_zoom_equals.v=0;
@@ -2734,199 +2970,880 @@ int parse_cmdline_options(int desde_commandline) {
                 autochange_zoom_big_display.v=0;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--reduce-075")) {
-				screen_reduce_075.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-enable")) {
+                screen_fx_enable();
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--reduce-075-no-antialias")) {
-				screen_reduce_075_antialias.v=0;
-			}
+            //"--video-fx-set effect n 0/1                    Sets a effect on n position, and enabled/disabled (0/1)\n"
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-set")) {
+                siguiente_parametro_argumento();
 
-			else if (!strcmp(argv[puntero_parametro],"--reduce-075-offset-x")) {
-				siguiente_parametro_argumento();
-				screen_reduce_offset_x=atoi(argv[puntero_parametro]);
-			}
+                char *effect=argv[puntero_parametro];
+                siguiente_parametro_argumento();
 
-			else if (!strcmp(argv[puntero_parametro],"--reduce-075-offset-y")) {
-				siguiente_parametro_argumento();
-				screen_reduce_offset_y=atoi(argv[puntero_parametro]);
-			}
+                int position=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
 
-			else if (!strcmp(argv[puntero_parametro],"--enable-watermark")) {
-				screen_watermark_enabled.v=1;
-			}
+                int enabled=parse_string_to_number(argv[puntero_parametro]);
 
-			else if (!strcmp(argv[puntero_parametro],"--enable-zxdesktop")) {
-				screen_ext_desktop_enabled=1;
-			}
+                int tipo_efecto=screen_effect_get_type(effect);
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-width")) {
-				siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (tipo_efecto<0) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect %s",effect);
+                }
+                else {
+                    set_screen_effect(position,tipo_efecto,enabled);
+                }
 
-				if (valor<128 || valor>9999) {
-					printf ("Invalid value for ZX Desktop width\n");
-					exit(1);
-				}
-				zxdesktop_width=valor;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-height")) {
-				siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-follow-mouse")) {
+                siguiente_parametro_argumento();
 
-				if (valor<0 || valor>9999) {
-					printf ("Invalid value for ZX Desktop height\n");
-					exit(1);
-				}
-				zxdesktop_height=valor;
-			}
+                char *effect=argv[puntero_parametro];
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-fill-type")) {
-				siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
+                int tipo_efecto=screen_effect_get_type(effect);
 
-				if (valor<0 || valor>MENU_MAX_EXT_DESKTOP_FILL_NUMBER) {
-					printf ("Invalid value for ZX Desktop fill type\n");
-					exit(1);
-				}
-				menu_ext_desktop_fill=valor;
-			}
+                if (tipo_efecto<0) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for follow mouse: %s",effect);
+                }
+                else {
+                    if (set_screen_follow_mouse_effect(tipo_efecto)<0) {
+                        debug_printf(VERBOSE_ERR,"Effect %s does not have follow mouse setting",effect);
+                    }
+                }
 
-			//Deprecated --zxdesktop-fill-solid-color
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-fill-solid-color") ||
-					!strcmp(argv[puntero_parametro],"--zxdesktop-fill-primary-color")
+            }
 
-			) {
-				siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-intensity")) {
+                siguiente_parametro_argumento();
 
-				if (valor<0 || valor>15) {
-					printf ("Invalid value for ZX Desktop primary fill solid color\n");
-					exit(1);
-				}
-				menu_ext_desktop_fill_first_color=valor;
-			}
+                char *effect=argv[puntero_parametro];
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-fill-secondary-color")) {
-				siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                int valor_intensidad=parse_string_to_number(argv[puntero_parametro]);
 
-				if (valor<0 || valor>15) {
-					printf ("Invalid value for ZX Desktop seconday fill solid color\n");
-					exit(1);
-				}
-				menu_ext_desktop_fill_second_color=valor;
-			}
+                int tipo_efecto=screen_effect_get_type(effect);
+
+                if (tipo_efecto<0) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for intensity setting: %s",effect);
+                }
+                else {
+                    int retorno=set_screen_intensity_effect(tipo_efecto,valor_intensidad);
+                    if (retorno<0) {
+                        debug_printf(VERBOSE_ERR,"Effect %s does not have intensity setting",effect);
+                    }
+                    if (retorno>0) {
+                        debug_printf(VERBOSE_ERR,"Intensity for effect %s out of range",effect);
+                    }
+                }
+
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-angle")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int valor_angulo=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Rotate")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for angle setting: %s",effect);
+                }
+                else {
+                    if (valor_angulo<0 || valor_angulo>359) {
+                        debug_printf(VERBOSE_ERR,"Angle for effect %s out of range",effect);
+                    }
+                    else {
+                        screen_rainbow_effect_rotate_grados=valor_angulo;
+                    }
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-percentage")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int valor_porcentaje=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Mix from buffer")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for percentage setting: %s",effect);
+                }
+                else {
+                    if (valor_porcentaje<1 || valor_porcentaje>99) {
+                        debug_printf(VERBOSE_ERR,"Percentage for effect %s out of range",effect);
+                    }
+                    else {
+                        screen_rainbow_effect_mix_from_buffer_percentage_buffer_layer=valor_porcentaje;
+                    }
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-mix-type")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                char *string_tipo=argv[puntero_parametro];
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Mix from buffer")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for percentage setting: %s",effect);
+                }
+                else {
+                    enum MIX_FROM_BUFFER_TYPES tipo=screen_rainbow_effect_mix_from_buffer_get_from_string(string_tipo);
+                    screen_rainbow_effect_mix_from_buffer_tipo=tipo;
+                }
+
+            }
+
+
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-file")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                char *nombre=argv[puntero_parametro];
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Load BMP")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for file setting: %s",effect);
+                }
+                else {
+                    strcpy(screen_rainbow_effect_load_bmp_file_path,nombre);
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-transparent-color")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int color=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Load BMP")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for transparent color setting: %s",effect);
+                }
+                if (color<-1 || color>255) {
+                    debug_printf(VERBOSE_ERR,"Color for effect %s out of range",effect);
+                }
+                else {
+                    screen_rainbow_effect_load_bmp_file_path_transparent_color=color;
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-transparent-rectangle")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int enabled=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                int x=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                int y=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                int width=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                int height=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Load BMP")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for transparent rectangle setting: %s",effect);
+                }
+                if (x<0 || y<0 || width<0 || height<0) {
+                    debug_printf(VERBOSE_ERR,"Transparent Rectagle Parameters for effect %s out of range",effect);
+                }
+                else {
+                    screen_rainbow_effect_load_bmp_enable_transparent_rectangle.v=enabled;
+
+                    screen_rainbow_effect_load_bmp_transparent_rectangle_x=x;
+                    screen_rainbow_effect_load_bmp_transparent_rectangle_y=y;
+                    screen_rainbow_effect_load_bmp_transparent_rectangle_width=width;
+                    screen_rainbow_effect_load_bmp_transparent_rectangle_height=height;
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-follow-channel")) {
+                siguiente_parametro_argumento();
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                char *channel=argv[puntero_parametro];
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Lens")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for channel setting: %s",effect);
+                }
+                else {
+                    if (!strcasecmp(channel,"0")) {
+                        screen_special_effects_fisheye_follow_music_channel=0;
+                    }
+                    else if (!strcasecmp(channel,"A")) {
+                        screen_special_effects_fisheye_follow_music_channel='A';
+                    }
+                    else if (!strcasecmp(channel,"B")) {
+                        screen_special_effects_fisheye_follow_music_channel='B';
+                    }
+                    else if (!strcasecmp(channel,"C")) {
+                        screen_special_effects_fisheye_follow_music_channel='C';
+                    }
+                    else {
+                        debug_printf(VERBOSE_ERR,"Channel for effect %s out of range",effect);
+                    }
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-frames")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int valor_frames=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Persistence")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for frames setting: %s",effect);
+                }
+                else {
+                    if (valor_frames<3 || valor_frames>SCREEN_RAINBOW_EFFECT_PERSISTENCE_MAX_FRAMES) {
+                        debug_printf(VERBOSE_ERR,"Frames for effect %s out of range",effect);
+                    }
+                    else {
+                        screen_rainbow_effect_persistence_total_frames=valor_frames;
+                    }
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-speed")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int valor_speed=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Vsync")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for speed setting: %s",effect);
+                }
+                else {
+                    if (valor_speed<SCREEN_FX_VSYNC_MIN_SPEED || valor_speed>SCREEN_FX_VSYNC_MAX_SPEED) {
+                        debug_printf(VERBOSE_ERR,"Speed for effect %s out of range",effect);
+                    }
+                    else {
+                        screen_rainbow_effect_vsync_y_velocidad=valor_speed;
+                    }
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-rgb")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int red=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                int green=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                int blue=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"RGB")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for rgb setting: %s",effect);
+                }
+                else {
+                    screen_rainbow_effect_rgb_red.v=red;
+                    screen_rainbow_effect_rgb_green.v=green;
+                    screen_rainbow_effect_rgb_blue.v=blue;
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-sizes")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int tb=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                int bb=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                int lb=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                int rb=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                int dh=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                int dw=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Shader Border")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for sizes setting: %s",effect);
+                }
+                else {
+                    if (tb<1 || bb<1 || lb<1 || rb<1 || dh<1 || dw<1 ||
+                        tb>200 || bb>200 || lb>200 || rb>200 || dh>1000 || dw>1000) {
+                            debug_printf(VERBOSE_ERR,"Sizes for effect %s out of range",effect);
+                    }
+
+                    else {
+                        screen_rainbow_effect_shaderborder_alto_border_superior=tb;
+                        screen_rainbow_effect_shaderborder_alto_border_inferior=bb;
+                        screen_rainbow_effect_shaderborder_ancho_borde_izquierdo=lb;
+                        screen_rainbow_effect_shaderborder_ancho_borde_derecho=rb;
+                        screen_rainbow_effect_shaderborder_alto_pantalla=dh;
+                        screen_rainbow_effect_shaderborder_ancho_pantalla=dw;
+                    }
+                }
+
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-leftrightborder")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int activado=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Shader Border")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for leftright border setting: %s",effect);
+                }
+                else {
+                    screen_rainbow_effect_shaderborder_leftright_enable.v=activado;
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-updownborder")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int activado=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Shader Border")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for updown border setting: %s",effect);
+                }
+                else {
+                    screen_rainbow_effect_shaderborder_updown_enable.v=activado;
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-leftrightzoom")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int valor_zoom=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Shader Border")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for leftright zoom setting: %s",effect);
+                }
+                else {
+                    if (valor_zoom<125 || valor_zoom>8000) {
+                        debug_printf(VERBOSE_ERR,"Left Right Zoom for effect %s out of range",effect);
+                    }
+                    else {
+                        screen_rainbow_effect_shaderborder_factor_zoom_leftright=valor_zoom;
+                    }
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-updownzoom")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int valor_zoom=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Shader Border")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for updown zoom setting: %s",effect);
+                }
+                else {
+                    if (valor_zoom<125 || valor_zoom>8000) {
+                        debug_printf(VERBOSE_ERR,"Up Down Zoom for effect %s out of range",effect);
+                    }
+                    else {
+                        screen_rainbow_effect_shaderborder_factor_zoom_updown=valor_zoom;
+                    }
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-leftrightblur")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int valor_blur=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Shader Border")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for leftright blur setting: %s",effect);
+                }
+                else {
+                    if (valor_blur<1 || valor_blur>16) {
+                        debug_printf(VERBOSE_ERR,"Left Right Blur for effect %s out of range",effect);
+                    }
+                    else {
+                        screen_rainbow_effect_shaderborder_blur_intensity_leftright=valor_blur;
+                    }
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-updownblur")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int valor_blur=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Shader Border")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for updown blur setting: %s",effect);
+                }
+                else {
+                    if (valor_blur<1 || valor_blur>16) {
+                        debug_printf(VERBOSE_ERR,"Up Down Blur for effect %s out of range",effect);
+                    }
+                    else {
+                        screen_rainbow_effect_shaderborder_blur_intensity_updown=valor_blur;
+                    }
+                }
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-attraction")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int valor_atraccion=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Magnetic Field")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for attraction setting: %s",effect);
+                }
+                else {
+                    if (valor_atraccion!=+1 && valor_atraccion!=-1) {
+                        debug_printf(VERBOSE_ERR,"Attraction value for effect %s out of range",effect);
+                    }
+                    else {
+                        screen_rainbow_effect_attraction_atrac_repulse=valor_atraccion;
+                    }
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-offset")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                int valor_offset=parse_string_to_number(argv[puntero_parametro]);
+
+                //Nota: este setting permite que en un futuro se reuse para otros efectos simplemente cambiando el nombre de efecto (el primer parametro)
+                if (strcasecmp(effect,"Scroll Horizontal") && strcasecmp(effect,"Scroll Vertical")) {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for offset setting: %s",effect);
+                }
+                else {
+                    if (valor_offset<-999 || valor_offset>999) {
+                        debug_printf(VERBOSE_ERR,"Offset for effect %s out of range",effect);
+                    }
+                    else {
+                        if (!strcasecmp(effect,"Scroll Horizontal")) {
+                            screen_rainbow_effect_scroll_horizontal_offset=valor_offset;
+                        }
+                        else {
+                            screen_rainbow_effect_scroll_vertical_offset=valor_offset;
+                        }
+                    }
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-circular")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                if (!strcasecmp(effect,"Scroll Horizontal")) {
+                    screen_rainbow_effect_scroll_horizontal_circular.v=1;
+                }
+                else if (!strcasecmp(effect,"Scroll Vertical")) {
+                    screen_rainbow_effect_scroll_vertical_circular.v=1;
+                }
+                else {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for circular setting: %s",effect);
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-incremental")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                if (!strcasecmp(effect,"Scroll Horizontal")) {
+                    screen_rainbow_effect_scroll_horizontal_incremental.v=1;
+                }
+                else if (!strcasecmp(effect,"Scroll Vertical")) {
+                    screen_rainbow_effect_scroll_vertical_incremental.v=1;
+                }
+                else {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for incremental setting: %s",effect);
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--video-fx-continuous")) {
+                siguiente_parametro_argumento();
+
+                char *effect=argv[puntero_parametro];
+
+                if (!strcasecmp(effect,"Lens")) {
+                    screen_special_effects_fisheye_automatic_factor.v=1;
+                }
+                else {
+                    debug_printf(VERBOSE_ERR,"Invalid effect for continuous setting: %s",effect);
+                }
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--reduce-075") ||
+                !strcmp(argv[puntero_parametro],"--video-fx-reduce-075")
+                ) {
+                screen_reduction_factor=SCREEN_REDUCE_075;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--reduce-050") ||
+                !strcmp(argv[puntero_parametro],"--video-fx-reduce-050")
+                ) {
+                screen_reduction_factor=SCREEN_REDUCE_050;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--reduce-025") ||
+                !strcmp(argv[puntero_parametro],"--video-fx-reduce-025")
+                ) {
+                screen_reduction_factor=SCREEN_REDUCE_025;
+            }
+
+            else if (
+                //deprecated --reduce-075-no-antialias
+                !strcmp(argv[puntero_parametro],"--reduce-075-no-antialias") ||
+                !strcmp(argv[puntero_parametro],"--reduce-display-no-antialias") ||
+                !strcmp(argv[puntero_parametro],"--video-fx-reduce-display-no-antialias")
+
+                ) {
+                screen_reduce_antialias.v=0;
+            }
+
+            //deprecated. use instead scroll effect
+            else if (
+                //deprecated --reduce-075-offset-x
+                !strcmp(argv[puntero_parametro],"--reduce-075-offset-x") ||
+                !strcmp(argv[puntero_parametro],"--reduce-display-offset-x")
+
+                ) {
+                siguiente_parametro_argumento();
+
+            }
+
+            //deprecated. use instead scroll effect
+            else if (
+                //deprecated --reduce-075-offset-y
+                !strcmp(argv[puntero_parametro],"--reduce-075-offset-y") ||
+                !strcmp(argv[puntero_parametro],"--reduce-display-offset-y")
+
+                ) {
+                siguiente_parametro_argumento();
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--enable-watermark")) {
+                screen_watermark_enabled.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--forbid-zxdesktop")) {
+                screen_forbid_zxdesktop=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--enable-zxdesktop")) {
+                if (screen_forbid_zxdesktop) {
+                    debug_printf(VERBOSE_ERR,"Enabling ZX Desktop is forbidden");
+                }
+                else screen_ext_desktop_enabled=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-width")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+
+                if (valor<0 || valor>9999) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for ZX Desktop width");
+                }
+                else {
+                    zxdesktop_width=valor;
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-height")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+
+                if (valor<0 || valor>9999) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for ZX Desktop height");
+                }
+                else {
+                    zxdesktop_height=valor;
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-fill-type")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+
+                if (valor<0 || valor>MENU_MAX_EXT_DESKTOP_FILL_NUMBER) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for ZX Desktop fill type\n");
+                }
+                else {
+                    menu_ext_desktop_fill=valor;
+                }
+            }
+
+            //Deprecated --zxdesktop-fill-solid-color
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-fill-solid-color") ||
+                    !strcmp(argv[puntero_parametro],"--zxdesktop-fill-primary-color")
+
+            ) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+
+                if (valor<0 || valor>15) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for ZX Desktop primary fill solid color\n");
+                }
+                else {
+                    menu_ext_desktop_fill_first_color=valor;
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-fill-secondary-color")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+
+                if (valor<0 || valor>15) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for ZX Desktop seconday fill solid color\n");
+                }
+                else menu_ext_desktop_fill_second_color=valor;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--zxdesktop-fill-degraded-inverted")) {
                 menu_ext_desktop_degraded_inverted.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-new-items")) {
-				screen_ext_desktop_place_menu=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-new-items")) {
+                screen_ext_desktop_place_menu=1;
+            }
 
             //Se mantiene por compatibilidad hacia atras
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-buttons")) {
-				menu_zxdesktop_upper_buttons_enabled.v=0;
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-buttons")) {
+                menu_zxdesktop_upper_buttons_enabled.v=0;
                 menu_zxdesktop_lower_buttons_enabled.v=0;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-upper-buttons")) {
-				menu_zxdesktop_upper_buttons_enabled.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-upper-buttons")) {
+                menu_zxdesktop_upper_buttons_enabled.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-lower-buttons")) {
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-lower-buttons")) {
                 menu_zxdesktop_lower_buttons_enabled.v=0;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-transparent-upper-buttons")) {
-				menu_ext_desktop_transparent_upper_icons.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-transparent-upper-buttons")) {
+                menu_ext_desktop_transparent_upper_buttons.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-transparent-lower-buttons")) {
-				menu_ext_desktop_transparent_lower_icons.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-upper-buttons-bg-follow-gui")) {
+                menu_ext_desktop_upper_buttons_background_color_follow_gui.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-upper-buttons-bg-color")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+
+                if (valor<0 || valor>15) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for ZX Desktop upper buttons background color");
+                }
+                else {
+                    menu_ext_desktop_upper_buttons_background_color=valor;
+                }
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-transparent-lower-buttons")) {
+                menu_ext_desktop_transparent_lower_buttons.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-lower-buttons-bg-follow-gui")) {
+                menu_ext_desktop_lower_buttons_background_color_follow_gui.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-lower-buttons-bg-color")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+
+                if (valor<0 || valor>15) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for ZX Desktop lower buttons background color");
+                }
+                else {
+                    menu_ext_desktop_lower_buttons_background_color=valor;
+                }
+            }
 
             //Esta opcion va al reves de otras de transparencia, porque por defecto estos iconos son transparentes
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-no-transparent-configurable-icons")) {
-				menu_ext_desktop_transparent_configurable_icons.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-no-transparent-configurable-icons")) {
+                menu_ext_desktop_transparent_configurable_icons.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-no-configurable-icons-text-bg")) {
-				menu_ext_desktop_configurable_icons_text_background.v=0;
-			}
+
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-configurable-icons-bg-follow-gui")) {
+                menu_ext_desktop_configurable_icons_background_color_follow_gui.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-configurable-icons-bg-color")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+
+                if (valor<0 || valor>15) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for ZX Desktop icon background color");
+                }
+                else {
+                    menu_ext_desktop_configurable_icons_background_color=valor;
+                }
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-no-configurable-icons-text-bg")) {
+                menu_ext_desktop_configurable_icons_text_background.v=0;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--zxdesktop-configurable-icons-short-text")) {
                 menu_ext_desktop_configurable_icons_short_text.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-box-upper-buttons")) {
-				menu_ext_desktop_disable_box_upper_icons.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-box-upper-buttons")) {
+                menu_ext_desktop_disable_box_upper_buttons.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-box-lower-buttons")) {
-				menu_ext_desktop_disable_box_lower_icons.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-box-lower-buttons")) {
+                menu_ext_desktop_disable_box_lower_buttons.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-footer-switch")) {
-				zxdesktop_switch_button_enabled.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-footer-switch")) {
+                zxdesktop_switch_button_enabled.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-on-fullscreen")) {
-				zxdesktop_disable_on_full_screen=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-on-fullscreen")) {
+                zxdesktop_disable_on_full_screen=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-no-restore-win-after-fullscreen")) {
-				zxdesktop_restore_windows_after_full_screen=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-no-restore-win-after-fullscreen")) {
+                zxdesktop_restore_windows_after_full_screen=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--disable-border-on-fullscreen")) {
-				disable_border_on_full_screen=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disable-border-on-fullscreen")) {
+                disable_border_on_full_screen=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--disable-footer-on-fullscreen")) {
-				disable_footer_on_full_screen=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disable-footer-on-fullscreen")) {
+                disable_footer_on_full_screen=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-frame-emulated-display")) {
-				zxdesktop_disable_show_frame_around_display=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--no-disable-fullscreen-on-exit")) {
+                disable_fullscreen_on_exit_zesarux=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-enable")) {
-				zxdesktop_draw_scrfile_enabled=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-disable-frame-emulated-display")) {
+                zxdesktop_disable_show_frame_around_display=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-file")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-enable")) {
+                zxdesktop_draw_scrfile_enabled=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-file")) {
+                siguiente_parametro_argumento();
                 strcpy(zxdesktop_draw_scrfile_name,argv[puntero_parametro]);
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-centered")) {
-				zxdesktop_draw_scrfile_centered=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-centered")) {
+                zxdesktop_draw_scrfile_centered=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-fillscale")) {
-				zxdesktop_draw_scrfile_fill_scale=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-fillscale")) {
+                zxdesktop_draw_scrfile_fill_scale=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-mixbackground")) {
-				zxdesktop_draw_scrfile_mix_background=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-mixbackground")) {
+                zxdesktop_draw_scrfile_mix_background=1;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-scalefactor")) {
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-scalefactor")) {
                 siguiente_parametro_argumento();
 
-				int valor=parse_string_to_number(argv[puntero_parametro]);
+                int valor=parse_string_to_number(argv[puntero_parametro]);
 
-				if (valor<1 || valor>5) {
-					printf ("Invalid value for ZX Desktop SCR scale factor\n");
-					exit(1);
-				}
-				zxdesktop_draw_scrfile_scale_factor=valor;
-			}
+                if (valor<1 || valor>10) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for ZX Desktop SCR scale factor\n");
+
+                }
+                else zxdesktop_draw_scrfile_scale_factor=valor;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--zxdesktop-scr-disable-flash")) {
                 zxdesktop_draw_scrfile_disable_flash=1;
@@ -2940,12 +3857,37 @@ int parse_cmdline_options(int desde_commandline) {
                 zxdesktop_empty_trash_on_exit.v=1;
             }
 
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-auto-order-icons")) {
+                zxdesktop_automatic_reorder_icons.v=1;
+            }
+
             else if (!strcmp(argv[puntero_parametro],"--zxdesktop-no-show-indicators-open-apps")) {
                 zxdesktop_icon_show_app_open.v=0;
             }
 
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-enable-icons-stroke")) {
+                menu_ext_desktop_contorno_iconos.v=1;
+            }
 
-            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-add-icon")) {
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-icons-stroke-color")) {
+                siguiente_parametro_argumento();
+                int color=parse_string_to_number(argv[puntero_parametro]);
+                if (color<0 || color>15) {
+                    debug_printf (VERBOSE_ERR,"Invalid color for stroke: %d",color);
+                }
+                else {
+                    menu_ext_desktop_color_contorno_iconos=color;
+                }
+            }
+
+            //zxdesktop-add-icon deprecated. Igual que append-icon pero sin parametro adicional de alternate bitmap
+            else if (!strcmp(argv[puntero_parametro],"--zxdesktop-add-icon") ||
+                    !strcmp(argv[puntero_parametro],"--zxdesktop-append-icon")
+
+                ) {
+                int es_append_icon=0;
+                if (!strcmp(argv[puntero_parametro],"--zxdesktop-append-icon")) es_append_icon=1;
+
                 //get_defined_direct_functions
                 //"--zxdesktop-add-icon x y a n e s                  Add icon to position x,y, to function f, icon name n, extra parameters e, status s\n"
                 siguiente_parametro_argumento();
@@ -2964,6 +3906,15 @@ int parse_cmdline_options(int desde_commandline) {
                 char *extra_info=argv[puntero_parametro];
                 siguiente_parametro_argumento();
 
+                char *icon_status=argv[puntero_parametro];
+
+                char *alternate_bitmap=NULL;
+
+                if (es_append_icon) {
+                    siguiente_parametro_argumento();
+                    alternate_bitmap=argv[puntero_parametro];
+                }
+
                 //Si accion no reconocida, mostrar error y seguir
                 //Esto permite compatibilidad hacia atrás por si se ejecuta una versión de ZEsarUX con una config de versión
                 //superior con acciones nuevas
@@ -2975,99 +3926,116 @@ int parse_cmdline_options(int desde_commandline) {
 
                     enum zxdesktop_custom_icon_status_ids status;
 
-                    if (!strcasecmp("exists",argv[puntero_parametro])) {
+                    int error=0;
+
+                    if (!strcasecmp("exists",icon_status)) {
                         status=ZXDESKTOP_CUSTOM_ICON_EXISTS;
                     }
 
-                    else if (!strcasecmp("deleted",argv[puntero_parametro])) {
+                    else if (!strcasecmp("deleted",icon_status)) {
                         status=ZXDESKTOP_CUSTOM_ICON_DELETED;
                     }
 
                     else {
-                        printf("Invalid icon status %s\n",argv[puntero_parametro]);
-                        exit(1);
+                        debug_printf(VERBOSE_ERR,"Invalid icon status %s",icon_status);
+                        error=1;
                     }
 
 
+                    if (!error) {
+                        int indice_icono=zxvision_add_configurable_icon_no_add_position(indice_funcion);
+                        if (indice_icono<0) {
+                            debug_printf(VERBOSE_ERR,"Can not add more icons, limit reached: %d",MAX_ZXDESKTOP_CONFIGURABLE_ICONS);
 
-                    int indice_icono=zxvision_add_configurable_icon_no_add_position(indice_funcion);
-                    if (indice_icono<0) {
-                        printf("Can not add more icons, limit reached: %d\n",MAX_ZXDESKTOP_CONFIGURABLE_ICONS);
-                        exit(1);
+                        }
+
+                        else {
+                            //Asignamos x,y a mano dado que aqui aun no sabemos el tamaño de la ventana y por tanto no sabemos si sale de rango
+                            zxdesktop_configurable_icons_list[indice_icono].pos_x=x;
+                            zxdesktop_configurable_icons_list[indice_icono].pos_y=y;
+
+                            zxvision_set_configurable_icon_text(indice_icono,text_icon);
+                            zxvision_set_configurable_icon_extra_info(indice_icono,extra_info);
+                            if (es_append_icon) {
+                                zxvision_set_configurable_icon_alternate_bitmap(indice_icono,alternate_bitmap);
+                            }
+
+                            zxdesktop_configurable_icons_list[indice_icono].status=status;
+                        }
                     }
-
-                    //Asignamos x,y a mano dado que aqui aun no sabemos el tamaño de la ventana y por tanto no sabemos si sale de rango
-                    zxdesktop_configurable_icons_list[indice_icono].pos_x=x;
-                    zxdesktop_configurable_icons_list[indice_icono].pos_y=y;
-
-                    zxvision_set_configurable_icon_text(indice_icono,text_icon);
-                    zxvision_set_configurable_icon_extra_info(indice_icono,extra_info);
-
-                    zxdesktop_configurable_icons_list[indice_icono].status=status;
 
                 }
-
-
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--watermark-position")) {
-				siguiente_parametro_argumento();
-				screen_watermark_position=atoi(argv[puntero_parametro]);
-			}
-			else if (!strcmp(argv[puntero_parametro],"--watermark-only-when-device-activity")) {
+            else if (!strcmp(argv[puntero_parametro],"--watermark-position")) {
+                siguiente_parametro_argumento();
+                screen_watermark_position=atoi(argv[puntero_parametro]);
+            }
+            else if (!strcmp(argv[puntero_parametro],"--watermark-only-when-device-activity")) {
                 screen_watermark_enabled_only_when_device_activity.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--watermark-no-rotate-device-activity")) {
+            else if (!strcmp(argv[puntero_parametro],"--watermark-no-rotate-device-activity")) {
                 screen_watermark_rotate_colors_device_activity.v=0;
             }
 
 
 
-			else if (!strcmp(argv[puntero_parametro],"--menucharwidth")) {
-				siguiente_parametro_argumento();
-				int valor=atoi(argv[puntero_parametro]);
-				if (valor!=5 && valor!=6 && valor!=7 && valor!=8) {
-					printf ("Invalid value for character width\n");
-					exit(1);
-				}
-				menu_char_width=valor;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--menucharwidth")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<MIN_MENU_CHAR_WIDTH || valor>MAX_MENU_CHAR_WIDTH) {
+                    debug_printf(VERBOSE_ERR,"Invalid value for character width: %d",valor);
+                }
+                else {
+                    menu_char_width=valor;
+                }
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--menucharheight")) {
-				siguiente_parametro_argumento();
-				int valor=atoi(argv[puntero_parametro]);
-				if (valor!=6 && valor!=7 && valor!=8) {
-					printf ("Invalid value for character height\n");
-					exit(1);
-				}
-				menu_char_height=valor;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--menucharheight")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<MIN_MENU_CHAR_HEIGHT || valor>MAX_MENU_CHAR_HEIGHT) {
+                    debug_printf(VERBOSE_ERR,"Invalid value for character height: %d",valor);
+                }
+                else {
+                    menu_char_height=valor;
+                }
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zoom")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--menu-half-width")) {
+                screen_reduce_menu_ancho=2;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--menu-half-height")) {
+                screen_reduce_menu_alto=2;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zoom")) {
+                siguiente_parametro_argumento();
                 int valor=atoi(argv[puntero_parametro]);
 
-				if (valor<1 || valor>9) {
-					printf ("Invalid value for zoom\n");
-					exit(1);
-				}
+                if (valor<1 || valor>9) {
+                    debug_printf(VERBOSE_ERR,"Invalid value for zoom: %d",valor);
+                }
+                else {
+                    zoom_y=zoom_x=valor;
+                }
+            }
 
-				zoom_y=zoom_x=valor;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--frameskip")) {
+            else if (!strcmp(argv[puntero_parametro],"--frameskip")) {
                                 siguiente_parametro_argumento();
-                                frameskip=atoi(argv[puntero_parametro]);
-				if (frameskip>49 || frameskip<0) {
-					printf ("Frameskip out of range\n");
-					exit(1);
-				}
-    }
+                                int valor=atoi(argv[puntero_parametro]);
+                if (valor>49 || valor<0) {
+                    printf ("Frameskip out of range\n");
 
-			else if (!strcmp(argv[puntero_parametro],"--disable-autoframeskip")) {
-					autoframeskip.v=0;
-				}
+                }
+                else frameskip=valor;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--disable-autoframeskip")) {
+                    autoframeskip.v=0;
+                }
 
             //Mantenida por compatibilidad hacia atras. El valor por defecto es 1
             else if (!strcmp(argv[puntero_parametro],"--autoframeskip-moving-win")) {
@@ -3087,30 +4055,31 @@ int parse_cmdline_options(int desde_commandline) {
                 disable_change_flash.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--testconfig")) {
-				test_config_and_exit.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--testconfig")) {
+                test_config_and_exit.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--nochangeslowparameters")) {
-				cambio_parametros_maquinas_lentas.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--nochangeslowparameters")) {
+                cambio_parametros_maquinas_lentas.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--changeslowparameters")) {
-				cambio_parametros_maquinas_lentas.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--changeslowparameters")) {
+                cambio_parametros_maquinas_lentas.v=1;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--fullscreen")) {
-				ventana_fullscreen=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--fullscreen")) {
+                change_variable_ventana_fullscreen(1);
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--verbose")) {
                                 siguiente_parametro_argumento();
-                                verbose_level=atoi(argv[puntero_parametro]);
-				if (verbose_level<0 || verbose_level>4) {
-					printf ("Invalid Verbose level\n");
-					exit(1);
-				}
+                                int valor=atoi(argv[puntero_parametro]);
+                if (valor<0 || valor>4) {
+                    debug_printf (VERBOSE_ERR,"Invalid Verbose level\n");
+
+                }
+                else verbose_level=valor;
             }
 
             else if (!strcmp(argv[puntero_parametro],"--debug-filter")) {
@@ -3124,8 +4093,7 @@ int parse_cmdline_options(int desde_commandline) {
                 }
 
                 else {
-                    printf("Invalid debug filter type\n");
-                    exit(1);
+                    debug_printf(VERBOSE_ERR,"Invalid debug filter type");
                 }
             }
 
@@ -3156,158 +4124,166 @@ int parse_cmdline_options(int desde_commandline) {
                 debug_always_show_messages_in_console.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--nodisableconsole")) {
-				//Parametro que solo es de Windows, pero lo admitimos en cualquier sistema
-				windows_no_disable_console.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--nodisableconsole")) {
+                //Parametro que solo es de Windows, pero lo admitimos en cualquier sistema
+                windows_no_disable_console.v=1;
+            }
 
-			/*
-		        else if (!strcmp(argv[puntero_parametro],"--invespokerom")) {
+            /*
+                else if (!strcmp(argv[puntero_parametro],"--invespokerom")) {
                                 siguiente_parametro_argumento();
                                 valor_poke_rom=atoi(argv[puntero_parametro]);
                         }
-			*/
+            */
 
 
                         //Mantenida por compatibilidad hacia atras (ZEsarUX versiones anterior a 11)
                         else if (!strcmp(argv[puntero_parametro],"--cpuspeed")) {
                                 siguiente_parametro_argumento();
-                                porcentaje_velocidad_emulador=atoi(argv[puntero_parametro]);
-                                if (porcentaje_velocidad_emulador<1 || porcentaje_velocidad_emulador>9999) {
-                                        printf ("Invalid CPU percentage\n");
-                                        exit(1);
+                                int valor=atoi(argv[puntero_parametro]);
+                                if (valor<1 || valor>9999) {
+                                        debug_printf (VERBOSE_ERR,"Invalid CPU percentage");
+
                                 }
+                                else porcentaje_velocidad_emulador=valor;
                         }
 
 
             else if (!strcmp(argv[puntero_parametro],"--emulatorspeed")) {
                     siguiente_parametro_argumento();
-                    porcentaje_velocidad_emulador=atoi(argv[puntero_parametro]);
-                    if (porcentaje_velocidad_emulador<1 || porcentaje_velocidad_emulador>9999) {
-                            printf ("Invalid Emulator speed\n");
-                            exit(1);
+                    int valor=atoi(argv[puntero_parametro]);
+                    if (valor<1 || valor>9999) {
+                            debug_printf (VERBOSE_ERR,"Invalid Emulator speed\n");
+
                     }
+                    else porcentaje_velocidad_emulador=valor;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--denyturbozxunoboot")) {
-					zxuno_deny_turbo_bios_boot.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--denyturbozxunoboot")) {
+                    zxuno_deny_turbo_bios_boot.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--denyturbotbbluerom")) {
-					tbblue_deny_turbo_rom.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--denyturbotbbluerom")) {
+                    tbblue_deny_turbo_rom.v=1;
+            }
 
             //Contemplamos los dos setting de deny y allow para compatibilidad con versiones previas a ZEsarUX 9.3, donde antes
             //estaba permitido por defecto
-			else if (!strcmp(argv[puntero_parametro],"--allowturbotbbluerom")) {
-					tbblue_deny_turbo_rom.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--allowturbotbbluerom")) {
+                    tbblue_deny_turbo_rom.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--tbblue-max-turbo-rom")) {
+            else if (!strcmp(argv[puntero_parametro],"--tbblue-max-turbo-rom")) {
 
-				siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
 
-				if (valor<1 || valor>8) {
-						printf ("Invalid value for tbblue-max-turbo-rom\n");
-						exit(1);
-				}
-				tbblue_deny_turbo_rom_max_allowed=valor;
-			}
+                if (valor<1 || valor>8) {
+                        debug_printf (VERBOSE_ERR,"Invalid value for tbblue-max-turbo-rom\n");
+
+                }
+                else tbblue_deny_turbo_rom_max_allowed=valor;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--denyturbotbblueeverywhere")) {
-					tbblue_deny_turbo_everywhere.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--denyturbotbblueeverywhere")) {
+                    tbblue_deny_turbo_everywhere.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--tbblue-max-turbo-everywhere")) {
+            else if (!strcmp(argv[puntero_parametro],"--tbblue-max-turbo-everywhere")) {
 
-				siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
 
-				if (valor<1 || valor>8) {
-						printf ("Invalid value for tbblue-max-turbo-everywhere\n");
-						exit(1);
-				}
-				tbblue_deny_turbo_everywhere_max_allowed=valor;
-			}
+                if (valor<1 || valor>8) {
+                        debug_printf (VERBOSE_ERR,"Invalid value for tbblue-max-turbo-everywhere");
 
-			else if (!strcmp(argv[puntero_parametro],"--tbblue-fast-boot-mode")) {
-				tbblue_fast_boot_mode.v=1;
-			}
+                }
+                else tbblue_deny_turbo_everywhere_max_allowed=valor;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--random-r-register")) {
-				cpu_random_r_register.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--ql-cpu-turbo-extension")) {
+                ql_extension_cpu_turbo_enabled=1;
+            }
 
-			/* no uso esto de momento
-			else if (!strcmp(argv[puntero_parametro],"--tbblue-123b-port")) {
-				siguiente_parametro_argumento();
-				tbblue_initial_123b_port=atoi(argv[puntero_parametro]);
-			}*/
+            else if (!strcmp(argv[puntero_parametro],"--tbblue-fast-boot-mode")) {
+                tbblue_fast_boot_mode.v=1;
+            }
 
-                        else if (!strcmp(argv[puntero_parametro],"--zx8081mem")) {
+            else if (!strcmp(argv[puntero_parametro],"--random-r-register")) {
+                cpu_random_r_register.v=1;
+            }
+
+            /* no uso esto de momento
+            else if (!strcmp(argv[puntero_parametro],"--tbblue-123b-port")) {
+                siguiente_parametro_argumento();
+                tbblue_initial_123b_port=atoi(argv[puntero_parametro]);
+            }*/
+
+            else if (!strcmp(argv[puntero_parametro],"--zx8081mem")) {
                                 siguiente_parametro_argumento();
-				int valor=atoi(argv[puntero_parametro]);
-				if (valor<1 || valor>16) {
-					printf ("Invalid RAM value\n");
-					exit(1);
-				}
-				set_zx8081_ramtop(valor);
-                        }
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<1 || valor>16) {
+                    debug_printf (VERBOSE_ERR,"Invalid RAM value\n");
 
-			else if (!strcmp(argv[puntero_parametro],"--acemem")) {
+                }
+                else set_zx8081_ramtop(valor);
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--acemem")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor!=3 && valor!=19 && valor!=35 && valor!=51) {
+                        debug_printf (VERBOSE_ERR,"Invalid RAM value\n");
+
+                }
+                else set_ace_ramtop(valor);
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--videozx8081")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<1 || valor>16) {
+                        debug_printf (VERBOSE_ERR,"Invalid threshold value\n");
+
+                }
+                else {
+                    simulate_screen_zx8081.v=1;
+                    umbral_simulate_screen_zx8081=valor;
+                }
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--128kmem")) {
                                 siguiente_parametro_argumento();
-                                int valor=atoi(argv[puntero_parametro]);
-                                if (valor!=3 && valor!=19 && valor!=35 && valor!=51) {
-                                        printf ("Invalid RAM value\n");
-                                        exit(1);
-                                }
-                                set_ace_ramtop(valor);
-                        }
+                int valor=atoi(argv[puntero_parametro]);
+                z80_byte multiplicador=0;
+                switch (valor) {
 
-                        else if (!strcmp(argv[puntero_parametro],"--videozx8081")) {
-                                siguiente_parametro_argumento();
-                                int valor=atoi(argv[puntero_parametro]);
-                                if (valor<1 || valor>16) {
-                                        printf ("Invalid threshold value\n");
-                                        exit(1);
-                                }
-				simulate_screen_zx8081.v=1;
-				umbral_simulate_screen_zx8081=valor;
-                        }
+                    case 128:
+                        multiplicador=1;
+                    break;
 
+                    case 256:
+                        multiplicador=2;
+                    break;
 
-			else if (!strcmp(argv[puntero_parametro],"--128kmem")) {
-                                siguiente_parametro_argumento();
-				int valor=atoi(argv[puntero_parametro]);
-				z80_byte multiplicador;
-				switch (valor) {
+                    case 512:
+                        multiplicador=4;
+                    break;
 
-					case 128:
-						multiplicador=1;
-					break;
-
-					case 256:
-						multiplicador=2;
-					break;
-
-					case 512:
-						multiplicador=4;
-					break;
-
-					case 1024:
-						multiplicador=8;
-					break;
+                    case 1024:
+                        multiplicador=8;
+                    break;
 
 
-					default:
-						printf ("Invalid RAM value\n");
-						exit(1);
-					break;
-				}
+                    default:
+                        debug_printf (VERBOSE_ERR,"Invalid RAM value\n");
 
-				mem_set_multiplicador_128(multiplicador);
+                    break;
+                }
+
+                if (multiplicador) mem_set_multiplicador_128(multiplicador);
       }
 
 
@@ -3316,35 +4292,35 @@ int parse_cmdline_options(int desde_commandline) {
                 siguiente_parametro_argumento();
                 int valor=parse_string_to_number(argv[puntero_parametro]);
                 if (valor<128 || valor>ql_get_maximum_ram_kb()) {
-                    printf ("Invalid QL RAM Mem value\n");
-                    exit(1);
+                    debug_printf (VERBOSE_ERR,"Invalid QL RAM Mem value\n");
+
                 }
-                ql_set_memory_size(valor);
+                else ql_set_memory_size(valor);
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--scr")) {
-				siguiente_parametro_argumento();
-				//cargar pantalla
-				scrfile=argv[puntero_parametro];
-			}
+            else if (!strcmp(argv[puntero_parametro],"--scr")) {
+                siguiente_parametro_argumento();
+                //cargar pantalla
+                scrfile=argv[puntero_parametro];
+            }
 
 
 
-			else if (!strcmp(argv[puntero_parametro],"--tape")) {
-				siguiente_parametro_argumento();
-				insert_tape_cmdline(argv[puntero_parametro]);
-			}
+            else if (!strcmp(argv[puntero_parametro],"--tape")) {
+                siguiente_parametro_argumento();
+                insert_tape_cmdline(argv[puntero_parametro]);
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--realtape")) {
+            else if (!strcmp(argv[puntero_parametro],"--realtape")) {
                                 siguiente_parametro_argumento();
-				realtape_name=argv[puntero_parametro];
-			}
+                realtape_name=argv[puntero_parametro];
+            }
 
 
 
                         else if (!strcmp(argv[puntero_parametro],"--snap")) {
-				siguiente_parametro_argumento();
-				insert_snap_cmdline(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                insert_snap_cmdline(argv[puntero_parametro]);
                         }
 
 
@@ -3355,76 +4331,84 @@ int parse_cmdline_options(int desde_commandline) {
 
 
                         else if (!strcmp(argv[puntero_parametro],"--noautoload")) {
-				noautoload.v=1;
+                noautoload.v=1;
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--fastautoload")) {
+            else if (!strcmp(argv[puntero_parametro],"--fastautoload")) {
                                 fast_autoload.v=1;
-			}
+            }
 
+            else if (!strcmp(argv[puntero_parametro],"--accelerate-loading")) {
+                storage_accelerate_loading.v=1;
+            }
 
-			//eprom y flash cards de z88 hacen lo mismo que quickload
-			else if (!strcmp(argv[puntero_parametro],"--slotcard")) {
+            else if (!strcmp(argv[puntero_parametro],"--accelerate-saving")) {
+                storage_accelerate_saving.v=1;
+            }
+
+            //eprom y flash cards de z88 hacen lo mismo que quickload
+            else if (!strcmp(argv[puntero_parametro],"--slotcard")) {
                                 siguiente_parametro_argumento();
-				//ver si extension valida
-				if (
-				      !util_compare_file_extension(argv[puntero_parametro],"epr")
-				 ||   !util_compare_file_extension(argv[puntero_parametro],"63")
-				 ||   !util_compare_file_extension(argv[puntero_parametro],"eprom")
-				 ||   !util_compare_file_extension(argv[puntero_parametro],"flash")
+                //ver si extension valida
+                if (
+                      !util_compare_file_extension(argv[puntero_parametro],"epr")
+                 ||   !util_compare_file_extension(argv[puntero_parametro],"63")
+                 ||   !util_compare_file_extension(argv[puntero_parametro],"eprom")
+                 ||   !util_compare_file_extension(argv[puntero_parametro],"flash")
 
-				 ){
-					quickload_inicial.v=1;
-					quickload_nombre=argv[puntero_parametro];
-				}
-				else {
-                    printf ("Invalid extension for eprom/flash card\n");
-					exit(1);
-				}
+                 ){
+                    quickload_inicial.v=1;
+                    quickload_nombre=argv[puntero_parametro];
+                }
+                else {
+                    debug_printf (VERBOSE_ERR,"Invalid extension for eprom/flash card\n");
+
+                }
 
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--slotcard-num")) {
+            else if (!strcmp(argv[puntero_parametro],"--slotcard-num")) {
                 siguiente_parametro_argumento();
-				//ver si extension valida
-				if (
-				      !util_compare_file_extension(argv[puntero_parametro],"epr")
-				 ||   !util_compare_file_extension(argv[puntero_parametro],"63")
-				 ||   !util_compare_file_extension(argv[puntero_parametro],"eprom")
-				 ||   !util_compare_file_extension(argv[puntero_parametro],"flash")
+                //ver si extension valida
+                if (
+                      !util_compare_file_extension(argv[puntero_parametro],"epr")
+                 ||   !util_compare_file_extension(argv[puntero_parametro],"63")
+                 ||   !util_compare_file_extension(argv[puntero_parametro],"eprom")
+                 ||   !util_compare_file_extension(argv[puntero_parametro],"flash")
 
-				 ){
-					z88_slotcard_inicial.v=1;
-					z88_slotcard_inicial_nombre=argv[puntero_parametro];
+                 ){
+                    z88_slotcard_inicial.v=1;
+                    z88_slotcard_inicial_nombre=argv[puntero_parametro];
 
                     siguiente_parametro_argumento();
-                    z88_slotcard_inicial_slot=parse_string_to_number(argv[puntero_parametro]);
-                    if (z88_slotcard_inicial_slot<1 || z88_slotcard_inicial_slot>3) {
-                        printf("Invalid slot number\n");
-                        exit(1);
+                    int valor=parse_string_to_number(argv[puntero_parametro]);
+                    if (valor<1 || valor>3) {
+                        debug_printf (VERBOSE_ERR,"Invalid slot number");
+
                     }
-				}
-				else {
-                    printf ("Invalid extension for eprom/flash card\n");
-					exit(1);
-				}
+                    else z88_slotcard_inicial_slot=valor;
+                }
+                else {
+                    debug_printf (VERBOSE_ERR,"Invalid extension for eprom/flash card");
+
+                }
 
             }
 
 
                         else if (!strcmp(argv[puntero_parametro],"--vo")) {
-				int drivervook=0;
-				try_fallback_video.v=0;
+                int drivervook=0;
+                try_fallback_video.v=0;
 
                                 siguiente_parametro_argumento();
                                 driver_screen=argv[puntero_parametro];
 
 #ifdef USE_COCOA
-				if (!strcmp(driver_screen,"cocoa")) drivervook=1;
+                if (!strcmp(driver_screen,"cocoa")) drivervook=1;
 #endif
 
 #ifdef COMPILE_XWINDOWS
-				if (!strcmp(driver_screen,"xwindows")) drivervook=1;
+                if (!strcmp(driver_screen,"xwindows")) drivervook=1;
 #endif
 
 #ifdef COMPILE_SDL
@@ -3433,23 +4417,23 @@ int parse_cmdline_options(int desde_commandline) {
 
 
 #ifdef COMPILE_FBDEV
-				if (!strcmp(driver_screen,"fbdev")) drivervook=1;
+                if (!strcmp(driver_screen,"fbdev")) drivervook=1;
 #endif
 
 #ifdef COMPILE_CURSES
-				if (!strcmp(driver_screen,"curses")) drivervook=1;
+                if (!strcmp(driver_screen,"curses")) drivervook=1;
 #endif
 
 #ifdef COMPILE_AA
-				if (!strcmp(driver_screen,"aa")) drivervook=1;
+                if (!strcmp(driver_screen,"aa")) drivervook=1;
 #endif
 
 #ifdef COMPILE_CACA
-				if (!strcmp(driver_screen,"caca")) drivervook=1;
+                if (!strcmp(driver_screen,"caca")) drivervook=1;
 #endif
 
 #ifdef COMPILE_STDOUT
-				if (!strcmp(driver_screen,"stdout")) drivervook=1;
+                if (!strcmp(driver_screen,"stdout")) drivervook=1;
 #endif
 
 #ifdef COMPILE_SIMPLETEXT
@@ -3457,12 +4441,12 @@ int parse_cmdline_options(int desde_commandline) {
 #endif
 
 
-				if (!strcmp(driver_screen,"null")) drivervook=1;
+                if (!strcmp(driver_screen,"null")) drivervook=1;
 
-				if (!drivervook) {
-					printf ("Video Driver %s not supported\n",driver_screen);
-					exit(1);
-				}
+                if (!drivervook) {
+                    printf ("Video Driver %s not supported\n",driver_screen);
+                    exit(1);
+                }
 
 
 
@@ -3478,7 +4462,7 @@ int parse_cmdline_options(int desde_commandline) {
 
 
                         else if (!strcmp(argv[puntero_parametro],"--ao")) {
-				try_fallback_audio.v=0;
+                try_fallback_audio.v=0;
                                 int driveraook=0;
                                 siguiente_parametro_argumento();
                                 driver_audio=argv[puntero_parametro];
@@ -3537,51 +4521,51 @@ int parse_cmdline_options(int desde_commandline) {
 
                                 int valor=atoi(argv[puntero_parametro]);
                                 if (valor==1 || valor==2 || valor==5 || valor==10 || valor==25 || valor==50) {
-					vofile_fps=50/valor;
-				}
+                                    vofile_fps=50/valor;
+                                }
 
-				else {
-				        printf ("Invalid FPS value\n");
-                                        exit(1);
+                                else {
+                                    debug_printf (VERBOSE_ERR,"Invalid FPS value\n");
+
                                 }
 
                         }
 
 
                         else if (!strcmp(argv[puntero_parametro],"--disableayspeech")) {
-				ay_speech_enabled.v=0;
+                ay_speech_enabled.v=0;
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--disableenvelopes")) {
+            else if (!strcmp(argv[puntero_parametro],"--disableenvelopes")) {
                                 ay_envelopes_enabled.v=0;
                         }
 
 
 
                         else if (!strcmp(argv[puntero_parametro],"--debugregisters")) {
-				debug_registers=1;
+                debug_registers=1;
                         }
 
 #ifdef USE_XEXT
-			else if (!strcmp(argv[puntero_parametro],"--disableshm"))
-				disable_shm=1;
+            else if (!strcmp(argv[puntero_parametro],"--disableshm"))
+                disable_shm=1;
 #endif
 
-			else if (!strcmp(argv[puntero_parametro],"--disableborder")) {
-				border_enabled.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disableborder")) {
+                border_enabled.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--hidemousepointer")) {
-				mouse_pointer_shown.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--hidemousepointer")) {
+                mouse_pointer_shown.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--limitopenmenu")) {
-				menu_limit_menu_open.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--limitopenmenu")) {
+                menu_limit_menu_open.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--advancedmenus")) {
-				menu_show_advanced_items.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--advancedmenus")) {
+                menu_show_advanced_items.v=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--simplemenus")) {
                 menu_show_simple_items.v=1;
@@ -3589,45 +4573,82 @@ int parse_cmdline_options(int desde_commandline) {
             }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--setmachinebyname")) {
-				setting_machine_selection_type=MACHINE_SELECTION_TYPE_BY_NAME;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--setmachinebyname")) {
+                setting_machine_selection_type=MACHINE_SELECTION_TYPE_BY_NAME;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--setmachinebyfamily")) {
-				setting_machine_selection_type=MACHINE_SELECTION_TYPE_BY_FAMILY;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--setmachinebyfamily")) {
+                setting_machine_selection_type=MACHINE_SELECTION_TYPE_BY_FAMILY;
+            }
 
             //soportar opcion antigua tambien
-			else if (!strcmp(argv[puntero_parametro],"--hide-dirs") ||
+            else if (!strcmp(argv[puntero_parametro],"--hide-dirs") ||
                     !strcmp(argv[puntero_parametro],"--filebrowser-hide-dirs")
             ) {
-				menu_filesel_hide_dirs.v=1;
-			}
+                menu_filesel_hide_dirs.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--filebrowser-hide-size")) {
-				menu_filesel_hide_size.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--filebrowser-hide-size")) {
+                menu_filesel_hide_size.v=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--filebrowser-allow-folder-delete")) {
                 menu_filesel_utils_allow_folder_delete.v=1;
             }
 
-  			else if (!strcmp(argv[puntero_parametro],"--fileviewer-hex")) {
-				menu_file_viewer_always_hex.v=1;
-			}
+              else if (!strcmp(argv[puntero_parametro],"--fileviewer-hex")) {
+                menu_file_viewer_always_hex.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--no-file-previews")) {
-				menu_filesel_show_previews.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--no-file-previews")) {
+                menu_filesel_show_previews.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--reduce-file-previews")) {
-				menu_filesel_show_previews_reduce.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--reduce-file-previews")) {
+                menu_filesel_show_previews_reduce.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--file-previews-on-zxdesktop")) {
+                menu_filesel_show_previews_on_zxdesktop.v=1;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--disablemenumouse")) {
-				mouse_menu_disabled.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disablemenumouse")) {
+                mouse_menu_disabled.v=1;
+            }
+
+            else if (
+                    !strcmp(argv[puntero_parametro],"--enable-topbar-menu") ||
+                    !strcmp(argv[puntero_parametro],"--enable-top-menu")
+                ) {
+                    //--enable-topbar-menu deprecated
+
+                zxvision_topbar_menu_enabled.v=1;
+            }
+
+            else if (
+                    !strcmp(argv[puntero_parametro],"--no-show-topbar-menu-move-top") ||
+                    !strcmp(argv[puntero_parametro],"--no-show-top-menu-move-top")
+                ) {
+                    //--no-show-topbar-menu-move-top deprecated
+
+                zxvision_topbar_appears_move_mouse_top.v=0;
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--top-menu-hide-item")) {
+                siguiente_parametro_argumento();
+                int indice=parse_string_to_number(argv[puntero_parametro]);
+                if (indice<1 || indice>=TOPMENU_TOTAL_MENUS) {
+                    debug_printf (VERBOSE_ERR,"Invalid --top-menu-hide-item item %d\n",indice);
+
+                }
+                else topbar_set_topmenus_visibles(indice,0);
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--top-menu-short-menu-names")) {
+                topbar_show_short_menu_names=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--ignoremouseclickopenmenu")) {
                 mouse_menu_ignore_click_open.v=1;
@@ -3637,44 +4658,44 @@ int parse_cmdline_options(int desde_commandline) {
                 "--text-keyboard-clear      Clear all entries of the Adventure Text Keyboard\n"
 */
 
-		       else if (!strcmp(argv[puntero_parametro],"--text-keyboard-add")) {
-				if (added_some_osd_text_keyboard.v==0) {
-					util_clear_text_adventure_kdb();
-					added_some_osd_text_keyboard.v=1;
-					//printf ("Clearing text keyboard\n");
-				}
+               else if (!strcmp(argv[puntero_parametro],"--text-keyboard-add")) {
+                if (added_some_osd_text_keyboard.v==0) {
+                    util_clear_text_adventure_kdb();
+                    added_some_osd_text_keyboard.v=1;
+                    //printf ("Clearing text keyboard\n");
+                }
                                 siguiente_parametro_argumento();
-				//printf ("Adding text keyboard %s\n",argv[puntero_parametro]);
-				util_add_text_adventure_kdb(argv[puntero_parametro]);
+                //printf ("Adding text keyboard %s\n",argv[puntero_parametro]);
+                util_add_text_adventure_kdb(argv[puntero_parametro]);
                         }
 
-				else if (!strcmp(argv[puntero_parametro],"--text-keyboard-length")) {
-						siguiente_parametro_argumento();
-						int valor=parse_string_to_number(argv[puntero_parametro]);
-						if (valor<10 || valor>100) {
-                                        printf ("Invalid text-keyboard-length value\n");
-                                        exit(1);
-                                }
-						adventure_keyboard_key_length=valor;
-				}
+                else if (!strcmp(argv[puntero_parametro],"--text-keyboard-length")) {
+                        siguiente_parametro_argumento();
+                        int valor=parse_string_to_number(argv[puntero_parametro]);
+                        if (valor<10 || valor>100) {
+                            debug_printf (VERBOSE_ERR,"Invalid text-keyboard-length value\n");
 
-				else if (!strcmp(argv[puntero_parametro],"--text-keyboard-finalspc")) {
-						adventure_keyboard_send_final_spc=1;
+                        }
+                        else adventure_keyboard_key_length=valor;
+                }
 
-				}
+                else if (!strcmp(argv[puntero_parametro],"--text-keyboard-finalspc")) {
+                        adventure_keyboard_send_final_spc=1;
+
+                }
 
 
-			/*else if (!strcmp(argv[puntero_parametro],"--overlayinfo")) {
-				enable_second_layer();
-			}*/
+            /*else if (!strcmp(argv[puntero_parametro],"--overlayinfo")) {
+                enable_second_layer();
+            }*/
 
-			else if (!strcmp(argv[puntero_parametro],"--disablefooter")) {
-				disable_footer();
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disablefooter")) {
+                disable_footer();
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--disablemultitaskmenu")) {
+            else if (!strcmp(argv[puntero_parametro],"--disablemultitaskmenu")) {
                 menu_multitarea=0;
-			}
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--stopemulationmenu")) {
                 menu_emulation_paused_on_menu=1;
@@ -3684,102 +4705,106 @@ int parse_cmdline_options(int desde_commandline) {
                 menu_old_behaviour_close_menus.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--disablebw-no-multitask")) {
-				//Obsoleto
-            			//screen_bw_no_multitask_menu.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disablebw-no-multitask")) {
+                //Obsoleto
+                        //screen_bw_no_multitask_menu.v=0;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--machine")) {
-				char *machine_name;
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--machine")) {
+                char *machine_name;
+                siguiente_parametro_argumento();
                                 machine_name=argv[puntero_parametro];
 
-				if (set_machine_type_by_name(machine_name)) {
-					exit(1);
-                                }
+                if (set_machine_type_by_name(machine_name)) {
+                    //maquina desconocida
+                }
 
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--videofastblack")) {
-				video_fast_mode_emulation.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--videofastblack")) {
+                video_fast_mode_emulation.v=1;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--no-ocr-alternatechars")) {
-				ocr_settings_not_look_23606.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--no-ocr-alternatechars")) {
+                ocr_settings_not_look_23606.v=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--z88-hide-shortcuts")) {
                 z88_hide_keys_shortcuts.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--allpixeltotext")) {
-				screen_text_all_refresh_pixel.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--allpixeltotext")) {
+                screen_text_all_refresh_pixel.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--allpixeltotext-scale")) {
-					siguiente_parametro_argumento();
-					int valor=parse_string_to_number(argv[puntero_parametro]);
-					if (valor<1 || valor>99) {
-									printf ("Invalid --allpixeltotext-scale value\n");
-									exit(1);
-							}
-					screen_text_all_refresh_pixel_scale=valor;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--allpixeltotext-scale")) {
+                    siguiente_parametro_argumento();
+                    int valor=parse_string_to_number(argv[puntero_parametro]);
+                    if (valor<1 || valor>99) {
+                                    debug_printf (VERBOSE_ERR,"Invalid --allpixeltotext-scale value\n");
+
+                    }
+                    else screen_text_all_refresh_pixel_scale=valor;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--allpixeltotext-invert")) {
-				screen_text_all_refresh_pixel_invert.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--allpixeltotext-invert")) {
+                screen_text_all_refresh_pixel_invert.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--allpixeltotext-width")) {
+            else if (!strcmp(argv[puntero_parametro],"--allpixeltotext-width")) {
                 siguiente_parametro_argumento();
                 int valor=parse_string_to_number(argv[puntero_parametro]);
                 if (valor<1 || valor>9999) {
-                                printf ("Invalid --allpixeltotext-width value\n");
-                                exit(1);
-                        }
-                scr_refresca_pantalla_tsconf_text_max_ancho=valor;
-			}
+                                debug_printf (VERBOSE_ERR,"Invalid --allpixeltotext-width value\n");
 
-			else if (!strcmp(argv[puntero_parametro],"--allpixeltotext-x-offset")) {
+                }
+                else scr_refresca_pantalla_tsconf_text_max_ancho=valor;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--allpixeltotext-x-offset")) {
                 siguiente_parametro_argumento();
                 int valor=parse_string_to_number(argv[puntero_parametro]);
                 if (valor<0 || valor>9999) {
-                                printf ("Invalid --allpixeltotext-x-offset value\n");
-                                exit(1);
-                        }
-                scr_refresca_pantalla_tsconf_text_offset_x=valor;
-			}
+                                debug_printf (VERBOSE_ERR,"Invalid --allpixeltotext-x-offset value\n");
 
-			else if (!strcmp(argv[puntero_parametro],"--allpixeltotext-height")) {
+                }
+                else scr_refresca_pantalla_tsconf_text_offset_x=valor;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--allpixeltotext-height")) {
                 siguiente_parametro_argumento();
                 int valor=parse_string_to_number(argv[puntero_parametro]);
                 if (valor<1 || valor>9999) {
-                                printf ("Invalid --allpixeltotext-height value\n");
-                                exit(1);
-                        }
-                scr_refresca_pantalla_tsconf_text_max_alto=valor;
-			}
+                                debug_printf (VERBOSE_ERR,"Invalid --allpixeltotext-height value\n");
 
-			else if (!strcmp(argv[puntero_parametro],"--allpixeltotext-y-offset")) {
+                }
+                else scr_refresca_pantalla_tsconf_text_max_alto=valor;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--allpixeltotext-y-offset")) {
                 siguiente_parametro_argumento();
                 int valor=parse_string_to_number(argv[puntero_parametro]);
                 if (valor<0 || valor>9999) {
-                                printf ("Invalid --allpixeltotext-y-offset value\n");
-                                exit(1);
-                        }
-                scr_refresca_pantalla_tsconf_text_offset_y=valor;
-			}
+                                debug_printf (VERBOSE_ERR,"Invalid --allpixeltotext-y-offset value\n");
+
+                }
+                else scr_refresca_pantalla_tsconf_text_offset_y=valor;
+            }
 
 
 
-			else if (!strcmp(argv[puntero_parametro],"--zx8081vsyncsound")) {
-				command_line_zx8081_vsync_sound.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zx8081vsyncsound")) {
+                command_line_zx8081_vsync_sound.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zx8081ram8K2000")) {
+            else if (!strcmp(argv[puntero_parametro],"--zx8081vsyncsounddetection")) {
+                zx8081_detect_vsync_sound.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zx8081ram8K2000")) {
                                 ram_in_8192.v=1;
                         }
 
@@ -3791,157 +4816,272 @@ int parse_cmdline_options(int desde_commandline) {
                                 enable_ram_in_49152();
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--autodetectwrx")) {
+            else if (!strcmp(argv[puntero_parametro],"--autodetectwrx")) {
                                 autodetect_wrx.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--wrx")) {
+            else if (!strcmp(argv[puntero_parametro],"--wrx")) {
                                 command_line_wrx.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--vsync-minimum-length")) {
-		                siguiente_parametro_argumento();
-                                int valor=atoi(argv[puntero_parametro]);
-                                if (valor<100 || valor>999) {
-                                        printf ("Invalid vsync length value\n");
-                                        exit(1);
-                                }
-                                command_line_vsync_minimum_lenght=valor;
-			}
+            //deprecated
+            else if (!strcmp(argv[puntero_parametro],"--vsync-minimum-length")) {
+                siguiente_parametro_argumento();
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--chroma81")) {
+            else if (!strcmp(argv[puntero_parametro],"--tv-minimum-accepted-vsync-length")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<10 || valor>999) {
+                    debug_printf(VERBOSE_ERR,"Invalid --tv-minimum-accepted-vsync-length value");
+                }
+                else {
+                    tv_minimum_accepted_vsync=valor;
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--tv-minimum-accepted-vsync-interval")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<1 || valor>100) {
+                    debug_printf(VERBOSE_ERR,"Invalid --tv-minimum-accepted-vsync-interval value");
+                }
+                else {
+                    tv_vsync_minimum_accepted_interval=valor;
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--tv-maximum-scanlines")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<200 || valor>399) {
+                    debug_printf(VERBOSE_ERR,"Invalid --tv-maximum-scanlines value");
+                }
+                else {
+                    tv_max_lines=valor;
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--tv-maximum-scanline-period")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<10 || valor>99) {
+                    debug_printf(VERBOSE_ERR,"Invalid --tv-maximum-scanline-period value");
+                }
+                else {
+                    tv_max_line_period=valor;
+                }
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--chroma81")) {
                                 command_line_chroma81.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--romfile")) {
+
+
+            else if (!strcmp(argv[puntero_parametro],"--romfile")) {
                                 siguiente_parametro_argumento();
                                 setting_set_machine_enable_custom_rom=1;
                                 strcpy(custom_romfile,argv[puntero_parametro]);
-			}
+            }
 
                         else if (!strcmp(argv[puntero_parametro],"--smartloadpath")) {
                                 siguiente_parametro_argumento();
-				sprintf(quickload_file,"%s/",argv[puntero_parametro]);
+                sprintf(quickload_file,"%s/",argv[puntero_parametro]);
 
                                 quickfile=quickload_file;
                         }
 
+
+                        else if (!strcmp(argv[puntero_parametro],"--smartloadhistoryfile")) {
+                                siguiente_parametro_argumento();
+                strcpy(smartload_history_file,argv[puntero_parametro]);
+                        }
+
                         else if (!strcmp(argv[puntero_parametro],"--addlastfile")) {
                                 siguiente_parametro_argumento();
-				last_filesused_insert(argv[puntero_parametro]);
+                last_filesused_insert(argv[puntero_parametro]);
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--quicksavepath")) {
+            else if (!strcmp(argv[puntero_parametro],"--quicksavepath")) {
                                 siguiente_parametro_argumento();
-				sprintf(snapshot_autosave_interval_quicksave_directory,"%s/",argv[puntero_parametro]);
+                sprintf(snapshot_autosave_interval_quicksave_directory,"%s/",argv[puntero_parametro]);
                         }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--loadbinarypath")) {
+            else if (!strcmp(argv[puntero_parametro],"--loadbinarypath")) {
                                 siguiente_parametro_argumento();
                                 sprintf(binary_file_load,"%s/",argv[puntero_parametro]);
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--savebinarypath")) {
+            else if (!strcmp(argv[puntero_parametro],"--savebinarypath")) {
                                 siguiente_parametro_argumento();
                                 sprintf(binary_file_save,"%s/",argv[puntero_parametro]);
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxunospifile")) {
+            else if (!strcmp(argv[puntero_parametro],"--zxunospifile")) {
                                 siguiente_parametro_argumento();
-				sprintf(zxuno_flash_spi_name,"%s",argv[puntero_parametro]);
+                sprintf(zxuno_flash_spi_name,"%s",argv[puntero_parametro]);
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxuno-initial-64k")) {
+            else if (!strcmp(argv[puntero_parametro],"--zxuno-initial-64k")) {
                                 siguiente_parametro_argumento();
-				sprintf(zxuno_initial_64k_file,"%s",argv[puntero_parametro]);
+                sprintf(zxuno_initial_64k_file,"%s",argv[puntero_parametro]);
                         }
 
 
-			else if (
-			         !strcmp(argv[puntero_parametro],"--zxunospi-persistent-writes")
-			      ||
-				 !strcmp(argv[puntero_parametro],"--zxunospiwriteenable")     //opcion obsoleta
-				) {
+            else if (
+                     !strcmp(argv[puntero_parametro],"--zxunospi-persistent-writes")
+                  ||
+                 !strcmp(argv[puntero_parametro],"--zxunospiwriteenable")     //opcion obsoleta
+                ) {
                                 zxuno_flash_persistent_writes.v=1;
-			}
+            }
 
 
                         else if (!strcmp(argv[puntero_parametro],"--zxunospi-write-protection")) {
-				zxuno_flash_write_protection.v=1;
+                zxuno_flash_write_protection.v=1;
                         }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--printerbitmapfile")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--printerbitmapfile")) {
+                siguiente_parametro_argumento();
                                 zxprinter_enabled.v=1;
-				zxprinter_bitmap_filename=argv[puntero_parametro];
-				zxprinter_file_bitmap_init();
-			}
+                zxprinter_bitmap_filename=argv[puntero_parametro];
+                zxprinter_file_bitmap_init();
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--printertextfile")) {
+            else if (!strcmp(argv[puntero_parametro],"--tbblue-machine-id")) {
+                siguiente_parametro_argumento();
+                tbblue_machine_id=parse_string_to_number(argv[puntero_parametro]);
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ql-rtc-timezone")) {
+                siguiente_parametro_argumento();
+                int timezone=parse_string_to_number(argv[puntero_parametro]);
+                if (timezone<-12 || timezone >+14) {
+                    debug_printf (VERBOSE_ERR,"Invalid QL RTC timezone");
+                }
+                else {
+                    ql_zx8032_rtc_timezone=timezone;
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ql-no-rtc-pc")) {
+                ql_use_pc_realtime_clock=0;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ql-qimi-mouse")) {
+                ql_qimi_mouse_enabled=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ql-qimi-mouse-sensitivity")) {
+                siguiente_parametro_argumento();
+                int sens=parse_string_to_number(argv[puntero_parametro]);
+                if (sens<1 || sens>QL_QIMI_MOUSE_MAX_SENSIBILITY) {
+                    debug_printf(VERBOSE_ERR,"Invalid QL QIMI sensitivity value: %d",sens);
+                }
+                else {
+                    ql_qimi_mouse_sensibilidad=sens;
+                }
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--printertextfile")) {
                                 siguiente_parametro_argumento();
                                 zxprinter_enabled.v=1;
                                 zxprinter_ocr_filename=argv[puntero_parametro];
                                 zxprinter_file_ocr_init();
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--redefinekey")) {
-				z80_byte tecla_original, tecla_redefinida;
-				siguiente_parametro_argumento();
-				tecla_original=parse_string_to_number(argv[puntero_parametro]);
+            else if (!strcmp(argv[puntero_parametro],"--redefinekey")) {
+                z80_byte tecla_original, tecla_redefinida;
+                siguiente_parametro_argumento();
+                tecla_original=parse_string_to_number(argv[puntero_parametro]);
 
-				siguiente_parametro_argumento();
-				tecla_redefinida=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                tecla_redefinida=parse_string_to_number(argv[puntero_parametro]);
 
-				if (util_add_redefinir_tecla(tecla_original,tecla_redefinida)) {
-					exit(1);
-				}
-			}
+                if (util_add_redefinir_tecla(tecla_original,tecla_redefinida)) {
+                    //error
+                }
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--recreatedzx")) {
-				recreated_zx_keyboard_support.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--recreatedzx")) {
+                recreated_zx_keyboard_support.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--recreatedzx-also-on-menu")) {
-				recreated_zx_keyboard_support_also_on_menu.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--recreatedzx-also-on-menu")) {
+                recreated_zx_keyboard_support_also_on_menu.v=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--keyboard-issue2")) {
                 keyboard_issue2.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--keymap")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--azerty-kbd-num-no-shift")) {
+                azerty_keyboard_numbers_no_shift.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--keymap")) {
+                siguiente_parametro_argumento();
                 int valor=atoi(argv[puntero_parametro]);
                 if (valor<0 || valor>1) {
-               		printf ("Invalid Keymap value\n");
-                    exit(1);
+                       debug_printf (VERBOSE_ERR,"Invalid Keymap value");
+
                 }
-                z88_cpc_keymap_type=valor;
-			}
+                else z88_cpc_keymap_type=valor;
+            }
 
 
 
-			else if (!strcmp(argv[puntero_parametro],"--enablekempstonmouse")) {
-				kempston_mouse_emulation.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enablekempstonmouse")) {
+                kempston_mouse_emulation.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--kempstonmouse-sens")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--enable-optical-input")) {
+                lightgun_emulation_enabled.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--opticalinput-scope")) {
+                lightgun_scope.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--opticalinput-scan-threshold")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<0 || valor>10) {
+                    debug_printf(VERBOSE_ERR,"Invalid Optical Input Scanline Threshold value");
+                }
+                else {
+                    lightgun_vertical_threshold=valor;
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--opticalinputtype")) {
+                siguiente_parametro_argumento();
+                if (lightgun_set_type(argv[puntero_parametro])) {
+                    debug_printf(VERBOSE_ERR,"Invalid lightgun %s",argv[puntero_parametro]);
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--kempstonmouse-sens")) {
+                siguiente_parametro_argumento();
                 int valor=atoi(argv[puntero_parametro]);
                 if (valor<1 || valor>MAX_KMOUSE_SENSITIVITY) {
-               		printf ("Invalid Kempston Mouse Sensitivity value\n");
-                    exit(1);
-                }
-                kempston_mouse_factor_sensibilidad=valor;
-			}
+                       debug_printf (VERBOSE_ERR,"Invalid Kempston Mouse Sensitivity value\n");
 
-			else if (!strcmp(argv[puntero_parametro],"--spectrum-reduced-core")) {
+                }
+                else kempston_mouse_factor_sensibilidad=valor;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--spectrum-reduced-core")) {
                                 core_spectrum_uses_reduced.v=1;
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--no-spectrum-reduced-core")) {
+            else if (!strcmp(argv[puntero_parametro],"--no-spectrum-reduced-core")) {
                                 core_spectrum_uses_reduced.v=0;
                         }
 
@@ -3950,17 +5090,17 @@ int parse_cmdline_options(int desde_commandline) {
                 ula_databus_value=parse_string_to_number(argv[puntero_parametro]);
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--def-f-function")) {
+            else if (!strcmp(argv[puntero_parametro],"--def-f-function")) {
 
                 //Poder continuar la carga aunque algun parametro esté mal
                 int error_parametros=0;
 
-				siguiente_parametro_argumento();
-				if (argv[puntero_parametro][0]!='F' && argv[puntero_parametro][0]!='f') {
+                siguiente_parametro_argumento();
+                if (argv[puntero_parametro][0]!='F' && argv[puntero_parametro][0]!='f') {
                     debug_printf (VERBOSE_ERR,"Unknown key for f-function: %s",argv[puntero_parametro]);
 
                     error_parametros=1;
-				}
+                }
 
                 int valor=atoi(&argv[puntero_parametro][1]);
 
@@ -3980,183 +5120,208 @@ int parse_cmdline_options(int desde_commandline) {
                 }
 
 
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--def-f-function-parameters")) {
-				siguiente_parametro_argumento();
-				if (argv[puntero_parametro][0]!='F' && argv[puntero_parametro][0]!='f') {
-					printf ("Unknown key\n");
-					exit(1);
-				}
+            else if (!strcmp(argv[puntero_parametro],"--def-f-function-parameters")) {
 
-				int valor=atoi(&argv[puntero_parametro][1]);
+                //Poder continuar la carga aunque algun parametro esté mal
+                int error_parametros=0;
 
-				if (valor<1 || valor>MAX_F_FUNCTIONS_KEYS) {
-					printf ("Invalid key\n");
-					exit(1);
-				}
+                siguiente_parametro_argumento();
+                if (argv[puntero_parametro][0]!='F' && argv[puntero_parametro][0]!='f') {
+                    debug_printf (VERBOSE_ERR,"Unknown key for f-function-parameters: %s",argv[puntero_parametro]);
+                    error_parametros=1;
+                }
 
-				siguiente_parametro_argumento();
+                int valor=atoi(&argv[puntero_parametro][1]);
 
-				if (menu_define_key_function_extra_info(valor,argv[puntero_parametro])) {
-					printf ("Invalid f-function action extra info: %s\n",argv[puntero_parametro]);
-					exit(1);
-				}
+                if (valor<1 || valor>MAX_F_FUNCTIONS_KEYS) {
+                    debug_printf (VERBOSE_ERR,"Invalid key for f-function-parameters: %d",valor);
+                    error_parametros=1;
+                }
 
+                siguiente_parametro_argumento();
 
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--def-button-function")) {
-				siguiente_parametro_argumento();
-
-
-				int valor=parse_string_to_number(argv[puntero_parametro]);
-
-				if (valor<0 || valor>=MAX_USERDEF_BUTTONS) {
-					printf ("Invalid button\n");
-					exit(1);
-				}
-
-				siguiente_parametro_argumento();
-
-				if (menu_define_button_function(valor,argv[puntero_parametro])) {
-					printf ("Invalid button action: %s\n",argv[puntero_parametro]);
-					exit(1);
-				}
+                if (!error_parametros) {
+                    if (menu_define_key_function_extra_info(valor,argv[puntero_parametro])) {
+                        debug_printf (VERBOSE_ERR,"Invalid f-function action extra info: %s",argv[puntero_parametro]);
+                    }
+                }
 
 
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--def-button-function-parameters")) {
-				siguiente_parametro_argumento();
-
-				int valor=atoi(argv[puntero_parametro]);
-
-				if (valor<0 || valor>=MAX_USERDEF_BUTTONS) {
-					printf ("Invalid button\n");
-					exit(1);
-				}
-
-				siguiente_parametro_argumento();
-
-                strcpy(defined_buttons_functions_array_parameters[valor],argv[puntero_parametro]);
+            else if (!strcmp(argv[puntero_parametro],"--def-button-function")) {
+                siguiente_parametro_argumento();
 
 
-			}
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+
+                //Si da error de invalid button, ya habremos saltado el siguiente parametro y así facilitamos la carga
+                //de la configuración aunque este punto falle
+                siguiente_parametro_argumento();
+
+                if (valor<0 || valor>=MAX_USERDEF_BUTTONS) {
+                    debug_printf (VERBOSE_ERR,"Invalid button %d",valor);
+                }
+
+                else {
+                    if (menu_define_button_function(valor,argv[puntero_parametro])) {
+                        debug_printf (VERBOSE_ERR,"Invalid button action: %s",argv[puntero_parametro]);
+                    }
+                }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--autoloadsnap")) {
-                        	autoload_snapshot_on_start.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--autosavesnap")) {
+            else if (!strcmp(argv[puntero_parametro],"--def-button-function-parameters")) {
+                siguiente_parametro_argumento();
+
+                int valor=atoi(argv[puntero_parametro]);
+
+                //Si da error de invalid button, ya habremos saltado el siguiente parametro y así facilitamos la carga
+                //de la configuración aunque este punto falle
+                siguiente_parametro_argumento();
+
+                if (valor<0 || valor>=MAX_USERDEF_BUTTONS) {
+                    debug_printf (VERBOSE_ERR,"Invalid button\n");
+
+                }
+
+                else {
+
+
+                    strcpy(defined_buttons_functions_array_parameters[valor],argv[puntero_parametro]);
+                }
+
+
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--autoloadsnap")) {
+                            autoload_snapshot_on_start.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--autosavesnap")) {
                                 autosave_snapshot_on_exit.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--autosnappath")) {
+            else if (!strcmp(argv[puntero_parametro],"--autosnappath")) {
                                 siguiente_parametro_argumento();
                                 sprintf(autosave_snapshot_path_buffer,"%s/",argv[puntero_parametro]);
                         }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--tempdir")) {
+            else if (!strcmp(argv[puntero_parametro],"--tempdir")) {
                                 siguiente_parametro_argumento();
                                 sprintf(emulator_tmpdir_set_by_user,"%s/",argv[puntero_parametro]);
                         }
 
-			//--sna-no-change-machine deprecated
-			else if (!strcmp(argv[puntero_parametro],"--sna-no-change-machine") || !strcmp(argv[puntero_parametro],"--snap-no-change-machine")
-			) {
-				sna_setting_no_change_machine.v=1;
-			}
+            //--sna-no-change-machine deprecated
+            else if (!strcmp(argv[puntero_parametro],"--sna-no-change-machine") || !strcmp(argv[puntero_parametro],"--snap-no-change-machine")
+            ) {
+                sna_setting_no_change_machine.v=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--nex-no-automount-esxdos")) {
                 automount_esxdos_nex.v=0;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zsf-uncompressed")) {
+                zsf_force_uncompressed=1;
             }
 
             else if (!strcmp(argv[puntero_parametro],"--zsf-save-rom")) {
                 zsf_snap_save_rom.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--no-close-after-smartload")) {
-				no_close_menu_after_smartload.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--no-close-after-smartload")) {
+                no_close_menu_after_smartload.v=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--z88-not-sync-clock-snap")) {
                 sync_clock_to_z88.v=0;
             }
 
+            else if (!strcmp(argv[puntero_parametro],"--snapram-enable")) {
+                command_line_snapshots_in_ram.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--snapram-automatic")) {
+                snapshot_in_ram_timer_enabled.v=1;
+            }
+
             else if (!strcmp(argv[puntero_parametro],"--snapram-interval")) {
                 siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor<1 || valor>99) {
-					printf ("Invalid snapram-interval value. Must be between 1 and 99\n");
-					exit(1);
-				}
-				snapshot_in_ram_interval_seconds=valor;
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<1 || valor>99) {
+                    debug_printf (VERBOSE_ERR,"Invalid snapram-interval value. Must be between 1 and 99\n");
+
+                }
+                else snapshot_in_ram_interval_seconds=valor;
             }
 
             else if (!strcmp(argv[puntero_parametro],"--snapram-max")) {
                 siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor<1 || valor>MAX_TOTAL_SNAPSHOTS_IN_RAM) {
-					printf ("Invalid snapram-max value. Must be between 1 and %d\n",MAX_TOTAL_SNAPSHOTS_IN_RAM);
-					exit(1);
-				}
-				snapshots_in_ram_maximum=valor;
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<1 || valor>MAX_TOTAL_SNAPSHOTS_IN_RAM) {
+                    debug_printf (VERBOSE_ERR,"Invalid snapram-max value. Must be between 1 and %d\n",MAX_TOTAL_SNAPSHOTS_IN_RAM);
+
+                }
+                else snapshots_in_ram_maximum=valor;
             }
 
             else if (!strcmp(argv[puntero_parametro],"--snapram-rewind-timeout")) {
                 siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor<1 || valor>99) {
-					printf ("Invalid snapram-rewind-timeout value. Must be between 1 and 99\n");
-					exit(1);
-				}
-				snapshot_in_ram_enabled_timer_timeout=valor;
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<1 || valor>99) {
+                    debug_printf (VERBOSE_ERR,"Invalid snapram-rewind-timeout value. Must be between 1 and 99\n");
+
+                }
+                else snapshot_in_ram_enabled_timer_timeout=valor;
             }
 
 
 
-			else if (!strcmp(argv[puntero_parametro],"--loadbinary")) {
-				siguiente_parametro_argumento();
-				command_line_load_binary_file=argv[puntero_parametro];
-				siguiente_parametro_argumento();
-				command_line_load_binary_address=parse_string_to_number(argv[puntero_parametro]);
-				siguiente_parametro_argumento();
-				command_line_load_binary_length=parse_string_to_number(argv[puntero_parametro]);
+            else if (!strcmp(argv[puntero_parametro],"--loadbinary")) {
+                siguiente_parametro_argumento();
+                command_line_load_binary_file=argv[puntero_parametro];
+                siguiente_parametro_argumento();
+                command_line_load_binary_address=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                command_line_load_binary_length=parse_string_to_number(argv[puntero_parametro]);
 
-				//Y decimos cual ha sido ultimo archivo binario cargado
-				sprintf(binary_file_load,"%s",command_line_load_binary_file);
-			}
+                //Y decimos cual ha sido ultimo archivo binario cargado
+                sprintf(binary_file_load,"%s",command_line_load_binary_file);
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--disablearttext")) {
-				texto_artistico.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disablearttext")) {
+                texto_artistico.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--curses-ext-utf")) {
-				use_scrcursesw.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--curses-ext-utf")) {
+                use_scrcursesw.v=1;
+            }
 
 
                         else if (!strcmp(argv[puntero_parametro],"--arttextthresold")) {
                                 siguiente_parametro_argumento();
                                 int valor=atoi(argv[puntero_parametro]);
                                 if (valor<1 || valor>16) {
-                                        printf ("Invalid threshold value\n");
-                                        exit(1);
+                                        debug_printf (VERBOSE_ERR,"Invalid threshold value\n");
+
                                 }
-                                umbral_arttext=valor;
+                                else umbral_arttext=valor;
                         }
 
 
-		        else if (!strcmp(argv[puntero_parametro],"--disableprintchartrap")) {
-				command_line_chardetect_printchar_enabled=0;
-			}
+                else if (!strcmp(argv[puntero_parametro],"--disableprintchartrap")) {
+                command_line_chardetect_printchar_enabled=0;
+            }
 
                         else if (!strcmp(argv[puntero_parametro],"--enableprintchartrap")) {
-				command_line_chardetect_printchar_enabled=1;
+                command_line_chardetect_printchar_enabled=1;
                         }
 
                 else if (!strcmp(argv[puntero_parametro],"--chardetectignorenl")) {
@@ -4168,11 +5333,11 @@ int parse_cmdline_options(int desde_commandline) {
                 }
 
 
-		        else if (!strcmp(argv[puntero_parametro],"--autoredrawstdout")) {
-				stdout_simpletext_automatic_redraw.v=1;
-			}
+                else if (!strcmp(argv[puntero_parametro],"--autoredrawstdout")) {
+                stdout_simpletext_automatic_redraw.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--textfps")) {
+            else if (!strcmp(argv[puntero_parametro],"--textfps")) {
                                 siguiente_parametro_argumento();
                                 int valor=atoi(argv[puntero_parametro]);
                                 scr_set_fps_stdout_simpletext(valor);
@@ -4180,9 +5345,9 @@ int parse_cmdline_options(int desde_commandline) {
 
 
 
-			else if (!strcmp(argv[puntero_parametro],"--sendansi")) {
+            else if (!strcmp(argv[puntero_parametro],"--sendansi")) {
                                 screen_text_accept_ansi=1;
-			}
+            }
 
                         else if (!strcmp(argv[puntero_parametro],"--linewidth")) {
                                 siguiente_parametro_argumento();
@@ -4191,20 +5356,20 @@ int parse_cmdline_options(int desde_commandline) {
                         }
 
 
-		        else if (!strcmp(argv[puntero_parametro],"--automaticdetectchar")) {
-				trap_char_detection_routine_number=TRAP_CHAR_DETECTION_ROUTINE_AUTOMATIC;
-				chardetect_detect_char_enabled.v=1;
-			}
+                else if (!strcmp(argv[puntero_parametro],"--automaticdetectchar")) {
+                trap_char_detection_routine_number=TRAP_CHAR_DETECTION_ROUTINE_AUTOMATIC;
+                chardetect_detect_char_enabled.v=1;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--secondtrapchar")) {
-				siguiente_parametro_argumento();
-				int valor=atoi(argv[puntero_parametro]);
-                               	chardetect_second_trap_char_dir=valor;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--secondtrapchar")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                                   chardetect_second_trap_char_dir=valor;
+            }
 
                         else if (!strcmp(argv[puntero_parametro],"--thirdtrapchar")) {
-				siguiente_parametro_argumento();
+                siguiente_parametro_argumento();
                                 int valor=atoi(argv[puntero_parametro]);
                                 chardetect_third_trap_char_dir=valor;
                         }
@@ -4212,58 +5377,58 @@ int parse_cmdline_options(int desde_commandline) {
             else if (!strcmp(argv[puntero_parametro],"--chartrapfilter")) {
                 siguiente_parametro_argumento();
                 if (charfilter_set(argv[puntero_parametro])) {
-                    printf ("Unknown char filter\n");
-                    exit(1);
+                    debug_printf (VERBOSE_ERR,"Unknown char filter");
+
                 }
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--linewidthwaitspace")) {
-				chardetect_line_width_wait_space.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--linewidthwaitspace")) {
+                chardetect_line_width_wait_space.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--linewidthnowaitspace")) {
-				chardetect_line_width_wait_space.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--linewidthnowaitspace")) {
+                chardetect_line_width_wait_space.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--linewidthwaitdot")) {
-				chardetect_line_width_wait_dot.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--linewidthwaitdot")) {
+                chardetect_line_width_wait_dot.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--linewidthnowaitdot")) {
-				chardetect_line_width_wait_dot.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--linewidthnowaitdot")) {
+                chardetect_line_width_wait_dot.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--secondtrapsum32")) {
-				chardetect_second_trap_sum32.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--secondtrapsum32")) {
+                chardetect_second_trap_sum32.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--textspeechprogram")) {
-				siguiente_parametro_argumento();
-                                textspeech_filter_program=argv[puntero_parametro];
-				//Si es ruta relativa, poner ruta absoluta
-				if (!si_ruta_absoluta(textspeech_filter_program)) {
-					//printf ("es ruta relativa\n");
-					//lo metemos en el buffer de texto del menu usado para esto
-					//TODO: quiza hacer esto con convert_relative_to_absolute pero esa funcion es para directorios,
-					//no para directorios con archivo, por tanto quiza habria que hacer un paso intermedio separando
-					//directorio de archivo
-				        char directorio_actual[PATH_MAX];
-				        getcwd(directorio_actual,PATH_MAX);
+            else if (!strcmp(argv[puntero_parametro],"--textspeechprogram")) {
+                siguiente_parametro_argumento();
+                textspeech_filter_program=argv[puntero_parametro];
+                //Si es ruta relativa, poner ruta absoluta
+                if (!si_ruta_absoluta(textspeech_filter_program)) {
+                    //printf ("es ruta relativa\n");
+                    //lo metemos en el buffer de texto del menu usado para esto
+                    //TODO: quiza hacer esto con convert_relative_to_absolute pero esa funcion es para directorios,
+                    //no para directorios con archivo, por tanto quiza habria que hacer un paso intermedio separando
+                    //directorio de archivo
+                        char directorio_actual[PATH_MAX];
+                        getcwd(directorio_actual,PATH_MAX);
 
-					sprintf (menu_buffer_textspeech_filter_program,"%s/%s",directorio_actual,textspeech_filter_program);
-		                        textspeech_filter_program=menu_buffer_textspeech_filter_program;
+                    sprintf (menu_buffer_textspeech_filter_program,"%s/%s",directorio_actual,textspeech_filter_program);
+                                textspeech_filter_program=menu_buffer_textspeech_filter_program;
 
-					//printf ("ruta final: %s\n",textspeech_filter_program);
+                    //printf ("ruta final: %s\n",textspeech_filter_program);
 
-				}
+                }
 
-				//Validar para windows que no haya espacios en la ruta
-				textspeech_filter_program_check_spaces();
+                //Validar para windows que no haya espacios en la ruta
+                textspeech_filter_program_check_spaces();
 
-				//Y si es NULL es que han habido espacios, y salir del emulador
-				if (textspeech_filter_program==NULL) exit(1);
+                //Y si es NULL es que han habido espacios, y salir del emulador
+                //if (textspeech_filter_program==NULL) exit(1);
 
-			}
+            }
 
 
 
@@ -4287,132 +5452,133 @@ int parse_cmdline_options(int desde_commandline) {
                                         textspeech_stop_filter_program_check_spaces();
 
                                         //Y si es NULL es que han habido espacios, y salir del emulador
-                                        if (textspeech_stop_filter_program==NULL) exit(1);
+                                        //if (textspeech_stop_filter_program==NULL) exit(1);
                                 }
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--textspeechwait")) {
-				textspeech_filter_program_wait.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--textspeechwait")) {
+                textspeech_filter_program_wait.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--textspeechmenu")) {
+            else if (!strcmp(argv[puntero_parametro],"--textspeechmenu")) {
                                 textspeech_also_send_menu.v=1;
-			}
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--textspeechgetstdout")) {
                 textspeech_get_stdout.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--textspeechtimeout")) {
+            else if (!strcmp(argv[puntero_parametro],"--textspeechtimeout")) {
                                 siguiente_parametro_argumento();
-				textspeech_timeout_no_enter=parse_string_to_number(argv[puntero_parametro]);
-				if (textspeech_timeout_no_enter<0 || textspeech_timeout_no_enter>99) {
-					printf ("Invalid value for textspeechtimeout\n");
-					exit(1);
-				}
-			}
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<0 || valor>99) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for textspeechtimeout");
+
+                }
+                else textspeech_timeout_no_enter=valor;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--accessibility-gui-sounds")) {
                 accessibility_enable_gui_sounds.v=1;
             }
 
-		else if (!strcmp(argv[puntero_parametro],"--textimageprogram")) {
-				siguiente_parametro_argumento();
+        else if (!strcmp(argv[puntero_parametro],"--textimageprogram")) {
+                siguiente_parametro_argumento();
                 strcpy(textimage_filter_program,argv[puntero_parametro]);
 
-				//Si es ruta relativa, poner ruta absoluta
-				if (!si_ruta_absoluta(textimage_filter_program)) {
-					//printf ("es ruta relativa\n");
-					//lo metemos en el buffer de texto del menu usado para esto
-					//TODO: quiza hacer esto con convert_relative_to_absolute pero esa funcion es para directorios,
-					//no para directorios con archivo, por tanto quiza habria que hacer un paso intermedio separando
-					//directorio de archivo
+                //Si es ruta relativa, poner ruta absoluta
+                if (!si_ruta_absoluta(textimage_filter_program)) {
+                    //printf ("es ruta relativa\n");
+                    //lo metemos en el buffer de texto del menu usado para esto
+                    //TODO: quiza hacer esto con convert_relative_to_absolute pero esa funcion es para directorios,
+                    //no para directorios con archivo, por tanto quiza habria que hacer un paso intermedio separando
+                    //directorio de archivo
                     char directorio_actual[PATH_MAX];
                     getcwd(directorio_actual,PATH_MAX);
 
                     char ruta_temp[PATH_MAX];
 
-					sprintf (ruta_temp,"%s/%s",directorio_actual,textimage_filter_program);
+                    sprintf (ruta_temp,"%s/%s",directorio_actual,textimage_filter_program);
                     strcpy(textimage_filter_program,ruta_temp);
 
-					//printf ("ruta final: %s\n",textimage_filter_program);
+                    //printf ("ruta final: %s\n",textimage_filter_program);
 
-				}
-
-				//Validar para windows que no haya espacios en la ruta
-				if (textimage_filter_program_check_spaces()) {
-
-				    //han habido espacios, y salir del emulador
-				    exit(1);
                 }
 
-			}
+                //Validar para windows que no haya espacios en la ruta
+                if (textimage_filter_program_check_spaces()) {
 
+                    //han habido espacios, y salir del emulador
+                    //exit(1);
+                }
 
-
-			else if (!strcmp(argv[puntero_parametro],"--textimage-method-location")) {
-                siguiente_parametro_argumento();
-                if (textadv_location_set_method_by_string(argv[puntero_parametro])) {
-                    printf ("Invalid method for detecting location text\n");
-					exit(1);
-				}
             }
 
 
 
-			else if (!strcmp(argv[puntero_parametro],"--textimage-min-time-between-images")) {
+            else if (!strcmp(argv[puntero_parametro],"--textimage-method-location")) {
                 siguiente_parametro_argumento();
-				textadv_location_desc_last_image_generated_min=parse_string_to_number(argv[puntero_parametro]);
-			}
+                if (textadv_location_set_method_by_string(argv[puntero_parametro])) {
+                    debug_printf (VERBOSE_ERR,"Invalid method for detecting location text\n");
 
-			else if (!strcmp(argv[puntero_parametro],"--textimage-min-no-char-time")) {
-                siguiente_parametro_argumento();
-				max_textadv_location_desc_no_char_counter=parse_string_to_number(argv[puntero_parametro]);
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--textimage-min-after-room-time")) {
-                siguiente_parametro_argumento();
-				max_textadv_location_desc_counter=parse_string_to_number(argv[puntero_parametro]);
-			}
+                }
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--textimage-total-count")) {
+
+            else if (!strcmp(argv[puntero_parametro],"--textimage-min-time-between-images")) {
                 siguiente_parametro_argumento();
-				textadv_location_total_conversions=parse_string_to_number(argv[puntero_parametro]);
-			}
+                textadv_location_desc_last_image_generated_min=parse_string_to_number(argv[puntero_parametro]);
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--textimage-min-no-char-time")) {
+                siguiente_parametro_argumento();
+                max_textadv_location_desc_no_char_counter=parse_string_to_number(argv[puntero_parametro]);
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--textimage-min-after-room-time")) {
+                siguiente_parametro_argumento();
+                max_textadv_location_desc_counter=parse_string_to_number(argv[puntero_parametro]);
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--textimage-total-count")) {
+                siguiente_parametro_argumento();
+                textadv_location_total_conversions=parse_string_to_number(argv[puntero_parametro]);
+            }
 
 
 
                         else if (!strcmp(argv[puntero_parametro],"--tool-sox-path")) {
                                 siguiente_parametro_argumento();
                                 sprintf (external_tool_sox,"%s",argv[puntero_parametro]);
-			}
+            }
 
-						//deprecated
+                        //deprecated
                         else if (!strcmp(argv[puntero_parametro],"--tool-unzip-path")) {
                                 siguiente_parametro_argumento();
                                 //sprintf (external_tool_unzip,"%s",argv[puntero_parametro]);
-			}
+            }
 
                         else if (!strcmp(argv[puntero_parametro],"--tool-gunzip-path")) {
                                 siguiente_parametro_argumento();
                                 sprintf (external_tool_gunzip,"%s",argv[puntero_parametro]);
-			}
+            }
 
                         else if (!strcmp(argv[puntero_parametro],"--tool-tar-path")) {
                                 siguiente_parametro_argumento();
                                 sprintf (external_tool_tar,"%s",argv[puntero_parametro]);
-			}
+            }
 
                         else if (!strcmp(argv[puntero_parametro],"--tool-unrar-path")) {
                                 siguiente_parametro_argumento();
                                 sprintf (external_tool_unrar,"%s",argv[puntero_parametro]);
-			}
+            }
 
 
 
-			else if (!strcmp(argv[puntero_parametro],"--dsk-file")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--dsk-file")) {
+                siguiente_parametro_argumento();
 
                                 //Si es ruta relativa, poner ruta absoluta
                                 if (!si_ruta_absoluta(argv[puntero_parametro])) {
@@ -4428,11 +5594,11 @@ int parse_cmdline_options(int desde_commandline) {
 
                                 }
 
-				else {
-					sprintf (dskplusthree_file_name,"%s",argv[puntero_parametro]);
-				}
+                else {
+                    sprintf (dskplusthree_file_name,"%s",argv[puntero_parametro]);
+                }
 
-			}
+            }
 
 
                         else if (!strcmp(argv[puntero_parametro],"--enable-dsk")) {
@@ -4441,32 +5607,60 @@ int parse_cmdline_options(int desde_commandline) {
 
 
                         else if (!strcmp(argv[puntero_parametro],"--dsk-write-protection")) {
-				dskplusthree_write_protection.v=1;
-			}
+                dskplusthree_write_protection.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--pd765-silent-write-protection")) {
-				pd765_silent_write_protection.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--pd765-silent-write-protection")) {
+                pd765_silent_write_protection.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--dsk-no-persistent-writes")) {
-				dskplusthree_persistent_writes.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--dsk-no-persistent-writes")) {
+                dskplusthree_persistent_writes.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--dsk-persistent-writes")) {
-				dskplusthree_persistent_writes.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--dsk-persistent-writes")) {
+                dskplusthree_persistent_writes.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--dsk-pcw-no-boot-reinsert-previous-dsk")) {
-				pcw_boot_reinsert_previous_dsk.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--dsk-pcw-no-boot-reinsert-previous-dsk")) {
+                pcw_boot_reinsert_previous_dsk.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--dsk-pcw-no-failback-cpm-when-no-boot")) {
-				pcw_failback_cpm_when_no_boot.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--dsk-pcw-no-failback-cpm-when-no-boot")) {
+                pcw_failback_cpm_when_no_boot.v=0;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--hilow-file")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--ql-rom-c000-file")) {
+
+                siguiente_parametro_argumento();
+
+                //Si es ruta relativa, poner ruta absoluta
+                if (!si_ruta_absoluta(argv[puntero_parametro])) {
+                        //printf ("es ruta relativa\n");
+
+                        //TODO: quiza hacer esto con convert_relative_to_absolute pero esa funcion es para directorios,
+                        //no para directorios con archivo, por tanto quiza habria que hacer un paso intermedio separando
+                        //directorio de archivo
+                        char directorio_actual[PATH_MAX];
+                        getcwd(directorio_actual,PATH_MAX);
+
+                        sprintf (ql_extra_rom_c000,"%s/%s",directorio_actual,argv[puntero_parametro]);
+
+                }
+
+                else {
+                    sprintf (ql_extra_rom_c000,"%s",argv[puntero_parametro]);
+                }
+
+                //habilitamos esa rom
+                ql_extra_rom_c000_enabled=1;
+
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--hilow-file")) {
+                siguiente_parametro_argumento();
 
                 //Si es ruta relativa, poner ruta absoluta
                 if (!si_ruta_absoluta(argv[puntero_parametro])) {
@@ -4482,23 +5676,23 @@ int parse_cmdline_options(int desde_commandline) {
 
                 }
 
-				else {
-					sprintf (hilow_file_name,"%s",argv[puntero_parametro]);
-				}
+                else {
+                    sprintf (hilow_file_name,"%s",argv[puntero_parametro]);
+                }
 
-			}
+            }
 
                         else if (!strcmp(argv[puntero_parametro],"--enable-hilow")) {
                                 command_line_hilow.v=1;
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--hilow-write-protection")) {
-				hilow_write_protection.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--hilow-write-protection")) {
+                hilow_write_protection.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--hilow-no-persistent-writes")) {
-				hilow_persistent_writes.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--hilow-no-persistent-writes")) {
+                hilow_persistent_writes.v=0;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--z88-no-persistent-writes")) {
                 z88_eprom_or_flash_persistent_writes.v=0;
@@ -4506,6 +5700,10 @@ int parse_cmdline_options(int desde_commandline) {
 
             else if (!strcmp(argv[puntero_parametro],"--watch-show-decimal-results")) {
                 debug_watches_show_decimal.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--show-visualmem-text")) {
+                setting_mostrar_visualmem_grafico.v=0;
             }
 
             else if (!strcmp(argv[puntero_parametro],"--load-source-code")) {
@@ -4523,8 +5721,8 @@ int parse_cmdline_options(int desde_commandline) {
                     labels_load(argv[puntero_parametro]);
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--trd-file")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--trd-file")) {
+                siguiente_parametro_argumento();
 
                                 //Si es ruta relativa, poner ruta absoluta
                                 if (!si_ruta_absoluta(argv[puntero_parametro])) {
@@ -4540,11 +5738,11 @@ int parse_cmdline_options(int desde_commandline) {
 
                                 }
 
-				else {
-					sprintf (trd_file_name,"%s",argv[puntero_parametro]);
-				}
+                else {
+                    sprintf (trd_file_name,"%s",argv[puntero_parametro]);
+                }
 
-			}
+            }
 
 
                         else if (!strcmp(argv[puntero_parametro],"--enable-trd")) {
@@ -4553,78 +5751,85 @@ int parse_cmdline_options(int desde_commandline) {
 
 
                         else if (!strcmp(argv[puntero_parametro],"--trd-write-protection")) {
-				trd_write_protection.v=1;
-			}
+                trd_write_protection.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--trd-no-persistent-writes")) {
-				trd_persistent_writes.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--trd-no-persistent-writes")) {
+                trd_persistent_writes.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zx-mdv-file")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--zx-mdv-file")) {
+                siguiente_parametro_argumento();
 
                 int microdrive_seleccionado=parse_string_to_number(argv[puntero_parametro]);
-
-                //aunque la emulacion soporta hasta 8, por el menu solo soportamos hasta 4
-                if (microdrive_seleccionado<1 || microdrive_seleccionado>MAX_MICRODRIVES_BY_CONFIG) {
-					printf ("Invalid microdrive number\n");
-					exit(1);
-				}
-
-                microdrive_seleccionado--;
 
                 siguiente_parametro_argumento();
 
-                //Si es ruta relativa, poner ruta absoluta
-                if (!si_ruta_absoluta(argv[puntero_parametro])) {
-                        //printf ("es ruta relativa\n");
-
-                        //TODO: quiza hacer esto con convert_relative_to_absolute pero esa funcion es para directorios,
-                        //no para directorios con archivo, por tanto quiza habria que hacer un paso intermedio separando
-                        //directorio de archivo
-                        char directorio_actual[PATH_MAX];
-                        getcwd(directorio_actual,PATH_MAX);
-
-                        sprintf (microdrive_status[microdrive_seleccionado].microdrive_file_name,"%s/%s",directorio_actual,argv[puntero_parametro]);
+                //aunque la emulacion soporta hasta 8, por el menu solo soportamos hasta 4
+                if (microdrive_seleccionado<1 || microdrive_seleccionado>MAX_MICRODRIVES_BY_CONFIG) {
+                    debug_printf (VERBOSE_ERR,"Invalid microdrive number\n");
 
                 }
 
-				else {
-					sprintf (microdrive_status[microdrive_seleccionado].microdrive_file_name,"%s",argv[puntero_parametro]);
-				}
+                else {
 
-			}
+                    microdrive_seleccionado--;
+
+                    //Si es ruta relativa, poner ruta absoluta
+                    if (!si_ruta_absoluta(argv[puntero_parametro])) {
+                            //printf ("es ruta relativa\n");
+
+                            //TODO: quiza hacer esto con convert_relative_to_absolute pero esa funcion es para directorios,
+                            //no para directorios con archivo, por tanto quiza habria que hacer un paso intermedio separando
+                            //directorio de archivo
+                            char directorio_actual[PATH_MAX];
+                            getcwd(directorio_actual,PATH_MAX);
+
+                            sprintf (microdrive_status[microdrive_seleccionado].microdrive_file_name,"%s/%s",directorio_actual,argv[puntero_parametro]);
+
+                    }
+
+                    else {
+                        sprintf (microdrive_status[microdrive_seleccionado].microdrive_file_name,"%s",argv[puntero_parametro]);
+                    }
+                }
+
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--zx-mdv-enable")) {
-				siguiente_parametro_argumento();
+                siguiente_parametro_argumento();
 
                 int microdrive_seleccionado=parse_string_to_number(argv[puntero_parametro]);
 
                 //aunque la emulacion soporta hasta 8, por el menu solo soportamos hasta 4
                 if (microdrive_seleccionado<1 || microdrive_seleccionado>MAX_MICRODRIVES_BY_CONFIG) {
-					printf ("Invalid microdrive number\n");
-					exit(1);
-				}
+                    debug_printf (VERBOSE_ERR,"Invalid microdrive number\n");
+                }
 
-                microdrive_seleccionado--;
+                else {
 
-                microdrive_insert(microdrive_seleccionado);
+                    microdrive_seleccionado--;
+
+                    microdrive_insert(microdrive_seleccionado);
+                }
             }
 
             else if (!strcmp(argv[puntero_parametro],"--zx-mdv-no-persistent-writes")) {
-				siguiente_parametro_argumento();
+                siguiente_parametro_argumento();
 
                 int microdrive_seleccionado=parse_string_to_number(argv[puntero_parametro]);
 
                 //aunque la emulacion soporta hasta 8, por el menu solo soportamos hasta 4
                 if (microdrive_seleccionado<1 || microdrive_seleccionado>MAX_MICRODRIVES_BY_CONFIG) {
-					printf ("Invalid microdrive number\n");
-					exit(1);
-				}
+                    debug_printf (VERBOSE_ERR,"Invalid microdrive number\n");
 
-                microdrive_seleccionado--;
+                }
+                else {
 
-                microdrive_status[microdrive_seleccionado].microdrive_persistent_writes=0;
+                    microdrive_seleccionado--;
+
+                    microdrive_status[microdrive_seleccionado].microdrive_persistent_writes=0;
+                }
             }
 
 
@@ -4633,8 +5838,8 @@ int parse_cmdline_options(int desde_commandline) {
                 command_line_if1.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--mmc-file")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--mmc-file")) {
+                siguiente_parametro_argumento();
 
                                 //Si es ruta relativa, poner ruta absoluta
                                 if (!si_ruta_absoluta(argv[puntero_parametro])) {
@@ -4650,14 +5855,14 @@ int parse_cmdline_options(int desde_commandline) {
 
                                 }
 
-				else {
-					sprintf (mmc_file_name[0],"%s",argv[puntero_parametro]);
-				}
+                else {
+                    sprintf (mmc_file_name[0],"%s",argv[puntero_parametro]);
+                }
 
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--mmc-file-2")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--mmc-file-2")) {
+                siguiente_parametro_argumento();
 
                                 //Si es ruta relativa, poner ruta absoluta
                                 if (!si_ruta_absoluta(argv[puntero_parametro])) {
@@ -4673,247 +5878,255 @@ int parse_cmdline_options(int desde_commandline) {
 
                                 }
 
-				else {
-					sprintf (mmc_file_name[1],"%s",argv[puntero_parametro]);
-				}
+                else {
+                    sprintf (mmc_file_name[1],"%s",argv[puntero_parametro]);
+                }
 
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--enable-mmc")) {
-				command_line_mmc.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enable-mmc")) {
+                command_line_mmc.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--enable-mmc-2")) {
-				command_line_mmc_2.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enable-mmc-2")) {
+                command_line_mmc_2.v=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--copy-file-to-mmc")) {
                 siguiente_parametro_argumento();
-				char *source;
+                char *source;
                 source=argv[puntero_parametro];
 
                 siguiente_parametro_argumento();
-				char *destination;
+                char *destination;
                 destination=argv[puntero_parametro];
 
                 if (util_copy_files_to_mmc_addlist(source,destination)) {
-                    exit(1);
+                    //error
                 }
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--mmc-write-protection")) {
-				mmc_write_protection[0].v=1;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--mmc-write-protection-2")) {
-				mmc_write_protection[1].v=1;
-			}
-
-            else if (!strcmp(argv[puntero_parametro],"--sd-enable-sdhc-addressing")) {
-				mmc_sdhc_addressing[0].v=1;
-			}
-
-            else if (!strcmp(argv[puntero_parametro],"--sd-enable-sdhc-addressing-2")) {
-				mmc_sdhc_addressing[1].v=1;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--mmc-no-persistent-writes")) {
-				mmc_persistent_writes[0].v=0;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--mmc-no-persistent-writes-2")) {
-				mmc_persistent_writes[1].v=0;
-			}
-
-
-			else if (!strcmp(argv[puntero_parametro],"--enable-divmmc-ports")) {
-				command_line_divmmc_ports.v=1;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--enable-divmmc-paging")) {
-				command_line_divmmc_paging.v=1;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--enable-divmmc")) {
-				command_line_divmmc.v=1;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--divmmc-rom")) {
-				siguiente_parametro_argumento();
-				strcpy(divmmc_rom_name,argv[puntero_parametro]);
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--enable-zxmmc")) {
-				command_line_zxmmc.v=1;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--enable-8bit-ide")) {
-                                command_line_8bitide.v=1;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--enable-zxmmcplus")) {
-				command_line_zxmmcplus.v=1;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--zxmmcplus-flash-file")) {
-                siguiente_parametro_argumento();
-				sprintf(zxmmcplus_flash_name,"%s",argv[puntero_parametro]);
+            else if (!strcmp(argv[puntero_parametro],"--mmc-write-protection")) {
+                mmc_write_protection[0].v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxmmcplus-flash-write-protection")) {
-				zxmmcplus_flashrom_write_protect.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--mmc-write-protection-2")) {
+                mmc_write_protection[1].v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxmmcplus-flash-persistent-writes")) {
-				zxmmcplus_flashrom_persistent_writes.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--sd-enable-sdhc-addressing")) {
+                mmc_sdhc_addressing[0].v=1;
+            }
 
+            else if (!strcmp(argv[puntero_parametro],"--sd-enable-sdhc-addressing-2")) {
+                mmc_sdhc_addressing[1].v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--diviface-ram-size")) {
-				siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
+            else if (!strcmp(argv[puntero_parametro],"--mmc-no-persistent-writes")) {
+                mmc_persistent_writes[0].v=0;
+            }
 
-				/*
-				int diviface_current_ram_memory_bits=4; //Por defecto 128 KB
-
-				-using 2 bits: 32 kb
-				-using 3 bits: 64 kb
-				-using 4 bits: 128 kb (default)
-				-using 5 bits: 256 kb
-				-using 6 bits: 512 kb
-				*/
-
-				switch (valor) {
-					case 32:
-						diviface_current_ram_memory_bits=2;
-					break;
-
-					case 64:
-						diviface_current_ram_memory_bits=3;
-					break;
-
-					case 128:
-						diviface_current_ram_memory_bits=4;
-					break;
-
-					case 256:
-						diviface_current_ram_memory_bits=5;
-					break;
-
-					case 512:
-						diviface_current_ram_memory_bits=6;
-					break;
-
-					default:
-						printf ("Invalid value for diviface ram size\n");
-						exit(1);
-					break;
-				}
-
-			}
+            else if (!strcmp(argv[puntero_parametro],"--mmc-no-persistent-writes-2")) {
+                mmc_persistent_writes[1].v=0;
+            }
 
 
+            else if (!strcmp(argv[puntero_parametro],"--enable-divmmc-ports")) {
+                command_line_divmmc_ports.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--enable-zxpand")) {
-				command_line_zxpand.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enable-divmmc-paging")) {
+                command_line_divmmc_paging.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zxpand-root-dir")) {
-      	siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--enable-divmmc")) {
+                command_line_divmmc.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--divmmc-rom")) {
+                siguiente_parametro_argumento();
+                strcpy(divmmc_rom_name,argv[puntero_parametro]);
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--enable-zxmmc")) {
+                command_line_zxmmc.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--enable-8bit-ide")) {
+                                command_line_8bitide.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--enable-zxmmcplus")) {
+                command_line_zxmmcplus.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxmmcplus-flash-file")) {
+                siguiente_parametro_argumento();
+                sprintf(zxmmcplus_flash_name,"%s",argv[puntero_parametro]);
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxmmcplus-flash-write-protection")) {
+                zxmmcplus_flashrom_write_protect.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxmmcplus-flash-persistent-writes")) {
+                zxmmcplus_flashrom_persistent_writes.v=1;
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--diviface-ram-size")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+
+                /*
+                int diviface_current_ram_memory_bits=4; //Por defecto 128 KB
+
+                -using 2 bits: 32 kb
+                -using 3 bits: 64 kb
+                -using 4 bits: 128 kb (default)
+                -using 5 bits: 256 kb
+                -using 6 bits: 512 kb
+                */
+
+                switch (valor) {
+                    case 32:
+                        diviface_current_ram_memory_bits=2;
+                    break;
+
+                    case 64:
+                        diviface_current_ram_memory_bits=3;
+                    break;
+
+                    case 128:
+                        diviface_current_ram_memory_bits=4;
+                    break;
+
+                    case 256:
+                        diviface_current_ram_memory_bits=5;
+                    break;
+
+                    case 512:
+                        diviface_current_ram_memory_bits=6;
+                    break;
+
+                    default:
+                        debug_printf (VERBOSE_ERR,"Invalid value for diviface ram size\n");
+                    break;
+                }
+
+            }
+
+
+
+            else if (!strcmp(argv[puntero_parametro],"--enable-zxpand")) {
+                command_line_zxpand.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zxpand-root-dir")) {
+          siguiente_parametro_argumento();
 
         //Si es ruta relativa, poner ruta absoluta
         if (!si_ruta_absoluta(argv[puntero_parametro])) {
-        	//printf ("es ruta relativa\n");
-					convert_relative_to_absolute(argv[puntero_parametro],zxpand_root_dir);
+            //printf ("es ruta relativa\n");
+                    convert_relative_to_absolute(argv[puntero_parametro],zxpand_root_dir);
         }
 
-				else {
+                else {
           sprintf (zxpand_root_dir,"%s",argv[puntero_parametro]);
-				}
-			}
+                }
+            }
 
 
 
-			else if (!strcmp(argv[puntero_parametro],"--enable-esxdos-handler")) {
-			  command_line_esxdos_handler.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enable-esxdos-handler")) {
+              command_line_esxdos_handler.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--esxdos-root-dir")) {
-			  siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--esxdos-root-dir")) {
+              siguiente_parametro_argumento();
 
-			  //Si es ruta relativa, poner ruta absoluta
-			  if (!si_ruta_absoluta(argv[puntero_parametro])) {
-			    //printf ("es ruta relativa\n");
-			    convert_relative_to_absolute(argv[puntero_parametro],esxdos_handler_root_dir);
-			  }
+              //Si es ruta relativa, poner ruta absoluta
+              if (!si_ruta_absoluta(argv[puntero_parametro])) {
+                //printf ("es ruta relativa\n");
+                convert_relative_to_absolute(argv[puntero_parametro],esxdos_handler_root_dir);
+              }
 
-			  else {
-			    sprintf (esxdos_handler_root_dir,"%s",argv[puntero_parametro]);
-			  }
-			}
+              else {
+                sprintf (esxdos_handler_root_dir,"%s",argv[puntero_parametro]);
+              }
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--esxdos-readonly")) {
                 esxdos_handler_readonly.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--esxdos-local-dir")) {
+            else if (!strcmp(argv[puntero_parametro],"--esxdos-local-dir")) {
                           siguiente_parametro_argumento();
 
-			  command_line_esxdos_local_dir_path=argv[puntero_parametro];
-			  command_line_esxdos_local_dir.v=1;
-			}
+              command_line_esxdos_local_dir_path=argv[puntero_parametro];
+              command_line_esxdos_local_dir.v=1;
+            }
 
-/*
-				"--enable-ql-mdv-flp        Enable QL Microdrive & Floppy emulation\n"
-				"--ql-mdv1-root-dir p       Set QL mdv1 root directory\n"
-				"--ql-mdv2-root-dir p       Set QL mdv2 root directory\n"
-				"--ql-flp1-root-dir p       Set QL flp1 root directory\n"
-				*/
-			else if (!strcmp(argv[puntero_parametro],"--enable-ql-mdv-flp")) {
-				ql_microdrive_floppy_emulation=1;
-			}
 
-			else if (!strcmp(argv[puntero_parametro],"--ql-mdv1-root-dir")) {
-			  siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--enable-ql-mdv-flp")) {
+                ql_microdrive_floppy_emulation=1;
+            }
 
-			  //Si es ruta relativa, poner ruta absoluta
-			  if (!si_ruta_absoluta(argv[puntero_parametro])) {
-			    //printf ("es ruta relativa\n");
-			    convert_relative_to_absolute(argv[puntero_parametro],ql_mdv1_root_dir);
-			  }
+            else if (!strcmp(argv[puntero_parametro],"--ql-mdv1-root-dir")) {
+              siguiente_parametro_argumento();
 
-			  else {
-			    sprintf (ql_mdv1_root_dir,"%s",argv[puntero_parametro]);
-				}
-			}
+              //Si es ruta relativa, poner ruta absoluta
+              if (!si_ruta_absoluta(argv[puntero_parametro])) {
+                //printf ("es ruta relativa\n");
+                convert_relative_to_absolute(argv[puntero_parametro],ql_mdv1_root_dir);
+              }
 
-			else if (!strcmp(argv[puntero_parametro],"--ql-mdv2-root-dir")) {
-			  siguiente_parametro_argumento();
+              else {
+                sprintf (ql_mdv1_root_dir,"%s",argv[puntero_parametro]);
+                }
+            }
 
-			  //Si es ruta relativa, poner ruta absoluta
-			  if (!si_ruta_absoluta(argv[puntero_parametro])) {
-			    //printf ("es ruta relativa\n");
-			    convert_relative_to_absolute(argv[puntero_parametro],ql_mdv2_root_dir);
-			  }
+            else if (!strcmp(argv[puntero_parametro],"--ql-mdv2-root-dir")) {
+              siguiente_parametro_argumento();
 
-			  else {
-			    sprintf (ql_mdv2_root_dir,"%s",argv[puntero_parametro]);
-				}
-			}
+              //Si es ruta relativa, poner ruta absoluta
+              if (!si_ruta_absoluta(argv[puntero_parametro])) {
+                //printf ("es ruta relativa\n");
+                convert_relative_to_absolute(argv[puntero_parametro],ql_mdv2_root_dir);
+              }
 
-			else if (!strcmp(argv[puntero_parametro],"--ql-flp1-root-dir")) {
-			  siguiente_parametro_argumento();
+              else {
+                sprintf (ql_mdv2_root_dir,"%s",argv[puntero_parametro]);
+                }
+            }
 
-			  //Si es ruta relativa, poner ruta absoluta
-			  if (!si_ruta_absoluta(argv[puntero_parametro])) {
-			    //printf ("es ruta relativa\n");
-			    convert_relative_to_absolute(argv[puntero_parametro],ql_flp1_root_dir);
-			  }
+            else if (!strcmp(argv[puntero_parametro],"--ql-flp1-root-dir")) {
+              siguiente_parametro_argumento();
 
-			  else {
-			    sprintf (ql_flp1_root_dir,"%s",argv[puntero_parametro]);
-				}
-			}
+              //Si es ruta relativa, poner ruta absoluta
+              if (!si_ruta_absoluta(argv[puntero_parametro])) {
+                //printf ("es ruta relativa\n");
+                convert_relative_to_absolute(argv[puntero_parametro],ql_flp1_root_dir);
+              }
+
+              else {
+                sprintf (ql_flp1_root_dir,"%s",argv[puntero_parametro]);
+                }
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ql-flp2-root-dir")) {
+              siguiente_parametro_argumento();
+
+              //Si es ruta relativa, poner ruta absoluta
+              if (!si_ruta_absoluta(argv[puntero_parametro])) {
+                //printf ("es ruta relativa\n");
+                convert_relative_to_absolute(argv[puntero_parametro],ql_flp2_root_dir);
+              }
+
+              else {
+                sprintf (ql_flp2_root_dir,"%s",argv[puntero_parametro]);
+                }
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--ql-mdv1-enable")) {
                 ql_device_mdv1_enabled=1;
@@ -4925,6 +6138,10 @@ int parse_cmdline_options(int desde_commandline) {
 
             else if (!strcmp(argv[puntero_parametro],"--ql-flp1-enable")) {
                 ql_device_flp1_enabled=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ql-flp2-enable")) {
+                ql_device_flp2_enabled=1;
             }
 
             else if (!strcmp(argv[puntero_parametro],"--ql-mdv1-read-only")) {
@@ -4943,10 +6160,17 @@ int parse_cmdline_options(int desde_commandline) {
                 ql_device_flp1_readonly=1;
             }
 
+            else if (!strcmp(argv[puntero_parametro],"--ql-flp2-read-only")) {
+                ql_device_flp2_readonly=1;
+            }
+
             else if (!strcmp(argv[puntero_parametro],"--ql-flp1-dir-copied-mdv1")) {
                 ql_flp1_follow_mdv1.v=1;
             }
 
+            else if (!strcmp(argv[puntero_parametro],"--ql-assume-mdv1-no-dev")) {
+                ql_qdos_handler_assume_mdv1_if_no_device.v=1;
+            }
 
 
                         else if (!strcmp(argv[puntero_parametro],"--ide-file")) {
@@ -4977,32 +6201,46 @@ int parse_cmdline_options(int desde_commandline) {
                         }
 
                         else if (!strcmp(argv[puntero_parametro],"--ide-write-protection")) {
-				ide_write_protection.v=1;
-			}
+                ide_write_protection.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--ide-no-persistent-writes")) {
-				ide_persistent_writes.v=0;
-			}
+
+            else if (!strcmp(argv[puntero_parametro],"--ql-data-size-headerless-exe")) {
+                siguiente_parametro_argumento();
+
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<0 || valor>131072) {
+                    debug_printf(VERBOSE_ERR,"Invalid value for QL data size for headerless exe: %d",valor);
+                }
+                else {
+                    ql_task_default_data_size=valor;
+                }
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--ide-no-persistent-writes")) {
+                ide_persistent_writes.v=0;
+            }
 
                         else if (!strcmp(argv[puntero_parametro],"--enable-divide")) {
                                 command_line_divide.v=1;
                         }
 
-												else if (!strcmp(argv[puntero_parametro],"--enable-divide-ports")) {
-													command_line_divide_ports.v=1;
-												}
+                                                else if (!strcmp(argv[puntero_parametro],"--enable-divide-ports")) {
+                                                    command_line_divide_ports.v=1;
+                                                }
 
-												else if (!strcmp(argv[puntero_parametro],"--enable-divide-paging")) {
-													command_line_divide_paging.v=1;
-												}
+                                                else if (!strcmp(argv[puntero_parametro],"--enable-divide-paging")) {
+                                                    command_line_divide_paging.v=1;
+                                                }
 
-												else if (!strcmp(argv[puntero_parametro],"--divide-rom")) {
-													siguiente_parametro_argumento();
-													strcpy(divide_rom_name,argv[puntero_parametro]);
-												}
+                                                else if (!strcmp(argv[puntero_parametro],"--divide-rom")) {
+                                                    siguiente_parametro_argumento();
+                                                    strcpy(divide_rom_name,argv[puntero_parametro]);
+                                                }
 
 
-		        else if (!strcmp(argv[puntero_parametro],"--dandanator-rom")) {
+                else if (!strcmp(argv[puntero_parametro],"--dandanator-rom")) {
                                 siguiente_parametro_argumento();
 
                                 //Si es ruta relativa, poner ruta absoluta
@@ -5061,7 +6299,7 @@ int parse_cmdline_options(int desde_commandline) {
                                 command_line_kartusho.v=1;
                         }
 
-						else if (!strcmp(argv[puntero_parametro],"--ifrom-rom")) {
+                        else if (!strcmp(argv[puntero_parametro],"--ifrom-rom")) {
                                 siguiente_parametro_argumento();
 
                                 //Si es ruta relativa, poner ruta absoluta
@@ -5123,26 +6361,26 @@ int parse_cmdline_options(int desde_commandline) {
 
 
 #ifdef COMPILE_FBDEV
-                	else if (!strcmp(argv[puntero_parametro],"--no-use-ttyfbdev")) {
-				fbdev_no_uses_tty=1;
-			}
+                    else if (!strcmp(argv[puntero_parametro],"--no-use-ttyfbdev")) {
+                fbdev_no_uses_tty=1;
+            }
 
-                	else if (!strcmp(argv[puntero_parametro],"--no-use-ttyrawfbdev")) {
-				fbdev_no_uses_ttyraw=1;
-			}
+                    else if (!strcmp(argv[puntero_parametro],"--no-use-ttyrawfbdev")) {
+                fbdev_no_uses_ttyraw=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--use-all-res-fbdev")) {
+            else if (!strcmp(argv[puntero_parametro],"--use-all-res-fbdev")) {
                                 fbdev_use_all_virtual_res=1;
-			}
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--fbdev-double-buffer")) {
                     fbdev_double_buffer_enabled.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--decimal-full-scale-fbdev")) {
-				ventana_fullscreen=1;
+            else if (!strcmp(argv[puntero_parametro],"--decimal-full-scale-fbdev")) {
+                change_variable_ventana_fullscreen(1);
                                 fbdev_decimal_full_scale_fbdev=1;
-			}
+            }
 
 #ifdef EMULATE_RASPBERRY
 
@@ -5150,24 +6388,24 @@ int parse_cmdline_options(int desde_commandline) {
                 fbdev_no_res_change.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--fbdev-margin-height")) {
-				siguiente_parametro_argumento();
-				int valor=atoi(argv[puntero_parametro]);
-				if (valor<0) {
-					printf ("Invalid margin height value\n");
-					exit(1);
-				}
-				fbdev_margin_height=valor;
-			}
-			else if (!strcmp(argv[puntero_parametro],"--fbdev-margin-width")) {
-				siguiente_parametro_argumento();
-				int valor=atoi(argv[puntero_parametro]);
-				if (valor<0) {
-					printf ("Invalid margin width value\n");
-					exit(1);
-				}
-				fbdev_margin_width=valor;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--fbdev-margin-height")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<0) {
+                    debug_printf (VERBOSE_ERR,"Invalid margin height value\n");
+
+                }
+                else fbdev_margin_height=valor;
+            }
+            else if (!strcmp(argv[puntero_parametro],"--fbdev-margin-width")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<0) {
+                    debug_printf (VERBOSE_ERR,"Invalid margin width value\n");
+
+                }
+                else fbdev_margin_width=valor;
+            }
 #endif
 
 
@@ -5180,31 +6418,31 @@ int parse_cmdline_options(int desde_commandline) {
 
 
 
-			else if (!strcmp(argv[puntero_parametro],"--nosplash")) {
+            else if (!strcmp(argv[puntero_parametro],"--nosplash")) {
                                 screen_show_splash_texts.v=0;
-			}
+            }
 
-			//Por defecto esta activo. Se mantiene solo por compatibilidad
-			else if (!strcmp(argv[puntero_parametro],"--cpu-usage")) {
-				screen_show_cpu_usage.v=1;
-			}
+            //Por defecto esta activo. Se mantiene solo por compatibilidad
+            else if (!strcmp(argv[puntero_parametro],"--cpu-usage")) {
+                screen_show_cpu_usage.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--no-cpu-usage")) {
-				screen_show_cpu_usage.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--no-cpu-usage")) {
+                screen_show_cpu_usage.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--no-cpu-temp")) {
-				screen_show_cpu_temp.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--no-cpu-temp")) {
+                screen_show_cpu_temp.v=0;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--no-fps")) {
-				screen_show_fps.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--no-fps")) {
+                screen_show_fps.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--nowelcomemessage")) {
+            else if (!strcmp(argv[puntero_parametro],"--nowelcomemessage")) {
                                 opcion_no_welcome_message.v=1;
-			}
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--fastwelcomemessage")) {
                 opcion_fast_welcome_message.v=1;
@@ -5218,37 +6456,37 @@ int parse_cmdline_options(int desde_commandline) {
                 xanniversary_logo.v=0;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--hide-menu-percentage-bar")) {
+            else if (!strcmp(argv[puntero_parametro],"--hide-menu-percentage-bar")) {
                                 menu_hide_vertical_percentaje_bar.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--hide-menu-minimize-button")) {
+            else if (!strcmp(argv[puntero_parametro],"--hide-menu-minimize-button")) {
                                 menu_hide_minimize_button.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--hide-menu-maximize-button")) {
+            else if (!strcmp(argv[puntero_parametro],"--hide-menu-maximize-button")) {
                                 menu_hide_maximize_button.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--show-menu-background-button")) {
+            else if (!strcmp(argv[puntero_parametro],"--show-menu-background-button")) {
                                 menu_hide_background_button_on_inactive.v=0;
-			}
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--no-change-frame-resize-zone")) {
                 menu_change_frame_when_resize_zone.v=0;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--hide-menu-submenu-indicator")) {
+            else if (!strcmp(argv[puntero_parametro],"--hide-menu-submenu-indicator")) {
                 menu_hide_submenu_indicator.v=1;
-			}
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--no-show-previous-submenus")) {
                 menu_show_submenus_tree.v=0;
             }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--language")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--language")) {
+                siguiente_parametro_argumento();
 
                 if (!strcasecmp(argv[puntero_parametro],"es")) {
                     gui_language=GUI_LANGUAGE_SPANISH;
@@ -5257,83 +6495,84 @@ int parse_cmdline_options(int desde_commandline) {
                     gui_language=GUI_LANGUAGE_CATALAN;
                 }
                 else {
-                    printf("Invalid language\n");
-                    exit(1);
+                    debug_printf(VERBOSE_ERR,"Invalid language");
+
                 }
-			}
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--online-download-path")) {
                 siguiente_parametro_argumento();
                 strcpy(online_download_path,argv[puntero_parametro]);
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--menu-mix-method")) {
-				siguiente_parametro_argumento();
-				int i;
-				int encontrado=0;
-				for (i=0;i<MAX_MENU_MIX_METHODS;i++) {
-					if (!strcasecmp(screen_menu_mix_methods_strings[i],argv[puntero_parametro])) {
-						screen_menu_mix_method=i;
-						encontrado=1;
-					}
-				}
+            else if (!strcmp(argv[puntero_parametro],"--menu-mix-method")) {
+                siguiente_parametro_argumento();
+                int i;
+                int encontrado=0;
+                for (i=0;i<MAX_MENU_MIX_METHODS;i++) {
+                    if (!strcasecmp(screen_menu_mix_methods_strings[i],argv[puntero_parametro])) {
+                        screen_menu_mix_method=i;
+                        encontrado=1;
+                    }
+                }
 
-				if (!encontrado) {
-						printf ("Invalid menu mix method\n");
-						exit (1);
-
-				}
-			}
+                if (!encontrado) {
+                        debug_printf (VERBOSE_ERR,"Invalid menu mix method\n");
 
 
-			else if (!strcmp(argv[puntero_parametro],"--menu-transparency-perc")) {
-
-			int valor;
-
-					siguiente_parametro_argumento();
-					valor=atoi(argv[puntero_parametro]);
-
-					if (valor<0 || valor>95) {
-						printf ("Invalid menu transparency value\n");
-						exit (1);
-					}
-
-        screen_menu_mix_transparency=valor;
-
-			}
+                }
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--menu-darken-when-open")) {
+            else if (!strcmp(argv[puntero_parametro],"--menu-transparency-perc")) {
+
+                int valor;
+
+                siguiente_parametro_argumento();
+                valor=atoi(argv[puntero_parametro]);
+
+                if (valor<0 || valor>95) {
+                    debug_printf (VERBOSE_ERR,"Invalid menu transparency value\n");
+
+
+                }
+
+                else screen_menu_mix_transparency=valor;
+
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--menu-darken-when-open")) {
                 //Lo desactivo. Esto da problemas con footer
                 //mantengo opcion por compatibilidad
-				//screen_menu_reduce_bright_machine.v=1;
-			}
+                //screen_menu_reduce_bright_machine.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--menu-bw-multitask")) {
-				screen_machine_bw_no_multitask.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--menu-bw-multitask")) {
+                screen_machine_bw_no_multitask.v=1;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--hide-menu-close-button")) {
+            else if (!strcmp(argv[puntero_parametro],"--hide-menu-close-button")) {
                                 menu_hide_close_button.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--hide-minimized-windows")) {
+            else if (!strcmp(argv[puntero_parametro],"--hide-minimized-windows")) {
                 zxvision_hide_minimized_windows.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--beyond-limits-windows")) {
+            else if (!strcmp(argv[puntero_parametro],"--beyond-limits-windows")) {
                 zxvision_allow_windows_beyond_limit.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--invert-menu-mouse-scroll")) {
+            else if (!strcmp(argv[puntero_parametro],"--invert-menu-mouse-scroll")) {
                                 menu_invert_mouse_scroll.v=1;
-			}
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--right-mouse-esc")) {
+            else if (!strcmp(argv[puntero_parametro],"--right-mouse-esc")) {
                 menu_mouse_right_send_esc.v=1;
-			}
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--zxvision-use-speccy-keys")) {
                 zxvision_setting_use_speccy_keys.v=1;
@@ -5351,184 +6590,286 @@ int parse_cmdline_options(int desde_commandline) {
                 setting_process_switcher_force_left_bottom.v=0;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--allow-background-windows")) {
+            else if (!strcmp(argv[puntero_parametro],"--emulated-display-win-fit-image")) {
+                setting_emulated_display_win_zoom_fit.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--emulated-display-win-no-proportion")) {
+                setting_emulated_display_win_zoom_fit_keep_proportion.v=0;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--emulated-display-win-autoresize")) {
+                setting_emulated_display_win_autoresize.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--process-switcher-no-one-row")) {
+                setting_process_switcher_only_one_row.v=0;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--allow-background-windows")) {
                                 menu_allow_background_windows=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--allow-background-windows-closed-menu")) {
+            else if (!strcmp(argv[puntero_parametro],"--allow-background-windows-closed-menu")) {
                                 always_force_overlay_visible_when_menu_closed=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--realvideo")) {
-				enable_rainbow();
-			}
+            else if (!strcmp(argv[puntero_parametro],"--realvideo")) {
+                enable_rainbow();
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--no-detect-realvideo")) {
-				autodetect_rainbow.v=0;
-			}
+            //Esto tiene sentido por ejemplo si tienes en archivo de config habilitado real video y quieres desactivarlo al lanzar, por consola, sin tener que editar la config
+            else if (!strcmp(argv[puntero_parametro],"--no-realvideo")) {
+                disable_rainbow();
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--tbblue-legacy-hicolor")) {
-				tbblue_store_scanlines.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--no-detect-realvideo")) {
+                autodetect_rainbow.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--tbblue-legacy-border")) {
-				tbblue_store_scanlines_border.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--tbblue-legacy-hicolor")) {
+                tbblue_store_scanlines.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--tbblue-no-sprite-optimization")) {
-				tbblue_disable_optimized_sprites.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--tbblue-legacy-border")) {
+                tbblue_store_scanlines_border.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--tbblue-no-sprite-optimization")) {
+                tbblue_disable_optimized_sprites.v=1;
+            }
 
 
-			/*else if (!strcmp(argv[puntero_parametro],"--tsconf-fast-render")) {
-				tsconf_si_render_spritetile_rapido.v=1;
-			}*/
+            /*else if (!strcmp(argv[puntero_parametro],"--tsconf-fast-render")) {
+                tsconf_si_render_spritetile_rapido.v=1;
+            }*/
+
+            else if (!strcmp(argv[puntero_parametro],"--ql-aspect-ratio")) {
+                int valor;
+
+                siguiente_parametro_argumento();
+                valor=parse_string_to_number(argv[puntero_parametro]);
+
+                if (valor>2 || valor<0) {
+                    debug_printf (VERBOSE_ERR,"Invalid QL aspect ratio");
+
+                }
+
+                else ql_pantalla_proporcion_real=valor;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ql-border-color")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+
+                if (valor<0 || valor>15) {
+                    debug_printf (VERBOSE_ERR,"Invalid value for QL border color");
+                }
+                else {
+                    ql_border_color=valor;
+                }
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--enableulaplus")) {
-				command_line_ulaplus.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enableulaplus")) {
+                command_line_ulaplus.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--enablegigascreen")) {
-				command_line_gigascreen.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enablegigascreen")) {
+                command_line_gigascreen.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--enable16c")) {
-				command_line_16c.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enable16c")) {
+                command_line_16c.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--enableinterlaced")) {
-				command_line_interlaced.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enableinterlaced")) {
+                command_line_interlaced.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--enablespectra")) {
-				command_line_spectra.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enableinterlaced-scanlines")) {
+                video_interlaced_scanlines.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--enabletimexvideo")) {
+            else if (!strcmp(argv[puntero_parametro],"--enableinterlaced-scanlines-aggressive")) {
+                video_interlaced_scanlines_aggressive.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--enablespectra")) {
+                command_line_spectra.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--enabletimexvideo")) {
                                 command_line_timex_video.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--disablerealtimex512")) {
-				timex_mode_512192_real.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disablerealtimex512")) {
+                timex_mode_512192_real.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--enablezgx")) {
+            else if (!strcmp(argv[puntero_parametro],"--enablezgx")) {
                                 command_line_spritechip.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--disablerealbeeper")) {
-				beeper_real_enabled=0;
+            else if (!strcmp(argv[puntero_parametro],"--disablerealbeeper")) {
+                beeper_real_enabled=0;
       }
 
-			else if (!strcmp(argv[puntero_parametro],"--disablebeeper")) {
-				beeper_enabled.v=0;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--enableturbosound")) {
-
-				int valor;
-
-					//TODO. No aparece en el menu el error
-					avisar_opcion_obsoleta("--enableturbosound setting is obsolete since version 5.1. Use --totalaychips");
-					valor=2;
-
-				set_total_ay_chips(valor);
-
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--totalaychips")) {
-
-				int valor;
-
-					siguiente_parametro_argumento();
-					valor=atoi(argv[puntero_parametro]);
-
-					if (valor>MAX_AY_CHIPS || valor<1) {
-						printf ("Invalid ay chip value\n");
-						exit (1);
-					}
-
-        set_total_ay_chips(valor);
-
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--ay-stereo-mode")) {
-				int valor;
-
-					siguiente_parametro_argumento();
-					valor=atoi(argv[puntero_parametro]);
-
-					if (valor>5 || valor<0) {
-						printf ("Invalid ay stereo mode value\n");
-						exit (1);
-					}
-				ay3_stereo_mode=valor;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--ay-stereo-channel")) {
-				char canal;
-				siguiente_parametro_argumento();
-
-				canal=argv[puntero_parametro][0];
-				canal=letra_mayuscula(canal);
-
-				if (canal!='A' && canal!='B' && canal!='C') {
-					printf ("Invalid ay stereo channel\n");
-					exit(1);
-				}
-
-				int valor;
-				siguiente_parametro_argumento();
-				valor=atoi(argv[puntero_parametro]);
-
-				if (valor<0 || valor>2) {
-					printf ("Invalid ay stereo channel position value\n");
-					exit(1);
-				}
-
-				if (canal=='A') ay3_custom_stereo_A=valor;
-				if (canal=='B') ay3_custom_stereo_B=valor;
-				if (canal=='C') ay3_custom_stereo_C=valor;
-
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--enablespecdrum")) {
-				//TODO. No aparece en el menu el error
-				avisar_opcion_obsoleta("--enablespecdrum setting is obsolete since version 5.1. Use --enableaudiodac");
-																audiodac_enabled.v=1;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--enableaudiodac")) {
-																audiodac_enabled.v=1;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--audiodactype")) {
-					siguiente_parametro_argumento();
-
-					if (!audiodac_set_type(argv[puntero_parametro]) ) {
-						printf ("Invalid audiodactype\n");
-						exit (1);
-					}
-
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disablebeeper")) {
+                beeper_enabled.v=0;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--snoweffect")) {
-				snow_effect_enabled.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--beepermicmode")) {
 
-			else if (!strcmp(argv[puntero_parametro],"--audiovolume")) {
+                int valor;
+
+                siguiente_parametro_argumento();
+                valor=parse_string_to_number(argv[puntero_parametro]);
+
+                if (valor<BEEPER_MIC_MIXER_NORMAL || valor>BEEPER_MIC_MIXER_ONLY_MIC) {
+                    debug_printf (VERBOSE_ERR,"Invalid beepermicmode");
+                }
+                else {
+                    beeper_mic_mixer_current_mode=valor;
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--enableturbosound")) {
+
+                int valor;
+
+                    //TODO. No aparece en el menu el error
+                    avisar_opcion_obsoleta("--enableturbosound setting is obsolete since version 5.1. Use --totalaychips");
+                    valor=2;
+
+                set_total_ay_chips(valor);
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--totalaychips")) {
+
+                int valor;
+
+                siguiente_parametro_argumento();
+                valor=atoi(argv[puntero_parametro]);
+
+                if (valor>MAX_AY_CHIPS || valor<1) {
+                    debug_printf (VERBOSE_ERR,"Invalid ay chip value");
+
+                }
+
+                else set_total_ay_chips(valor);
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ay-autoenable")) {
+                autoenable_ay_chip.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ay-stereo-mode")) {
+                int valor;
+
+                siguiente_parametro_argumento();
+                valor=atoi(argv[puntero_parametro]);
+
+                if (valor>5 || valor<0) {
+                    debug_printf (VERBOSE_ERR,"Invalid ay stereo mode value");
+
+                }
+                else ay3_stereo_mode=valor;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ay-stereo-channel")) {
+                char canal;
+                siguiente_parametro_argumento();
+
+                canal=argv[puntero_parametro][0];
+                canal=letra_mayuscula(canal);
+
+                siguiente_parametro_argumento();
+
+                if (canal!='A' && canal!='B' && canal!='C') {
+                    debug_printf (VERBOSE_ERR,"Invalid ay stereo channel\n");
+
+                }
+
+                else {
+
+                    int valor;
+
+                    valor=atoi(argv[puntero_parametro]);
+
+                    if (valor<0 || valor>2) {
+                        debug_printf (VERBOSE_ERR,"Invalid ay stereo channel position value\n");
+
+                    }
+                    else {
+
+                        if (canal=='A') ay3_custom_stereo_A=valor;
+                        if (canal=='B') ay3_custom_stereo_B=valor;
+                        if (canal=='C') ay3_custom_stereo_C=valor;
+                    }
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ql-qsound-enabled")) {
+                ql_qsound_is_enabled=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ql-qsound-rom")) {
+                siguiente_parametro_argumento();
+                strcpy(qsound_rom_name,argv[puntero_parametro]);
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--enablespecdrum")) {
+                //TODO. No aparece en el menu el error
+                avisar_opcion_obsoleta("--enablespecdrum setting is obsolete since version 5.1. Use --enableaudiodac");
+                                                                audiodac_enabled.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--enableaudiodac")) {
+                                                                audiodac_enabled.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--audiodactype")) {
+                    siguiente_parametro_argumento();
+
+                    if (!audiodac_set_type(argv[puntero_parametro]) ) {
+                        debug_printf (VERBOSE_ERR,"Invalid audiodactype\n");
+
+                    }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--tsconf-vdac-with-pwm")) {
+                tsconf_vdac_with_pwm.v=1;
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--snoweffect")) {
+                snow_effect_enabled.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--audiovolume")) {
                                 siguiente_parametro_argumento();
                                 int valor=atoi(argv[puntero_parametro]);
 
-			        if (valor>100 || valor<0) {
-			                printf ("Invalid volume value\n");
-					exit (1);
-				}
+                if (valor>100 || valor<0) {
+                    debug_printf (VERBOSE_ERR,"Invalid volume value\n");
 
-        			audiovolume=valor;
-			}
+                }
+
+                else audiovolume=valor;
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--nagraaudio")) {
+                audio_nagra_effect.v=1;
+            }
+
 
             else if (!strcmp(argv[puntero_parametro],"--ayplayer-add-dir")) {
                 siguiente_parametro_argumento();
@@ -5544,132 +6885,134 @@ int parse_cmdline_options(int desde_commandline) {
                 command_line_ayplayer_start_playlist.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--ayplayer-end-exit")) {
-				ay_player_exit_emulator_when_finish.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--ayplayer-end-exit")) {
+                ay_player_exit_emulator_when_finish.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--ayplayer-shuffle")) {
-				ay_player_shuffle_mode.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--ayplayer-shuffle")) {
+                ay_player_shuffle_mode.v=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--ayplayer-no-silence-detection")) {
                 ay_player_silence_detection.v=0;
             }
 
             //Por compatibilidad con versiones < 10.10
-			else if (!strcmp(argv[puntero_parametro],"--ayplayer-end-no-repeat")) {
-				ay_player_repeat_file.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--ayplayer-end-no-repeat")) {
+                ay_player_repeat_file.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--ayplayer-end-repeat")) {
-				ay_player_repeat_file.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--ayplayer-end-repeat")) {
+                ay_player_repeat_file.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--ayplayer-inf-length")) {
-				siguiente_parametro_argumento();
-				int valor=atoi(argv[puntero_parametro]);
-				if (valor<1 || valor>1310) {
-					printf ("Invalid length value. Must be between 1 and 1310\n");
-					exit(1);
-				}
-				ay_player_limit_infinite_tracks=valor*50;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--ayplayer-inf-length")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<1 || valor>1310) {
+                    debug_printf (VERBOSE_ERR,"Invalid length value. Must be between 1 and 1310\n");
 
-			else if (!strcmp(argv[puntero_parametro],"--ayplayer-any-length")) {
-				siguiente_parametro_argumento();
-				int valor=atoi(argv[puntero_parametro]);
-				if (valor<1 || valor>1310) {
-					printf ("Invalid length value. Must be between 1 and 1310\n");
-					exit(1);
-				}
-				ay_player_limit_any_track=valor*50;
-			}
+                }
+                else ay_player_limit_infinite_tracks=valor*50;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--ayplayer-add-to-track")) {
-				siguiente_parametro_argumento();
-				int valor=atoi(argv[puntero_parametro]);
-				if (valor<0 || valor>60) {
-					printf ("Invalid length value. Must be between 0 and 60\n");
-					exit(1);
-				}
-				ay_player_add_to_track=valor;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--ayplayer-any-length")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<1 || valor>1310) {
+                    debug_printf (VERBOSE_ERR,"Invalid length value. Must be between 1 and 1310\n");
 
-			else if (!strcmp(argv[puntero_parametro],"--ayplayer-cpc")) {
-				ay_player_cpc_mode.v=1;
-			}
+                }
+                else ay_player_limit_any_track=valor*50;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ayplayer-add-to-track")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<0 || valor>60) {
+                    debug_printf (VERBOSE_ERR,"Invalid length value. Must be between 0 and 60\n");
+
+                }
+                else ay_player_add_to_track=valor;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--ayplayer-cpc")) {
+                ay_player_cpc_mode.v=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--ayplayer-show-info-console")) {
                 ay_player_show_info_console.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--audiopiano-zoom")) {
-				siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor<1 || valor>3) {
-					printf ("Invalid audiopiano-zoom value. Must be between 1 and 3\n");
-					exit(1);
-				}
-				audiochip_piano_zoom_x=valor;
-                audiochip_piano_zoom_y=valor;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--audiopiano-zoom")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<1 || valor>3) {
+                    debug_printf (VERBOSE_ERR,"Invalid audiopiano-zoom value. Must be between 1 and 3\n");
 
-			else if (!strcmp(argv[puntero_parametro],"--enable-midi")) {
-				command_line_enable_midi.v=1;
-			}
+                }
+                else {
+                    audiochip_piano_zoom_x=valor;
+                    audiochip_piano_zoom_y=valor;
+                }
+            }
 
-
-			else if (!strcmp(argv[puntero_parametro],"--midi-client")) {
-				siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor<0 || valor>255) {
-					printf ("Invalid client value. Must be between 0 and 255\n");
-					exit(1);
-				}
-				audio_midi_client=valor;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--midi-port")) {
-				siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor<0 || valor>255) {
-					printf ("Invalid port value. Must be between 0 and 255\n");
-					exit(1);
-				}
-				audio_midi_port=valor;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--midi-raw-device")) {
-				siguiente_parametro_argumento();
-				strcpy(audio_raw_midi_device_out,argv[puntero_parametro]);
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--midi-allow-tone-noise")) {
-				midi_output_record_noisetone.v=1;
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--midi-no-raw-mode")) {
-				audio_midi_raw_mode=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enable-midi")) {
+                command_line_enable_midi.v=1;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--noreset-audiobuffer-full")) {
-				audio_noreset_audiobuffer_full.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--midi-client")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<0 || valor>255) {
+                    debug_printf (VERBOSE_ERR,"Invalid client value. Must be between 0 and 255\n");
+
+                }
+                else audio_midi_client=valor;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--midi-port")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<0 || valor>255) {
+                    debug_printf (VERBOSE_ERR,"Invalid port value. Must be between 0 and 255\n");
+
+                }
+                else audio_midi_port=valor;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--midi-raw-device")) {
+                siguiente_parametro_argumento();
+                strcpy(audio_raw_midi_device_out,argv[puntero_parametro]);
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--midi-allow-tone-noise")) {
+                midi_output_record_noisetone.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--midi-no-raw-mode")) {
+                audio_midi_raw_mode=0;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--enable-silencedetector")) {
-				silence_detector_setting.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--noreset-audiobuffer-full")) {
+                audio_noreset_audiobuffer_full.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--disable-silencedetector")) {
-				silence_detector_setting.v=0;
-			}
 
-			//opciones obsoletas pc speaker. no hacer nada. solo leer valor de parametro
-			else if (!strcmp(argv[puntero_parametro],"--pcspeaker-wait-time")) {
-				siguiente_parametro_argumento();
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enable-silencedetector")) {
+                silence_detector_setting.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--disable-silencedetector")) {
+                silence_detector_setting.v=0;
+            }
+
+            //opciones obsoletas pc speaker. no hacer nada. solo leer valor de parametro
+            else if (!strcmp(argv[puntero_parametro],"--pcspeaker-wait-time")) {
+                siguiente_parametro_argumento();
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--pcspeaker-improved")) {
             }
@@ -5702,10 +7045,10 @@ int parse_cmdline_options(int desde_commandline) {
                 int valor=parse_string_to_number(argv[puntero_parametro]);
 
                 if (valor<1 || valor>15) {
-                        printf ("Invalid value for onebitspeaker-hifreq-filter-divider. Accepted values from 1 to 15\n");
-                        exit(1);
+                        debug_printf (VERBOSE_ERR,"Invalid value for onebitspeaker-hifreq-filter-divider. Accepted values from 1 to 15\n");
+
                 }
-                audioonebitspeaker_agudo_filtro_limite=valor;
+                else audioonebitspeaker_agudo_filtro_limite=valor;
             }
 
             else if (!strcmp(argv[puntero_parametro],"--onebitspeaker-type")) {
@@ -5713,11 +7056,11 @@ int parse_cmdline_options(int desde_commandline) {
                 int valor=parse_string_to_number(argv[puntero_parametro]);
 
                 if (valor!=TIPO_ALTAVOZ_ONEBITSPEAKER_PCSPEAKER && valor !=TIPO_ALTAVOZ_ONEBITSPEAKER_RPI_GPIO) {
-                        printf ("Invalid value for --onebitspeaker-type\n");
-                        exit(1);
+                        debug_printf (VERBOSE_ERR,"Invalid value for --onebitspeaker-type\n");
+
                 }
 
-                audioonebitspeaker_tipo_altavoz=valor;
+                else audioonebitspeaker_tipo_altavoz=valor;
             }
 
             //Este es solo de alsa pero por simplificar se parsea si se encuentra
@@ -5729,15 +7072,15 @@ int parse_cmdline_options(int desde_commandline) {
             }
 
 #ifdef COMPILE_ALSA
-			else if (!strcmp(argv[puntero_parametro],"--alsaperiodsize")) {
-		                 siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--alsaperiodsize")) {
+                         siguiente_parametro_argumento();
                                 int valor=atoi(argv[puntero_parametro]);
                                 if (valor!=2 && valor!=4) {
-                                        printf ("Invalid Alsa Period size\n");
-                                        exit(1);
+                                        debug_printf (VERBOSE_ERR,"Invalid Alsa Period size\n");
+
                                 }
-                                alsa_periodsize=AUDIO_BUFFER_SIZE*valor;
-			}
+                                else alsa_periodsize=AUDIO_BUFFER_SIZE*valor;
+            }
 
 
 #ifdef USE_PTHREADS
@@ -5745,10 +7088,10 @@ int parse_cmdline_options(int desde_commandline) {
                                  siguiente_parametro_argumento();
                                 int valor=atoi(argv[puntero_parametro]);
                                 if (valor<4 || valor>10) {
-                                        printf ("Invalid Alsa Fifo Buffer size\n");
-                                        exit(1);
+                                        debug_printf (VERBOSE_ERR,"Invalid Alsa Fifo Buffer size\n");
+
                                 }
-				fifo_alsa_buffer_size=AUDIO_BUFFER_SIZE*valor;
+                                else fifo_alsa_buffer_size=AUDIO_BUFFER_SIZE*valor;
                         }
 
 
@@ -5763,10 +7106,10 @@ int parse_cmdline_options(int desde_commandline) {
                                 int valor=atoi(argv[puntero_parametro]);
                                 //if (valor!=2 && valor!=4 && valor!=1) {
                                 if (valor<1 || valor>4) {
-                                        printf ("Invalid Pulse Period size\n");
-                                        exit(1);
+                                        debug_printf (VERBOSE_ERR,"Invalid Pulse Period size\n");
+
                                 }
-                                pulse_periodsize=AUDIO_BUFFER_SIZE*valor;
+                                else pulse_periodsize=AUDIO_BUFFER_SIZE*valor;
                         }
 
 
@@ -5774,10 +7117,10 @@ int parse_cmdline_options(int desde_commandline) {
                                  siguiente_parametro_argumento();
                                 int valor=atoi(argv[puntero_parametro]);
                                 if (valor<4 || valor>10) {
-                                        printf ("Invalid Pulse Fifo Buffer size\n");
-                                        exit(1);
+                                        debug_printf (VERBOSE_ERR,"Invalid Pulse Fifo Buffer size\n");
+
                                 }
-                                fifo_pulse_buffer_size=AUDIO_BUFFER_SIZE*valor;
+                                else fifo_pulse_buffer_size=AUDIO_BUFFER_SIZE*valor;
                         }
 
 
@@ -5787,46 +7130,66 @@ int parse_cmdline_options(int desde_commandline) {
 
 #ifdef COMPILE_COREAUDIO
 
-	else if (!strcmp(argv[puntero_parametro],"--fifocorebuffersize")) {
-				 siguiente_parametro_argumento();
-				int valor=atoi(argv[puntero_parametro]);
-				if (valor<MIN_AUDIOCOREAUDIO_FIFO_MULTIPLIER || valor>MAX_AUDIOCOREAUDIO_FIFO_MULTIPLIER) {
-								printf ("Invalid Coreaudio Fifo Buffer size\n");
-								exit(1);
-				}
-				audiocoreaudio_fifo_buffer_size_multiplier=valor;
-			}
+    else if (!strcmp(argv[puntero_parametro],"--fifocorebuffersize")) {
+                 siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<MIN_AUDIOCOREAUDIO_FIFO_MULTIPLIER || valor>MAX_AUDIOCOREAUDIO_FIFO_MULTIPLIER) {
+                                debug_printf (VERBOSE_ERR,"Invalid Coreaudio Fifo Buffer size\n");
+
+                }
+                else audiocoreaudio_fifo_buffer_size_multiplier=valor;
+            }
 #endif
 
 #ifdef COMPILE_SDL
-			else if (!strcmp(argv[puntero_parametro],"--sdlsamplesize")) {
-				siguiente_parametro_argumento();
-				int valor=atoi(argv[puntero_parametro]);
-				if (valor<128 || valor>2048) {
-					printf ("Invalid SDL audio sample size\n");
-					exit(1);
-				}
-				audiosdl_samples=valor;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--sdlsamplesize")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<128 || valor>2048) {
+                    debug_printf (VERBOSE_ERR,"Invalid SDL audio sample size\n");
+
+                }
+                else audiosdl_samples=valor;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--fifosdlbuffersize")) {
-						 siguiente_parametro_argumento();
-						int valor=atoi(argv[puntero_parametro]);
-						if (valor<MIN_AUDIOSDL_FIFO_MULTIPLIER || valor>MAX_AUDIOSDL_FIFO_MULTIPLIER) {
-										printf ("Invalid SDL Fifo Buffer size\n");
-										exit(1);
-						}
-						audiosdl_fifo_buffer_size_multiplier=valor;
-					}
+            else if (!strcmp(argv[puntero_parametro],"--fifosdlbuffersize")) {
+                         siguiente_parametro_argumento();
+                        int valor=atoi(argv[puntero_parametro]);
+                        if (valor<MIN_AUDIOSDL_FIFO_MULTIPLIER || valor>MAX_AUDIOSDL_FIFO_MULTIPLIER) {
+                                        debug_printf (VERBOSE_ERR,"Invalid SDL Fifo Buffer size\n");
+
+                        }
+                        else audiosdl_fifo_buffer_size_multiplier=valor;
+                    }
 
 #endif
 
 
-			//Este setting lo permitimos siempre, aunque no se haya compilado driver sdl, pues es una variable global, aunque no se verá en la ayuda
-			else if (!strcmp(argv[puntero_parametro],"--sdlrawkeyboard")) {
-					sdl_raw_keyboard_read.v=1;
-			}
+            //Este setting lo permitimos siempre, aunque no se haya compilado driver sdl, pues es una variable global, aunque no se verá en la ayuda
+            else if (!strcmp(argv[puntero_parametro],"--sdlrawkeyboard")) {
+                    sdl_raw_keyboard_read.v=1;
+            }
+
+            //Este setting lo permitimos siempre, aunque no se haya compilado driver sdl, pues es una variable global, aunque no se verá en la ayuda
+            else if (!strcmp(argv[puntero_parametro],"--sdl-8bit-color")) {
+                scr_sdl_8bits_color.v=1;
+            }
+
+            //Este setting lo permitimos siempre, aunque no se haya compilado driver sdl, pues es una variable global, aunque no se verá en la ayuda
+            else if (!strcmp(argv[puntero_parametro],"--sdl-force-win-size")) {
+                siguiente_parametro_argumento();
+                scr_sdl_force_size_width=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                scr_sdl_force_size_height=parse_string_to_number(argv[puntero_parametro]);
+
+                scr_sdl_force_size.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--sdl-hwsurface")) {
+                scr_sdl_hwsurface.v=1;
+            }
 
             //Este setting lo permitimos siempre, aunque no se haya compilado driver sdl, pues es una variable global, aunque no se verá en la ayuda
             else if (!strcmp(argv[puntero_parametro],"--sdl-use-callback-new")) {
@@ -5842,15 +7205,15 @@ int parse_cmdline_options(int desde_commandline) {
                 standard_to_real_tape_fallback.v=0;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--anyflagloading")) {
+            else if (!strcmp(argv[puntero_parametro],"--anyflagloading")) {
                                 tape_any_flag_loading.v=1;
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--autorewind")) {
+            else if (!strcmp(argv[puntero_parametro],"--autorewind")) {
                 tape_auto_rewind.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--simulaterealload")) {
+            else if (!strcmp(argv[puntero_parametro],"--simulaterealload")) {
                                 tape_loading_simulate.v=1;
                         }
 
@@ -5862,9 +7225,9 @@ int parse_cmdline_options(int desde_commandline) {
                                 tzx_suppress_pause.v=1;
                         }
 
-
+                        //Por compatibilidad hacia atras
                         else if (!strcmp(argv[puntero_parametro],"--realloadfast")) {
-							    accelerate_loaders.v=1;
+                                storage_accelerate_loading.v=1;
                         }
 
                         else if (!strcmp(argv[puntero_parametro],"--blue")) {
@@ -5879,38 +7242,50 @@ int parse_cmdline_options(int desde_commandline) {
                                 screen_gray_mode |=4;
                         }
 
-			else if (!strcmp(argv[puntero_parametro],"--inversevideo")) {
+            else if (!strcmp(argv[puntero_parametro],"--inversevideo")) {
                                 inverse_video.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--realpalette")) {
+            else if (!strcmp(argv[puntero_parametro],"--rgb8bit-color")) {
+                screen_rgb_8bit=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--dithering")) {
+                video_dither_mode.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--realpalette")) {
                                 spectrum_1648_use_real_palette.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--disabletooltips")) {
-				tooltip_enabled.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--visionql-palette")) {
+                ql_use_visionql_color_palette=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--disable-all-first-aid")) {
-				menu_disable_first_aid.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disabletooltips")) {
+                tooltip_enabled.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--no-first-aid")) {
-				siguiente_parametro_argumento();
-				menu_first_aid_disable(argv[puntero_parametro]);
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disable-all-first-aid")) {
+                menu_disable_first_aid.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--disablemenu")) {
-				menu_desactivado.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--no-first-aid")) {
+                siguiente_parametro_argumento();
+                menu_first_aid_disable(argv[puntero_parametro]);
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--disablemenuandexit")) {
-				menu_desactivado_andexit.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disablemenu")) {
+                menu_desactivado.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--disablemenufileutils")) {
-				menu_desactivado_file_utilities.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disablemenuandexit")) {
+                menu_desactivado_andexit.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--disablemenufileutils")) {
+                menu_desactivado_file_utilities.v=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--disable-search-menu")) {
                 index_menu_enabled.v=0;
@@ -5920,46 +7295,50 @@ int parse_cmdline_options(int desde_commandline) {
                 index_menu_enabled.v=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--load-additional-config")) {
-				load_additional_config.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--load-additional-config")) {
+                load_additional_config.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--forcevisiblehotkeys")) {
+            else if (!strcmp(argv[puntero_parametro],"--forcevisiblehotkeys")) {
                                 menu_force_writing_inverse_color.v=1;
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--forceconfirmyes")) {
-				force_confirm_yes.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--forceconfirmyes")) {
+                force_confirm_yes.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--gui-style")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--gui-style")) {
+                siguiente_parametro_argumento();
                 int indice=menu_get_gui_index_by_name(argv[puntero_parametro]);
                 if (indice<0) {
-					printf ("Invalid GUI style: %s\n",argv[puntero_parametro]);
-					exit(1);
-				}
+                    debug_printf (VERBOSE_ERR,"Invalid GUI style: %s\n",argv[puntero_parametro]);
 
-                zxvision_change_gui_style(indice);
+                }
 
+                else zxvision_change_gui_style(indice);
+            }
 
+            else if (!strcmp(argv[puntero_parametro],"--gui-style-day-night")) {
+                zxvision_change_gui_style_day_night.v=1;
             }
 
             else if (!strcmp(argv[puntero_parametro],"--charset")) {
-				siguiente_parametro_argumento();
+                siguiente_parametro_argumento();
                 int indice=get_charset_id_by_name(argv[puntero_parametro]);
                 if (indice<0) {
-					printf ("Invalid charset: %s\n",argv[puntero_parametro]);
-					exit(1);
-				}
+                    debug_printf (VERBOSE_ERR,"Invalid charset: %s\n",argv[puntero_parametro]);
 
-                user_charset=indice;
-                set_user_charset();
+                }
+
+                else {
+                    user_charset=indice;
+                    set_user_charset();
+                }
 
             }
 
             else if (!strcmp(argv[puntero_parametro],"--charset-customfile")) {
-				siguiente_parametro_argumento();
+                siguiente_parametro_argumento();
 
                 strcpy(char_set_customfile_path,argv[puntero_parametro]);
 
@@ -5967,60 +7346,77 @@ int parse_cmdline_options(int desde_commandline) {
             }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--keyboardspoolfile")) {
-                                siguiente_parametro_argumento();
-				//sprintf(input_file_keyboard_name_buffer,"%s",argv[puntero_parametro]);
-				input_file_keyboard_name=argv[puntero_parametro];
-			        input_file_keyboard_init();
-			}
+            else if (!strcmp(argv[puntero_parametro],"--sendtextkeystrokes-file") ||
+                    //Deprecated
+                    !strcmp(argv[puntero_parametro],"--keyboardspoolfile")
+                 ) {
+                siguiente_parametro_argumento();
 
-			else if (!strcmp(argv[puntero_parametro],"--keyboardspoolfile-play")) {
-                input_file_keyboard_playing.v=1;
-			}
+                input_file_keyboard_name=argv[puntero_parametro];
+                input_file_keyboard_init();
+            }
 
-            else if (!strcmp(argv[puntero_parametro],"--keyboardspoolfile-keylength")) {
+            else if (!strcmp(argv[puntero_parametro],"--sendtextkeystrokes-play") ||
+                    //Deprecated
+                    !strcmp(argv[puntero_parametro],"--keyboardspoolfile-play")
+                 ) {
+                send_text_as_keystrokes_playing.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--sendtextkeystrokes-turbo")) {
+                command_line_keystrokes_turbo.v=1;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--sendtextkeystrokes-keylength") ||
+                    //Deprecated
+                    !strcmp(argv[puntero_parametro],"--keyboardspoolfile-keylength")
+                 ) {
                 siguiente_parametro_argumento();
                 int valor=parse_string_to_number(argv[puntero_parametro]);
 
                 if (valor>100 || valor<1) {
-                    printf ("Invalid keylength\n");
-                   exit (1);
+                    debug_printf (VERBOSE_ERR,"Invalid keylength");
                 }
 
-                input_file_keyboard_delay=valor;
+                else {
+                    send_text_as_keystrokes_delay=valor;
+                }
 
             }
 
-            else if (!strcmp(argv[puntero_parametro],"--keyboardspoolfile-nodelay")) {
-                input_file_keyboard_send_pause.v=0;
+            else if (!strcmp(argv[puntero_parametro],"--sendtextkeystrokes-nodelay") ||
+                    //Deprecated
+                    !strcmp(argv[puntero_parametro],"--keyboardspoolfile-nodelay")
+                ) {
+                send_text_as_keystrokes_send_pause.v=0;
             }
 
 //Si no hay soporte de pthreads, estas opciones las permitimos pero luego no hace nada
 
-			else if (!strcmp(argv[puntero_parametro],"--enable-remoteprotocol")) {
-					remote_protocol_enabled.v=1;
-		 }
+            else if (!strcmp(argv[puntero_parametro],"--enable-remoteprotocol")) {
+                    remote_protocol_enabled.v=1;
+         }
 
-		 else if (!strcmp(argv[puntero_parametro],"--remoteprotocol-port")) {
+         else if (!strcmp(argv[puntero_parametro],"--remoteprotocol-port")) {
             siguiente_parametro_argumento();
             int valor=atoi(argv[puntero_parametro]);
 
             if (valor>65535 || valor<1) {
-                printf ("Invalid port value\n");
-                exit (1);
+                debug_printf (VERBOSE_ERR,"Invalid port value\n");
+
             }
 
-            remote_protocol_port=valor;
-		 }
+            else remote_protocol_port=valor;
+         }
 
-		 else if (!strcmp(argv[puntero_parametro],"--remoteprotocol-prompt")) {
+         else if (!strcmp(argv[puntero_parametro],"--remoteprotocol-prompt")) {
             siguiente_parametro_argumento();
             strcpy(remote_prompt_command_string,argv[puntero_parametro]);
-		 }
+         }
 
-		 else if (!strcmp(argv[puntero_parametro],"--remoteprotocol-linemode-telnet")) {
+         else if (!strcmp(argv[puntero_parametro],"--remoteprotocol-linemode-telnet")) {
             remote_protocol_char_mode.v=1;
-		 }
+         }
 
          else if (!strcmp(argv[puntero_parametro],"--enable-zeng-online-server")) {
             command_line_start_zeng_online_server.v=1;
@@ -6036,10 +7432,10 @@ int parse_cmdline_options(int desde_commandline) {
             siguiente_parametro_argumento();
             if (strlen(argv[puntero_parametro])>ZOC_MAX_NICKNAME_LENGTH) {
                 printf("Nickname too long. Maximum: %d characters\n",ZOC_MAX_NICKNAME_LENGTH);
-                exit(1);
+
             }
 
-            strcpy(zeng_online_nickname,argv[puntero_parametro]);
+            else strcpy(zeng_online_nickname,argv[puntero_parametro]);
          }
 
          else if (!strcmp(argv[puntero_parametro],"--zeng-online-server-allow-create")) {
@@ -6049,22 +7445,22 @@ int parse_cmdline_options(int desde_commandline) {
          else if (!strcmp(argv[puntero_parametro],"--zeng-online-server-max-rooms")) {
             siguiente_parametro_argumento();
             int valor=parse_string_to_number(argv[puntero_parametro]);
-			if (valor<1 || valor>ZENG_ONLINE_MAX_ROOMS) {
-                printf ("Invalid max rooms value\n");
-				 exit (1);
-			 }
-            zeng_online_current_max_rooms=valor;
+            if (valor<1 || valor>ZENG_ONLINE_MAX_ROOMS) {
+                debug_printf (VERBOSE_ERR,"Invalid max rooms value\n");
+
+            }
+            else zeng_online_current_max_rooms=valor;
          }
 
 
          else if (!strcmp(argv[puntero_parametro],"--zeng-online-server-max-players-room")) {
             siguiente_parametro_argumento();
             int valor=parse_string_to_number(argv[puntero_parametro]);
-			if (valor<1 || valor>ZENG_ONLINE_MAX_PLAYERS_PER_ROOM) {
-                printf ("Invalid max players per rooms value\n");
-				 exit (1);
-			 }
-            zeng_online_current_max_players_per_room=valor;
+            if (valor<1 || valor>ZENG_ONLINE_MAX_PLAYERS_PER_ROOM) {
+                debug_printf (VERBOSE_ERR,"Invalid max players per rooms value\n");
+
+             }
+            else zeng_online_current_max_players_per_room=valor;
          }
 
 
@@ -6072,9 +7468,9 @@ int parse_cmdline_options(int desde_commandline) {
             zeng_online_destroy_rooms_without_players.v=1;
         }
 
-		else if (!strcmp(argv[puntero_parametro],"--zeng-online-server-allow-all-zrcp")) {
-			zeng_online_server_allow_zrcp_only_zeng_online.v=0;
-		}
+        else if (!strcmp(argv[puntero_parametro],"--zeng-online-server-allow-all-zrcp")) {
+            zeng_online_server_allow_zrcp_only_zeng_online.v=0;
+        }
 
         else if (!strcmp(argv[puntero_parametro],"--zeng-online-no-zip-snapshots")) {
             zeng_online_zip_compress_snapshots.v=0;
@@ -6093,33 +7489,33 @@ int parse_cmdline_options(int desde_commandline) {
         }
 
 
-		 else if (!strcmp(argv[puntero_parametro],"--showfiredbreakpoint")) {
-			 siguiente_parametro_argumento();
+         else if (!strcmp(argv[puntero_parametro],"--showfiredbreakpoint")) {
+             siguiente_parametro_argumento();
             int valor=parse_string_to_number(argv[puntero_parametro]);
-			if (valor<0 || valor>2) {
-				 printf ("Invalid port value\n");
-				 exit (1);
-			 }
+            if (valor<0 || valor>2) {
+                 debug_printf (VERBOSE_ERR,"Invalid value for --showfiredbreakpoint\n");
 
-			debug_show_fired_breakpoints_type=valor;
-		 }
+             }
 
-		 else if (!strcmp(argv[puntero_parametro],"--set-breakpoint")) {
-			 siguiente_parametro_argumento();
-			 int valor=atoi(argv[puntero_parametro]);
-			 valor--;
+            else debug_show_fired_breakpoints_type=valor;
+         }
 
-			 siguiente_parametro_argumento();
+         else if (!strcmp(argv[puntero_parametro],"--set-breakpoint")) {
+             siguiente_parametro_argumento();
+             int valor=atoi(argv[puntero_parametro]);
+             valor--;
+
+             siguiente_parametro_argumento();
 
 
-			 if (valor<0 || valor>MAX_BREAKPOINTS_CONDITIONS-1) {
-				 printf("Index %d out of range setting breakpoint \"%s\"\n",valor+1,argv[puntero_parametro]);
-				 exit(1);
-			 }
+             if (valor<0 || valor>MAX_BREAKPOINTS_CONDITIONS-1) {
+                 printf("Index %d out of range setting breakpoint \"%s\"\n",valor+1,argv[puntero_parametro]);
 
-			 debug_set_breakpoint(valor,argv[puntero_parametro],0);
+             }
 
-		 }
+             else debug_set_breakpoint(valor,argv[puntero_parametro],0);
+
+         }
 
         else if (!strcmp(argv[puntero_parametro],"--disable-breakpoint")) {
             siguiente_parametro_argumento();
@@ -6129,111 +7525,118 @@ int parse_cmdline_options(int desde_commandline) {
 
             if (valor<0 || valor>MAX_BREAKPOINTS_CONDITIONS-1) {
                 printf("Index %d out of range disabling breakpoint\n",valor+1);
-                exit(1);
+
             }
 
-            debug_breakpoints_conditions_disable(valor);
+            else debug_breakpoints_conditions_disable(valor);
 
         }
 
-		 else if (!strcmp(argv[puntero_parametro],"--set-watch")) {
-			 siguiente_parametro_argumento();
-			 int valor=atoi(argv[puntero_parametro]);
-			 valor--;
+         else if (!strcmp(argv[puntero_parametro],"--set-watch")) {
+             siguiente_parametro_argumento();
+             int valor=atoi(argv[puntero_parametro]);
+             valor--;
 
-			 siguiente_parametro_argumento();
-
-
-			 if (valor<0 || valor>DEBUG_MAX_WATCHES-1) {
-				 printf("Index %d out of range setting watch \"%s\"\n",valor+1,argv[puntero_parametro]);
-				 exit(1);
-			 }
-
-			 debug_set_watch(valor,argv[puntero_parametro]);
-
-		 }
-
-		 else if (!strcmp(argv[puntero_parametro],"--set-watch-label")) {
-			 siguiente_parametro_argumento();
-			 int valor=atoi(argv[puntero_parametro]);
-			 valor--;
-
-			 siguiente_parametro_argumento();
+             siguiente_parametro_argumento();
 
 
-			 if (valor<0 || valor>DEBUG_MAX_WATCHES-1) {
-				 printf("Index %d out of range setting watch label \"%s\"\n",valor+1,argv[puntero_parametro]);
-				 exit(1);
-			 }
+             if (valor<0 || valor>DEBUG_MAX_WATCHES-1) {
+                 printf("Index %d out of range setting watch \"%s\"\n",valor+1,argv[puntero_parametro]);
 
-            strcpy(debug_watches_labels_array[valor],argv[puntero_parametro]);
+             }
 
-		 }
+             else debug_set_watch(valor,argv[puntero_parametro]);
 
-		 else if (!strcmp(argv[puntero_parametro],"--set-mem-breakpoint")) {
-			 siguiente_parametro_argumento();
-			 int direccion=parse_string_to_number(argv[puntero_parametro]);
-			 if (direccion<0 || direccion>65535) {
-				 printf("Address %d out of range setting memory breakpoint\n",direccion);
-				 exit(1);
-			 }
+         }
 
-			siguiente_parametro_argumento();
-			 int valor=parse_string_to_number(argv[puntero_parametro]);
-			 if (valor<0 || valor>255) {
-				 printf("Type %d out of range setting memory breakpoint at address %04XH\n",valor,direccion);
-				 exit(1);
-			 }
+         else if (!strcmp(argv[puntero_parametro],"--set-watch-label")) {
+             siguiente_parametro_argumento();
+             int valor=atoi(argv[puntero_parametro]);
+             valor--;
 
-			 debug_set_mem_breakpoint(direccion,valor);
-
-		 }
-
-		 else if (!strcmp(argv[puntero_parametro],"--set-breakpointpasscount")) {
-			 siguiente_parametro_argumento();
-			 int valor=atoi(argv[puntero_parametro]);
-			 valor--;
-
-			 siguiente_parametro_argumento();
+             siguiente_parametro_argumento();
 
 
-			 if (valor<0 || valor>MAX_BREAKPOINTS_CONDITIONS-1) {
-				 printf("Index %d out of range setting breakpoint pass count \"%s\"\n",valor+1,argv[puntero_parametro]);
-				 exit(1);
-			 }
+             if (valor<0 || valor>DEBUG_MAX_WATCHES-1) {
+                 printf("Index %d out of range setting watch label \"%s\"\n",valor+1,argv[puntero_parametro]);
 
-             int passcount=parse_string_to_number(argv[puntero_parametro]);
+             }
 
-			 debug_set_breakpoint_passcount(valor,passcount);
+            else strcpy(debug_watches_labels_array[valor],argv[puntero_parametro]);
 
-		 }
+         }
 
-		 else if (!strcmp(argv[puntero_parametro],"--set-breakpointaction")) {
-			 siguiente_parametro_argumento();
-			 int valor=atoi(argv[puntero_parametro]);
-			 valor--;
+         else if (!strcmp(argv[puntero_parametro],"--set-mem-breakpoint")) {
+            siguiente_parametro_argumento();
+            int direccion=parse_string_to_number(argv[puntero_parametro]);
 
-			 siguiente_parametro_argumento();
+            siguiente_parametro_argumento();
+
+            if (direccion<0 || direccion>65535) {
+                printf("Address %d out of range setting memory breakpoint\n",direccion);
+
+            }
+
+            else {
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<0 || valor>255) {
+                    printf("Type %d out of range setting memory breakpoint at address %04XH\n",valor,direccion);
+
+                }
+
+                else {
+                    debug_set_mem_breakpoint(direccion,valor);
+                }
+            }
+
+         }
+
+         else if (!strcmp(argv[puntero_parametro],"--set-breakpointpasscount")) {
+             siguiente_parametro_argumento();
+             int valor=atoi(argv[puntero_parametro]);
+             valor--;
+
+             siguiente_parametro_argumento();
 
 
-			 if (valor<0 || valor>MAX_BREAKPOINTS_CONDITIONS-1) {
-				 printf("Index %d out of range setting breakpoint action \"%s\"\n",valor+1,argv[puntero_parametro]);
-				 exit(1);
-			 }
+             if (valor<0 || valor>MAX_BREAKPOINTS_CONDITIONS-1) {
+                 printf("Index %d out of range setting breakpoint pass count \"%s\"\n",valor+1,argv[puntero_parametro]);
 
-			 debug_set_breakpoint_action(valor,argv[puntero_parametro]);
+             }
+             else {
+                int passcount=parse_string_to_number(argv[puntero_parametro]);
+
+                debug_set_breakpoint_passcount(valor,passcount);
+             }
+
+         }
+
+         else if (!strcmp(argv[puntero_parametro],"--set-breakpointaction")) {
+             siguiente_parametro_argumento();
+             int valor=atoi(argv[puntero_parametro]);
+             valor--;
+
+             siguiente_parametro_argumento();
+
+
+             if (valor<0 || valor>MAX_BREAKPOINTS_CONDITIONS-1) {
+                 printf("Index %d out of range setting breakpoint action \"%s\"\n",valor+1,argv[puntero_parametro]);
+
+             }
+
+             else debug_set_breakpoint_action(valor,argv[puntero_parametro]);
 
 
 
-		 }
+         }
 
-		 else if (!strcmp(argv[puntero_parametro],"--enable-breakpoints")) {
-		 			 command_line_set_breakpoints.v=1;
-		 }
+         else if (!strcmp(argv[puntero_parametro],"--enable-breakpoints")) {
+                      command_line_set_breakpoints.v=1;
+         }
 
-		else if (!strcmp(argv[puntero_parametro],"--show-invalid-opcode")) {
-	  				debug_shows_invalid_opcode.v=1;
-		}
+        else if (!strcmp(argv[puntero_parametro],"--show-invalid-opcode")) {
+                      debug_shows_invalid_opcode.v=1;
+        }
 
         else if (!strcmp(argv[puntero_parametro],"--cpu-history-max-items")) {
             siguiente_parametro_argumento();
@@ -6243,49 +7646,57 @@ int parse_cmdline_options(int desde_commandline) {
 
             if (max_items<1 || max_items>CPU_HISTORY_MAX_ALLOWED_ELEMENTS) {
                 printf("Value for max history elements out of range\n");
-                exit(1);
+
             }
 
-            cpu_history_max_elements=max_items;
+            else cpu_history_max_elements=max_items;
         }
 
 
-		else if (!strcmp(argv[puntero_parametro],"--brkp-always")) {
-	  				debug_breakpoints_cond_behaviour.v=0;
-		}
+        else if (!strcmp(argv[puntero_parametro],"--brkp-always")) {
+                      debug_breakpoints_cond_behaviour.v=0;
+        }
 
-		else if (!strcmp(argv[puntero_parametro],"--show-display-debug")) {
-	  				debug_settings_show_screen.v=1;
+        else if (!strcmp(argv[puntero_parametro],"--show-display-debug")) {
+                      debug_settings_show_screen.v=1;
 
-		}
+        }
 
 
-		else if (!strcmp(argv[puntero_parametro],"--show-electron-debug")) {
-	  				menu_debug_registers_if_showscan.v=1;
-		}
+        else if (!strcmp(argv[puntero_parametro],"--show-electron-debug")) {
+                      menu_debug_registers_if_showscan.v=1;
+        }
+
+        else if (!strcmp(argv[puntero_parametro],"--step-over-rst8-plus-two")) {
+                      debug_step_over_rst8_plus_two.v=1;
+        }
+
+        else if (!strcmp(argv[puntero_parametro],"--debug-show-timing-opcodes")) {
+                      debug_show_timing_opcodes.v=1;
+        }
 
         else if (!strcmp(argv[puntero_parametro],"--show-basic-address")) {
-	  				debug_view_basic_show_address.v=1;
+                      debug_view_basic_show_address.v=1;
         }
 
 
-		 else if (!strcmp(argv[puntero_parametro],"--hardware-debug-ports")) {
-			 hardware_debug_port.v=1;
-		 }
+         else if (!strcmp(argv[puntero_parametro],"--hardware-debug-ports")) {
+             hardware_debug_port.v=1;
+         }
 
-		 else if (!strcmp(argv[puntero_parametro],"--hardware-debug-ports-byte-file")) {
-			siguiente_parametro_argumento();
-			strcpy(zesarux_zxi_hardware_debug_file,argv[puntero_parametro]);
-		 }
+         else if (!strcmp(argv[puntero_parametro],"--hardware-debug-ports-byte-file")) {
+            siguiente_parametro_argumento();
+            strcpy(zesarux_zxi_hardware_debug_file,argv[puntero_parametro]);
+         }
 
-		 else if (!strcmp(argv[puntero_parametro],"-—dump-ram-to-file")) {
+         else if (!strcmp(argv[puntero_parametro],"-—dump-ram-to-file")) {
                                 siguiente_parametro_argumento();
-				strcpy(dump_ram_file,argv[puntero_parametro]);
+                strcpy(dump_ram_file,argv[puntero_parametro]);
                  }
 
-		else if (!strcmp(argv[puntero_parametro],"--dump-snapshot-panic")) {
-				 debug_dump_zsf_on_cpu_panic.v=1;
-		}
+        else if (!strcmp(argv[puntero_parametro],"--dump-snapshot-panic")) {
+                 debug_dump_zsf_on_cpu_panic.v=1;
+        }
 
         else if (!strcmp(argv[puntero_parametro],"--textadvmap-follow")) {
             menu_debug_textadventure_map_connections_center_current=1;
@@ -6316,60 +7727,60 @@ int parse_cmdline_options(int desde_commandline) {
 
             if (valor<0 || valor>MAX_TEXTADVENTURE_MAP_ZOOM) {
                 printf("Text adventure zoom out of range\n");
-                exit(1);
+
             }
 
-            menu_debug_textadventure_map_connections_zoom=valor;
+            else menu_debug_textadventure_map_connections_zoom=valor;
 
         }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--joystickemulated")) {
+            else if (!strcmp(argv[puntero_parametro],"--joystickemulated")) {
                                 siguiente_parametro_argumento();
-				if (realjoystick_set_type(argv[puntero_parametro])) {
-                                        exit(1);
-				}
+                if (realjoystick_set_type(argv[puntero_parametro])) {
+                    //error
+                }
 
-			}
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--joystickfirekey")) {
                 siguiente_parametro_argumento();
                 int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor>=JOYSTICK_KEY_FIRE_TOTAL) {
-					printf ("Invalid value %d for setting --joystickfirekey\n",valor);
-                    exit(1);
-				}
-				joystick_defined_key_fire_array[0]=valor;
+                if (valor>=JOYSTICK_KEY_FIRE_TOTAL) {
+                    debug_printf (VERBOSE_ERR,"Invalid value %d for setting --joystickfirekey\n",valor);
+
+                }
+                else joystick_defined_key_fire_array[0]=valor;
             }
 
             else if (!strcmp(argv[puntero_parametro],"--joystickfirekey2")) {
                 siguiente_parametro_argumento();
                 int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor>=JOYSTICK_KEY_FIRE_TOTAL) {
-					printf ("Invalid value %d for setting --joystickfirekey2\n",valor);
-                    exit(1);
-				}
-				joystick_defined_key_fire_array[1]=valor;
+                if (valor>=JOYSTICK_KEY_FIRE_TOTAL) {
+                    debug_printf (VERBOSE_ERR,"Invalid value %d for setting --joystickfirekey2\n",valor);
+
+                }
+                else joystick_defined_key_fire_array[1]=valor;
             }
 
             else if (!strcmp(argv[puntero_parametro],"--joystickfirekey3")) {
                 siguiente_parametro_argumento();
                 int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor>=JOYSTICK_KEY_FIRE_TOTAL) {
-					printf ("Invalid value %d for setting --joystickfirekey3\n",valor);
-                    exit(1);
-				}
-				joystick_defined_key_fire_array[2]=valor;
+                if (valor>=JOYSTICK_KEY_FIRE_TOTAL) {
+                    debug_printf (VERBOSE_ERR,"Invalid value %d for setting --joystickfirekey3\n",valor);
+
+                }
+                else joystick_defined_key_fire_array[2]=valor;
             }
 
             else if (!strcmp(argv[puntero_parametro],"--joystickfirekey4")) {
                 siguiente_parametro_argumento();
                 int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor>=JOYSTICK_KEY_FIRE_TOTAL) {
-					printf ("Invalid value %d for setting --joystickfirekey4\n",valor);
-                    exit(1);
-				}
-				joystick_defined_key_fire_array[3]=valor;
+                if (valor>=JOYSTICK_KEY_FIRE_TOTAL) {
+                    debug_printf (VERBOSE_ERR,"Invalid value %d for setting --joystickfirekey4\n",valor);
+
+                }
+                else joystick_defined_key_fire_array[3]=valor;
             }
 
             else if (!strcmp(argv[puntero_parametro],"--sms-swap-controls")) {
@@ -6377,61 +7788,59 @@ int parse_cmdline_options(int desde_commandline) {
             }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--disablerealjoystick")) {
-				//realjoystick_present.v=0;
-				realjoystick_disabled.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disablerealjoystick")) {
+                //realjoystick_present.v=0;
+                realjoystick_disabled.v=1;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--no-native-linux-realjoy")) {
-				no_native_linux_realjoystick.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--no-native-linux-realjoy")) {
+                no_native_linux_realjoystick.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--realjoystickpath")) {
-				siguiente_parametro_argumento();
-				strcpy(string_dev_joystick,argv[puntero_parametro]);
+            else if (!strcmp(argv[puntero_parametro],"--realjoystickpath")) {
+                siguiente_parametro_argumento();
+                strcpy(string_dev_joystick,argv[puntero_parametro]);
 
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--realjoystickindex")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--realjoystickindex")) {
+                siguiente_parametro_argumento();
                 realjoystick_index=parse_string_to_number(argv[puntero_parametro]);
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--realjoystick-calibrate")) {
-				siguiente_parametro_argumento();
-				int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor<0 || valor>32000) {
-					printf ("Invalid value %d for setting --realjoystick-calibrate\n",valor);
-                    exit(1);
-				}
-				realjoystick_autocalibrate_value=valor;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--realjoystick-calibrate")) {
+                siguiente_parametro_argumento();
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<0 || valor>32000) {
+                    debug_printf (VERBOSE_ERR,"Invalid value %d for setting --realjoystick-calibrate\n",valor);
+
+                }
+                else realjoystick_autocalibrate_value=valor;
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--joystickevent")) {
-				char *text_button;
-				char *text_event;
+            else if (!strcmp(argv[puntero_parametro],"--joystickevent")) {
+                char *text_button;
+                char *text_event;
 
-				//obtener boton
-				siguiente_parametro_argumento();
-				text_button=argv[puntero_parametro];
+                //obtener boton
+                siguiente_parametro_argumento();
+                text_button=argv[puntero_parametro];
 
-				//obtener evento
-				siguiente_parametro_argumento();
-				text_event=argv[puntero_parametro];
+                //obtener evento
+                siguiente_parametro_argumento();
+                text_event=argv[puntero_parametro];
 
-				//Y definir el evento
+                //Y definir el evento
                 //No salir si hay error, simplemente saldra error por VERBOSE_ERR
-				realjoystick_set_button_event(text_button,text_event);
+                realjoystick_set_button_event(text_button,text_event);
 
-
-
-			}
+            }
 
                         else if (!strcmp(argv[puntero_parametro],"--joystickkeybt")) {
 
-				char *text_button;
+                char *text_button;
                                 char *text_key;
 
                                 //obtener boton
@@ -6442,118 +7851,142 @@ int parse_cmdline_options(int desde_commandline) {
                                 siguiente_parametro_argumento();
                                 text_key=argv[puntero_parametro];
 
-				//Y definir el evento
+                //Y definir el evento
                                 if (realjoystick_set_button_key(text_button,text_key)) {
-                                        exit(1);
+                                        //error
                                 }
 
-			}
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--joystickkeyev")) {
+            else if (!strcmp(argv[puntero_parametro],"--joystickkeyev")) {
 
-				char *text_event;
+                char *text_event;
                                 char *text_key;
 
                                 //obtener evento
-				siguiente_parametro_argumento();
-				text_event=argv[puntero_parametro];
+                siguiente_parametro_argumento();
+                text_event=argv[puntero_parametro];
 
-				//Y obtener tecla
-				siguiente_parametro_argumento();
-				text_key=argv[puntero_parametro];
+                //Y obtener tecla
+                siguiente_parametro_argumento();
+                text_key=argv[puntero_parametro];
 
-	                        //Y definir el evento
-                                if (realjoystick_set_event_key(text_event,text_key)) {
-					exit (1);
-                                }
+                            //Y definir el evento
+                if (realjoystick_set_event_key(text_event,text_key)) {
+                    //error
+                }
 
 
-			}
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--joystickaction")) {
+                char *text_button;
+                char *text_action;
+                char *parametros;
+
+                //obtener boton
+                siguiente_parametro_argumento();
+                text_button=argv[puntero_parametro];
+
+                //obtener evento
+                siguiente_parametro_argumento();
+                text_action=argv[puntero_parametro];
+
+                //obtener parametros
+                siguiente_parametro_argumento();
+                parametros=argv[puntero_parametro];
+
+                realjoystick_add_button_action(text_button,text_action,parametros);
+
+            }
+
+
 
             else if (!strcmp(argv[puntero_parametro],"--steering-wheel-axis-number")) {
                 siguiente_parametro_argumento();
                 realjoystick_steering_button=parse_string_to_number(argv[puntero_parametro]);
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--clearkeylistonsmart")) {
-				realjoystick_clear_keys_on_smartload.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--clearkeylistonsmart")) {
+                realjoystick_clear_keys_on_smartload.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--cleareventlist")) {
-                          	realjoystick_clear_events_array();
-			}
-
-
-			else if (!strcmp(argv[puntero_parametro],"--enablejoysticksimulator")) {
-				simulador_joystick=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--cleareventlist")) {
+                              realjoystick_clear_events_array();
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--quickexit")) {
-				quickexit.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enablejoysticksimulator")) {
+                simulador_joystick=1;
+            }
 
 
-	                 else if (!strcmp(argv[puntero_parametro],"--exit-after")) {
-                         	siguiente_parametro_argumento();
-	                         int valor=atoi(argv[puntero_parametro]);
-				if (valor<=0) {
-					printf ("Invalid value %d for setting --exit-after\n",valor);
-                                 	exit(1);
-				}
-				exit_emulator_after_seconds=valor;
-                         }
+            else if (!strcmp(argv[puntero_parametro],"--quickexit")) {
+                quickexit.v=1;
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--exit-after")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<=0) {
+                    debug_printf (VERBOSE_ERR,"Invalid value %d for setting --exit-after\n",valor);
+
+                }
+                else exit_emulator_after_seconds=valor;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--disable-first-start-wizard")) {
                 first_start_wizard_disabled=1;
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--zeng-remote-hostname")) {
-				siguiente_parametro_argumento();
-				strcpy(zeng_remote_hostname,argv[puntero_parametro]);
-			}
+            else if (!strcmp(argv[puntero_parametro],"--zeng-remote-hostname")) {
+                siguiente_parametro_argumento();
+                strcpy(zeng_remote_hostname,argv[puntero_parametro]);
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--zeng-remote-port")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--zeng-remote-port")) {
+                siguiente_parametro_argumento();
 
-				int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor<1 || valor>65535) {
-						printf ("Invalid value %d for setting --zeng-remote-port\n",valor);
-						exit(1);
-				}
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<1 || valor>65535) {
+                        debug_printf (VERBOSE_ERR,"Invalid value %d for setting --zeng-remote-port\n",valor);
 
-				zeng_remote_port=valor;
-			}
+                }
+
+                else zeng_remote_port=valor;
+            }
 
             //por compatibilidad hacia atras
-			else if (!strcmp(argv[puntero_parametro],"--zeng-snapshot-interval")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--zeng-snapshot-interval")) {
+                siguiente_parametro_argumento();
 
-				int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor<1 || valor>9) {
-						printf ("Invalid value %d for setting --zeng-snapshot-interval\n",valor);
-						exit(1);
-				}
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<1 || valor>9) {
+                        debug_printf (VERBOSE_ERR,"Invalid value %d for setting --zeng-snapshot-interval\n",valor);
 
-				zeng_frames_video_cada_snapshot=valor*50;
-			}
+                }
 
-			else if (!strcmp(argv[puntero_parametro],"--zeng-snapshot-interval-frames")) {
-				siguiente_parametro_argumento();
+                else zeng_frames_video_cada_snapshot=valor*50;
+            }
 
-				int valor=parse_string_to_number(argv[puntero_parametro]);
-				if (valor<1 || valor>9*50) {
-						printf ("Invalid value %d for setting --zeng-snapshot-interval-frames\n",valor);
-						exit(1);
-				}
+            else if (!strcmp(argv[puntero_parametro],"--zeng-snapshot-interval-frames")) {
+                siguiente_parametro_argumento();
 
-				zeng_frames_video_cada_snapshot=valor;
-			}
+                int valor=parse_string_to_number(argv[puntero_parametro]);
+                if (valor<1 || valor>9*50) {
+                        debug_printf (VERBOSE_ERR,"Invalid value %d for setting --zeng-snapshot-interval-frames\n",valor);
 
-			else if (!strcmp(argv[puntero_parametro],"--zeng-iam-master")) {
-				zeng_i_am_master=1;
-			}
+                }
+
+                else zeng_frames_video_cada_snapshot=valor;
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--zeng-iam-master")) {
+                zeng_i_am_master=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--zeng-not-send-input-events")) {
                 zeng_do_not_send_input_events=1;
@@ -6561,65 +7994,65 @@ int parse_cmdline_options(int desde_commandline) {
 
 
 
-        	else if (!strcmp(argv[puntero_parametro],"--total-minutes-use")) {
-				siguiente_parametro_argumento();
-				total_minutes_use=parse_string_to_number(argv[puntero_parametro]);
+            else if (!strcmp(argv[puntero_parametro],"--total-minutes-use")) {
+                siguiente_parametro_argumento();
+                total_minutes_use=parse_string_to_number(argv[puntero_parametro]);
 
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--stats-send-already-asked")) {
-				stats_asked.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--stats-send-already-asked")) {
+                stats_asked.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--tbblue-autoconfigure-sd-already-asked")) {
-				tbblue_autoconfigure_sd_asked.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--tbblue-autoconfigure-sd-already-asked")) {
+                tbblue_autoconfigure_sd_asked.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--stats-send-enabled")) {
-				stats_enabled.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--stats-send-enabled")) {
+                stats_enabled.v=1;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--stats-uuid")) {
-				siguiente_parametro_argumento();
-				strcpy(stats_uuid,argv[puntero_parametro]);
-			}
+            else if (!strcmp(argv[puntero_parametro],"--stats-uuid")) {
+                siguiente_parametro_argumento();
+                strcpy(stats_uuid,argv[puntero_parametro]);
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--stats-disable-check-updates")) {
-				stats_check_updates_enabled.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--stats-disable-check-updates")) {
+                stats_check_updates_enabled.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--stats-disable-check-yesterday-users")) {
-				stats_check_yesterday_users_enabled.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--stats-disable-check-yesterday-users")) {
+                stats_check_yesterday_users_enabled.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--stats-last-avail-version")) {
-				siguiente_parametro_argumento();
-				strcpy(stats_last_remote_version,argv[puntero_parametro]);
-			}
+            else if (!strcmp(argv[puntero_parametro],"--stats-last-avail-version")) {
+                siguiente_parametro_argumento();
+                strcpy(stats_last_remote_version,argv[puntero_parametro]);
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--stats-speccy-queries")) {
-				siguiente_parametro_argumento();
-				stats_total_speccy_browser_queries=parse_string_to_number(argv[puntero_parametro]);
-			}
+            else if (!strcmp(argv[puntero_parametro],"--stats-speccy-queries")) {
+                siguiente_parametro_argumento();
+                stats_total_speccy_browser_queries=parse_string_to_number(argv[puntero_parametro]);
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--stats-zx81-queries")) {
-				siguiente_parametro_argumento();
-				stats_total_zx81_browser_queries=parse_string_to_number(argv[puntero_parametro]);
-			}
-
-
+            else if (!strcmp(argv[puntero_parametro],"--stats-zx81-queries")) {
+                siguiente_parametro_argumento();
+                stats_total_zx81_browser_queries=parse_string_to_number(argv[puntero_parametro]);
+            }
 
 
 
-			else if (!strcmp(argv[puntero_parametro],"--last-version-text")) {
-				siguiente_parametro_argumento();
-				strcpy(last_version_text_string,argv[puntero_parametro]);
-			}
 
 
-			else if (!strcmp(argv[puntero_parametro],"--last-version")) {
-				siguiente_parametro_argumento();
-				strcpy(last_version_string,argv[puntero_parametro]);
+            else if (!strcmp(argv[puntero_parametro],"--last-version-text")) {
+                siguiente_parametro_argumento();
+                strcpy(last_version_text_string,argv[puntero_parametro]);
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--last-version")) {
+                siguiente_parametro_argumento();
+                strcpy(last_version_string,argv[puntero_parametro]);
 
                 last_buildnumber_int=atoi(last_version_string);
 
@@ -6630,11 +8063,11 @@ int parse_cmdline_options(int desde_commandline) {
                     zesarux_has_been_downgraded.v=1;
                     sleep(3);
                 }
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--no-show-changelog")) {
-				do_no_show_changelog_when_update.v=1;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--no-show-changelog")) {
+                do_no_show_changelog_when_update.v=1;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--no-show-david-in-memoriam")) {
                 do_no_show_david_in_memoriam.v=1;
@@ -6645,189 +8078,203 @@ int parse_cmdline_options(int desde_commandline) {
                 menu_debug_hexdump_add_follow_expression(argv[puntero_parametro]);
             }
 
-			else if (!strcmp(argv[puntero_parametro],"--disablebetawarning")) {
-				siguiente_parametro_argumento();
-				strcpy(parameter_disablebetawarning,argv[puntero_parametro]);
-			}
+            //Deprecated
+            else if (!strcmp(argv[puntero_parametro],"--disablebetawarning")) {
+                siguiente_parametro_argumento();
+                //strcpy(parameter_disablebetawarning,argv[puntero_parametro]);
+            }
 
+            //Deprecated
             else if (!strcmp(argv[puntero_parametro],"--disableallbetawarningpause")) {
-                parameter_disable_allbetawarningsleep.v=1;
+                //parameter_disable_allbetawarningsleep.v=1;
             }
 
             //Mantenido por compatibilidad con versiones antiguas
-			else if (!strcmp(argv[puntero_parametro],"--windowgeometry")) {
-				siguiente_parametro_argumento();
-				char *nombre;
-				int x,y,ancho,alto;
+            else if (!strcmp(argv[puntero_parametro],"--windowgeometry")) {
+                siguiente_parametro_argumento();
+                char *nombre;
+                int x,y,ancho,alto;
 
-				nombre=argv[puntero_parametro];
+                nombre=argv[puntero_parametro];
 
-				siguiente_parametro_argumento();
-				x=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                x=parse_string_to_number(argv[puntero_parametro]);
 
-				siguiente_parametro_argumento();
-				y=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                y=parse_string_to_number(argv[puntero_parametro]);
 
-				siguiente_parametro_argumento();
-				ancho=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                ancho=parse_string_to_number(argv[puntero_parametro]);
 
-				siguiente_parametro_argumento();
-				alto=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                alto=parse_string_to_number(argv[puntero_parametro]);
 
-				if (x<0 || y<0 || ancho<0 || alto<0) {
-					printf ("Invalid window geometry\n");
-					exit(1);
-				}
+                if (x<0 || y<0 || ancho<0 || alto<0) {
+                    debug_printf (VERBOSE_ERR,"Invalid window geometry\n");
 
-				util_add_window_geometry(nombre,x,y,ancho,alto,0,0,ancho,alto);  //mantenido por compatibilidad minimizado=maximizado=0, ancho alto antes de minimizado
+                }
 
-			}
+                else util_add_window_geometry(nombre,x,y,ancho,alto,0,0,ancho,alto);  //mantenido por compatibilidad minimizado=maximizado=0, ancho alto antes de minimizado
 
-
-			else if (!strcmp(argv[puntero_parametro],"--windowgeometry-ext")) {
-				siguiente_parametro_argumento();
-				char *nombre;
-				int x,y,ancho,alto,is_minimized;
-
-				nombre=argv[puntero_parametro];
-
-				siguiente_parametro_argumento();
-				x=parse_string_to_number(argv[puntero_parametro]);
-
-				siguiente_parametro_argumento();
-				y=parse_string_to_number(argv[puntero_parametro]);
-
-				siguiente_parametro_argumento();
-				ancho=parse_string_to_number(argv[puntero_parametro]);
-
-				siguiente_parametro_argumento();
-				alto=parse_string_to_number(argv[puntero_parametro]);
-
-				if (x<0 || y<0 || ancho<0 || alto<0) {
-					printf ("Invalid window geometry\n");
-					exit(1);
-				}
-
-				siguiente_parametro_argumento();
-				is_minimized=parse_string_to_number(argv[puntero_parametro]);
-
-				util_add_window_geometry(nombre,x,y,ancho,alto,is_minimized,0,ancho,alto); //mantenido por compatibilidad ancho y alto antes de minimizado
-
-			}
-
-			else if (!strcmp(argv[puntero_parametro],"--windowgeometry-full")) {
-				siguiente_parametro_argumento();
-				char *nombre;
-				int x,y,ancho,alto,ancho_antes_minimized,alto_antes_minimized,is_minimized;
-
-				nombre=argv[puntero_parametro];
-
-				siguiente_parametro_argumento();
-				x=parse_string_to_number(argv[puntero_parametro]);
-
-				siguiente_parametro_argumento();
-				y=parse_string_to_number(argv[puntero_parametro]);
-
-				siguiente_parametro_argumento();
-				ancho=parse_string_to_number(argv[puntero_parametro]);
-
-				siguiente_parametro_argumento();
-				alto=parse_string_to_number(argv[puntero_parametro]);
-
-				siguiente_parametro_argumento();
-				ancho_antes_minimized=parse_string_to_number(argv[puntero_parametro]);
-
-				siguiente_parametro_argumento();
-				alto_antes_minimized=parse_string_to_number(argv[puntero_parametro]);
-
-				if (x<0 || y<0 || ancho<0 || alto<0) {
-					printf ("Invalid window geometry\n");
-					exit(1);
-				}
-
-				siguiente_parametro_argumento();
-				is_minimized=parse_string_to_number(argv[puntero_parametro]);
-
-				util_add_window_geometry(nombre,x,y,ancho,alto,is_minimized,0,ancho_antes_minimized,alto_antes_minimized); //mantenido por compatibilidad
-
-			}
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--window-geometry")) {
-				siguiente_parametro_argumento();
-				char *nombre;
-				int x,y,ancho,alto,ancho_antes_minimized,alto_antes_minimized,is_minimized,is_maximized;
+            else if (!strcmp(argv[puntero_parametro],"--windowgeometry-ext")) {
+                siguiente_parametro_argumento();
+                char *nombre;
+                int x,y,ancho,alto,is_minimized;
 
-				nombre=argv[puntero_parametro];
+                nombre=argv[puntero_parametro];
 
-				siguiente_parametro_argumento();
-				x=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                x=parse_string_to_number(argv[puntero_parametro]);
 
-				siguiente_parametro_argumento();
-				y=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                y=parse_string_to_number(argv[puntero_parametro]);
 
-				siguiente_parametro_argumento();
-				ancho=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                ancho=parse_string_to_number(argv[puntero_parametro]);
 
-				siguiente_parametro_argumento();
-				alto=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
+                alto=parse_string_to_number(argv[puntero_parametro]);
 
-				siguiente_parametro_argumento();
-				ancho_antes_minimized=parse_string_to_number(argv[puntero_parametro]);
+                siguiente_parametro_argumento();
 
-				siguiente_parametro_argumento();
-				alto_antes_minimized=parse_string_to_number(argv[puntero_parametro]);
+                if (x<0 || y<0 || ancho<0 || alto<0) {
+                    debug_printf (VERBOSE_ERR,"Invalid window geometry\n");
 
-				if (x<0 || y<0 || ancho<0 || alto<0) {
-					printf ("Invalid window geometry\n");
-					exit(1);
-				}
+                }
 
-				siguiente_parametro_argumento();
-				is_minimized=parse_string_to_number(argv[puntero_parametro]);
+                else {
+                    is_minimized=parse_string_to_number(argv[puntero_parametro]);
+
+                    util_add_window_geometry(nombre,x,y,ancho,alto,is_minimized,0,ancho,alto); //mantenido por compatibilidad ancho y alto antes de minimizado
+                }
+
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--windowgeometry-full")) {
+                siguiente_parametro_argumento();
+                char *nombre;
+                int x,y,ancho,alto,ancho_antes_minimized,alto_antes_minimized,is_minimized;
+
+                nombre=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                x=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                y=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                ancho=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                alto=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                ancho_antes_minimized=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                alto_antes_minimized=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+
+                if (x<0 || y<0 || ancho<0 || alto<0) {
+                    debug_printf (VERBOSE_ERR,"Invalid window geometry\n");
+
+                }
+
+                else {
+                    is_minimized=parse_string_to_number(argv[puntero_parametro]);
+
+                    util_add_window_geometry(nombre,x,y,ancho,alto,is_minimized,0,ancho_antes_minimized,alto_antes_minimized); //mantenido por compatibilidad
+                }
+
+            }
+
+
+            else if (!strcmp(argv[puntero_parametro],"--window-geometry")) {
+                siguiente_parametro_argumento();
+                char *nombre;
+                int x,y,ancho,alto,ancho_antes_minimized,alto_antes_minimized,is_minimized,is_maximized;
+
+                nombre=argv[puntero_parametro];
+
+                siguiente_parametro_argumento();
+                x=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                y=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                ancho=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                alto=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                ancho_antes_minimized=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                alto_antes_minimized=parse_string_to_number(argv[puntero_parametro]);
+
+                siguiente_parametro_argumento();
+                is_minimized=parse_string_to_number(argv[puntero_parametro]);
 
                 siguiente_parametro_argumento();
                 is_maximized=parse_string_to_number(argv[puntero_parametro]);
 
-				util_add_window_geometry(nombre,x,y,ancho,alto,is_minimized,is_maximized,ancho_antes_minimized,alto_antes_minimized);
+                if (x<0 || y<0 || ancho<0 || alto<0) {
+                    debug_printf (VERBOSE_ERR,"Invalid window geometry\n");
 
-			}
+                }
+
+                else {
+                    //printf("Recuperando geometria ventana %s minimizada %d\n",nombre,is_minimized);
+                    util_add_window_geometry(nombre,x,y,ancho,alto,is_minimized,is_maximized,ancho_antes_minimized,alto_antes_minimized);
+                }
+
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--clear-all-windowgeometry")) {
-				util_clear_all_windows_geometry();
-			}
+            else if (!strcmp(argv[puntero_parametro],"--clear-all-windowgeometry")) {
+                util_clear_all_windows_geometry();
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--restorewindow")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--restorewindow")) {
+                siguiente_parametro_argumento();
 
-				//strcpy(restore_window_array[total_restore_window_array_elements++],argv[puntero_parametro]);
+                //strcpy(restore_window_array[total_restore_window_array_elements++],argv[puntero_parametro]);
                 add_window_to_restore(argv[puntero_parametro]);
 
-			}
+                //Si se ha restaurado "emulateddisplay", decimos que los iconos pueden ubicarse donde esta normalmente la pantalla emulada
+                if (!strcmp(argv[puntero_parametro],"emulateddisplay")) se_abre_emulated_display=1;
 
-			else if (!strcmp(argv[puntero_parametro],"--restore-all-known-windows")) {
-				zxvision_add_all_windows_to_restore();
-			}
+            }
+
+            else if (!strcmp(argv[puntero_parametro],"--restore-all-known-windows")) {
+                zxvision_add_all_windows_to_restore();
+            }
 
             //Mantenida por compatibilidad hacia atras. esto es ahora por defecto desde version 10.2
-			else if (!strcmp(argv[puntero_parametro],"--enable-restore-windows")) {
-				//nada
-			}
+            else if (!strcmp(argv[puntero_parametro],"--enable-restore-windows")) {
+                //nada
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--disable-restore-windows")) {
-				menu_reopen_background_windows_on_start.v=0;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--disable-restore-windows")) {
+                menu_reopen_background_windows_on_start.v=0;
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--tonegenerator")) {
-				siguiente_parametro_argumento();
-                                 int valor=atoi(argv[puntero_parametro]);
-                                if (valor<1 || valor>3) {
-                                        printf ("Invalid value %d for setting --tonegenerator\n",valor);
-                                        exit(1);
-                                }
-				audio_tone_generator=valor;
-			}
+            else if (!strcmp(argv[puntero_parametro],"--tonegenerator")) {
+                siguiente_parametro_argumento();
+                int valor=atoi(argv[puntero_parametro]);
+                if (valor<1 || valor>3) {
+                        debug_printf (VERBOSE_ERR,"Invalid value %d for setting --tonegenerator\n",valor);
+
+                }
+                else audio_tone_generator=valor;
+            }
 
             else if (!strcmp(argv[puntero_parametro],"--enable-christmas-mode")) {
                 christmas_mode.v=1;
@@ -6838,98 +8285,106 @@ int parse_cmdline_options(int desde_commandline) {
             }
 
             //sensor-set position type
-			else if (!strcmp(argv[puntero_parametro],"--sensor-set")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--sensor-set")) {
+                siguiente_parametro_argumento();
                 int numero_sensor=parse_string_to_number(argv[puntero_parametro]);
-                if (numero_sensor<0 || numero_sensor>=MENU_VIEW_SENSORS_TOTAL_ELEMENTS) {
-                    printf ("Invalid value %d for setting --sensor-set\n",numero_sensor);
-                    exit(1);
-                }
 
                 siguiente_parametro_argumento();
-                char *sensor_type=argv[puntero_parametro];
 
-                int sensor_id=sensor_find(sensor_type);
-                if (sensor_id<0) {
-                    //Si nombre sensor invalido, damos error pero seguimos, para facilitar
-                    //cargar configuraciones de versiones superiores con sensores que no reconocemos
-                    debug_printf (VERBOSE_ERR,"Invalid sensor type %s for setting --sensor-set",sensor_type);
+                if (numero_sensor<0 || numero_sensor>=MENU_VIEW_SENSORS_TOTAL_ELEMENTS) {
+                    debug_printf (VERBOSE_ERR,"Invalid value %d for setting --sensor-set\n",numero_sensor);
+
                 }
 
                 else {
-    				strcpy (menu_debug_view_sensors_list_sensors[numero_sensor].short_name,sensor_type);
+                    char *sensor_type=argv[puntero_parametro];
+
+                    int sensor_id=sensor_find(sensor_type);
+                    if (sensor_id<0) {
+                        //Si nombre sensor invalido, damos error pero seguimos, para facilitar
+                        //cargar configuraciones de versiones superiores con sensores que no reconocemos
+                        debug_printf (VERBOSE_ERR,"Invalid sensor type %s for setting --sensor-set",sensor_type);
+                    }
+
+                    else {
+                        strcpy (menu_debug_view_sensors_list_sensors[numero_sensor].short_name,sensor_type);
+                    }
                 }
-			}
+            }
 
             //sensor-set-widget position type
-			else if (!strcmp(argv[puntero_parametro],"--sensor-set-widget")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--sensor-set-widget")) {
+                siguiente_parametro_argumento();
                 int numero_sensor=parse_string_to_number(argv[puntero_parametro]);
-                if (numero_sensor<0 || numero_sensor>=MENU_VIEW_SENSORS_TOTAL_ELEMENTS) {
-                    printf ("Invalid value %d for setting --sensor-set-widget\n",numero_sensor);
-                    exit(1);
-                }
 
                 siguiente_parametro_argumento();
-                char *sensor_type=argv[puntero_parametro];
 
-                int widget_id=zxvision_widget_find_name_type(sensor_type);
-                if (widget_id<0) {
-                    //Si nombre sensor invalido, damos error pero seguimos, para facilitar
-                    //cargar configuraciones de versiones superiores con sensores que no reconocemos
-                    debug_printf (VERBOSE_ERR,"Invalid sensor widget type %s for setting --sensor-set-widget",sensor_type);
+                if (numero_sensor<0 || numero_sensor>=MENU_VIEW_SENSORS_TOTAL_ELEMENTS) {
+                    debug_printf (VERBOSE_ERR,"Invalid value %d for setting --sensor-set-widget\n",numero_sensor);
+
                 }
+
                 else {
-				    menu_debug_view_sensors_list_sensors[numero_sensor].tipo=widget_id;
+                    char *sensor_type=argv[puntero_parametro];
+
+                    int widget_id=zxvision_widget_find_name_type(sensor_type);
+                    if (widget_id<0) {
+                        //Si nombre sensor invalido, damos error pero seguimos, para facilitar
+                        //cargar configuraciones de versiones superiores con sensores que no reconocemos
+                        debug_printf (VERBOSE_ERR,"Invalid sensor widget type %s for setting --sensor-set-widget",sensor_type);
+                    }
+                    else {
+                        menu_debug_view_sensors_list_sensors[numero_sensor].tipo=widget_id;
+                    }
                 }
-			}
+            }
 
             //mostrar valor en vez de porcentaje
            //sensor-set-abs position
-			else if (!strcmp(argv[puntero_parametro],"--sensor-set-abs")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--sensor-set-abs")) {
+                siguiente_parametro_argumento();
                 int numero_sensor=parse_string_to_number(argv[puntero_parametro]);
                 if (numero_sensor<0 || numero_sensor>=MENU_VIEW_SENSORS_TOTAL_ELEMENTS) {
-                    printf ("Invalid value %d for setting --sensor-set-abs\n",numero_sensor);
-                    exit(1);
+                    debug_printf (VERBOSE_ERR,"Invalid value %d for setting --sensor-set-abs\n",numero_sensor);
+
                 }
 
-                menu_debug_view_sensors_list_sensors[numero_sensor].valor_en_vez_de_perc=1;
+                else menu_debug_view_sensors_list_sensors[numero_sensor].valor_en_vez_de_perc=1;
 
-			}
+            }
 
 
 
-			else if (!strcmp(argv[puntero_parametro],"--history-item-add-debugcpu-ptr")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--history-item-add-debugcpu-ptr")) {
+                siguiente_parametro_argumento();
                 util_scanf_history_insert(menu_debug_registers_change_ptr_historial,argv[puntero_parametro]);
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--history-item-add-hexeditor-ptr")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--history-item-add-hexeditor-ptr")) {
+                siguiente_parametro_argumento();
                 util_scanf_history_insert(menu_debug_hexdump_change_ptr_historial,argv[puntero_parametro]);
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--history-item-add-sprites-ptr")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--history-item-add-sprites-ptr")) {
+                siguiente_parametro_argumento();
                 util_scanf_history_insert(menu_debug_sprites_change_ptr_historial,argv[puntero_parametro]);
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--history-item-add-poke-ptr")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--history-item-add-poke-ptr")) {
+                siguiente_parametro_argumento();
                 util_scanf_history_insert(menu_debug_poke_address_historial,argv[puntero_parametro]);
-			}
+            }
 
-			else if (!strcmp(argv[puntero_parametro],"--history-item-add-poke-value")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--history-item-add-poke-value")) {
+                siguiente_parametro_argumento();
                 util_scanf_history_insert(menu_debug_poke_value_historial,argv[puntero_parametro]);
-			}
+            }
 
 
-			else if (!strcmp(argv[puntero_parametro],"--preferred-timer")) {
-				siguiente_parametro_argumento();
+            else if (!strcmp(argv[puntero_parametro],"--preferred-timer")) {
+                siguiente_parametro_argumento();
                 timer_set_preferred_by_name(argv[puntero_parametro]);
-			}
+            }
 
 
             else if (!strcmp(argv[puntero_parametro],"--convert-tap-tzx")) {
@@ -6940,7 +8395,7 @@ int parse_cmdline_options(int desde_commandline) {
 
                 printf("Converting from TAP file %s to TZX file %s\n",origen,destino);
 
-                if (util_extract_tap(origen,NULL,destino,0)) {
+                if (util_extract_tap(origen,NULL,destino,0,0)) {
                     printf("Error executing conversion\n");
                     exit(1);
                 }
@@ -6974,7 +8429,7 @@ int parse_cmdline_options(int desde_commandline) {
 
                 printf("Converting from TAP file %s to TZX Rodolfo Guerra Turbo file %s\n",origen,destino);
 
-                if (util_extract_tap(origen,NULL,destino,1)) {
+                if (util_extract_tap(origen,NULL,destino,1,0)) {
                     printf("Error executing conversion\n");
                     exit(1);
                 }
@@ -6991,7 +8446,7 @@ int parse_cmdline_options(int desde_commandline) {
 
                 printf("Converting from TAP file %s to PZX file %s\n",origen,destino);
 
-                if (util_extract_tap(origen,NULL,destino,0)) {
+                if (util_extract_tap(origen,NULL,destino,0,0)) {
                     printf("Error executing conversion\n");
                     exit(1);
                 }
@@ -7008,7 +8463,7 @@ int parse_cmdline_options(int desde_commandline) {
 
                 printf("Converting from TZX file %s to TAP file %s\n",origen,destino);
 
-                if (util_extract_tzx(origen,NULL,destino)) {
+                if (util_extract_tzx(origen,NULL,destino,0)) {
                     printf("Error executing conversion\n");
                     exit(1);
                 }
@@ -7025,7 +8480,7 @@ int parse_cmdline_options(int desde_commandline) {
 
                 printf("Converting from PZX file %s to TAP file %s\n",origen,destino);
 
-                if (util_extract_pzx(origen,NULL,destino)) {
+                if (util_extract_pzx(origen,NULL,destino,0)) {
                     printf("Error executing conversion\n");
                     exit(1);
                 }
@@ -7035,18 +8490,18 @@ int parse_cmdline_options(int desde_commandline) {
             }
 
 
-			//autodetectar que el parametro es un snap o cinta. Esto tiene que ser siempre el ultimo else if
-			else if (quickload_valid_extension(argv[puntero_parametro])) {
-			        quickload_inicial.v=1;
-                		quickload_nombre=argv[puntero_parametro];
-		        }
+            //autodetectar que el parametro es un snap o cinta. Esto tiene que ser siempre el ultimo else if
+            else if (quickload_valid_extension(argv[puntero_parametro])) {
+                    quickload_inicial.v=1;
+                        quickload_nombre=argv[puntero_parametro];
+                }
 
-			else {
+            else {
 
 
                 if (desde_commandline) {
-				    //parametro desconocido por linea de comandos, avisar con error
-				    debug_printf (VERBOSE_ERR,"Unknown parameter : %s . Stopping parsing the rest of parameters",argv[puntero_parametro]);
+                    //parametro desconocido por linea de comandos, avisar con error
+                    debug_printf (VERBOSE_ERR,"Unknown setting : %s . Stopping parsing the rest of settings",argv[puntero_parametro]);
                     return 1;
                 }
 
@@ -7054,7 +8509,14 @@ int parse_cmdline_options(int desde_commandline) {
 
 
                     //si en cambio estamos parseando archivo de configuracion, hacerlo mas tolerante, arrancar pero con aviso
-                    debug_printf (VERBOSE_ERR,"Unknown parameter : %s",argv[puntero_parametro]);
+                    //Nota: para que sea tolerante en cuanto a fallos en parametros de un comando, por ejemplo:
+                    //--def-button-function 99999 "SendKeysMenu"
+                    //Ese 99999 no es válido, lo que hace el parseo de ese comando es leer primero los dos parámetros
+                    //(el numero de botón y la acción) y luego mostrar error si conviene. Pero de esa manera ya hemos
+                    //parseado los dos parámetros y el "cursor" de lectura de config estará en el siguiente comando
+                    //Sin embargo, si parásemos al leer el número de botón inválido, el siguiente comando que se leería
+                    //seria "SendKeysMenu", lo cual tampoco seria mucho problema porque se mostraria este error de "Unknown setting"
+                    debug_printf (VERBOSE_ERR,"Unknown setting : %s",argv[puntero_parametro]);
 
                     //Nos vamos hasta siguiente parametro que empiece con "--"
                     int salir=0;
@@ -7085,13 +8547,13 @@ int parse_cmdline_options(int desde_commandline) {
 
 
 
-			}
+            }
 
 
-		}
+        }
 
-		//Fin de interpretacion de parametros
-		return 0;
+        //Fin de interpretacion de parametros
+        return 0;
 
 }
 
@@ -7107,19 +8569,19 @@ int first_start_wizard_disabled=0;
 //Proceso inicial
 int zesarux_main (int main_argc,char *main_argv[]) {
 
-	if (main_argc>1) {
-		if (!strcmp(main_argv[1],"--version")) {
-		//	printf ("ZEsarUX Version: " EMULATOR_VERSION " Date: " EMULATOR_DATE " - " EMULATOR_EDITION_NAME "\n");
-			printf ("ZEsarUX " EMULATOR_VERSION " - " EMULATOR_EDITION_NAME ". " EMULATOR_DATE  "\n");
-			exit(0);
-		}
+    if (main_argc>1) {
+        if (!strcmp(main_argv[1],"--version")) {
+        //	printf ("ZEsarUX Version: " EMULATOR_VERSION " Date: " EMULATOR_DATE " - " EMULATOR_EDITION_NAME "\n");
+            printf ("ZEsarUX " EMULATOR_VERSION " - " EMULATOR_EDITION_NAME ". " EMULATOR_DATE  "\n");
+            exit(0);
+        }
 
-		if (!strcmp(main_argv[1],"--machinelist")) {
-			get_machine_list_whitespace();
-			printf("\n");
-			exit(0);
-		}
-	}
+        if (!strcmp(main_argv[1],"--machinelist")) {
+            get_machine_list_whitespace();
+            printf("\n");
+            exit(0);
+        }
+    }
 
 
     if (main_argc>1) {
@@ -7131,38 +8593,38 @@ int zesarux_main (int main_argc,char *main_argv[]) {
     }
 
 
-	//de momento ponemos esto a null y los mensajes siempre saldran por un printf normal
-	scr_messages_debug=NULL;
+    //de momento ponemos esto a null y los mensajes siempre saldran por un printf normal
+    scr_messages_debug=NULL;
 
 #if defined(__APPLE__)
-	//Si estamos en Mac y estamos ejecutando desde bundle de la App, cambiar carpeta a directorio de trabajo
-	//Esto antes estaba en el zesarux.sh, pero ahora se llama al binario para poder usar los permisos de Documents, Downloads etc
-	//de MacOS Catalina
+    //Si estamos en Mac y estamos ejecutando desde bundle de la App, cambiar carpeta a directorio de trabajo
+    //Esto antes estaba en el zesarux.sh, pero ahora se llama al binario para poder usar los permisos de Documents, Downloads etc
+    //de MacOS Catalina
 
-	//Cambiar a la carpeta donde estamos ejecutando el binario
+    //Cambiar a la carpeta donde estamos ejecutando el binario
 
-	//por si acaso, por defecto a cadena vacia
+    //por si acaso, por defecto a cadena vacia
     char macos_path_to_executable[PATH_MAX];
-	macos_path_to_executable[0]=0;
+    macos_path_to_executable[0]=0;
 
-	uint32_t bufsize=PATH_MAX;
+    uint32_t bufsize=PATH_MAX;
 
-	_NSGetExecutablePath(macos_path_to_executable, &bufsize);
+    _NSGetExecutablePath(macos_path_to_executable, &bufsize);
 
-	if (macos_path_to_executable[0]!=0) {
+    if (macos_path_to_executable[0]!=0) {
 
-			util_get_dir(macos_path_to_executable,zesarux_path_location);
+            util_get_dir(macos_path_to_executable,zesarux_path_location);
 
-			printf ("Changing to Mac App bundle directory: %s\n",zesarux_path_location);
-			chdir(zesarux_path_location);
+            printf ("Changing to Mac App bundle directory: %s\n",zesarux_path_location);
+            chdir(zesarux_path_location);
 
-	}
-	/*
-	Para testeo, para eliminar permisos de acceso en Catalina, ejecutar:
-	tccutil reset SystemPolicyDocumentsFolder com.cesarhernandez.zesarux
-	tccutil reset SystemPolicyDownloadsFolder com.cesarhernandez.zesarux
-	tccutil reset SystemPolicyDesktopFolder com.cesarhernandez.zesarux
-	*/
+    }
+    /*
+    Para testeo, para eliminar permisos de acceso en Catalina, ejecutar:
+    tccutil reset SystemPolicyDocumentsFolder com.cesarhernandez.zesarux
+    tccutil reset SystemPolicyDownloadsFolder com.cesarhernandez.zesarux
+    tccutil reset SystemPolicyDesktopFolder com.cesarhernandez.zesarux
+    */
 
 #else
     //Guardar la ruta desde donde está ejecutado ZEsarUX para luego buscar archivos de rom, etc
@@ -7179,26 +8641,26 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
 
 //Begin Copyright message
 
-	printf ("ZEsarUX - ZX Second-Emulator And Released for UniX\n"
-	"https://github.com/chernandezba/zesarux\n\n"
+    printf ("ZEsarUX - ZX Second-Emulator And Released for UniX\n"
+    "https://github.com/chernandezba/zesarux\n\n"
     "Copyright (C) 2013 Cesar Hernandez Bano\n"
-	"\n"
+    "\n"
     "ZEsarUX is free software: you can redistribute it and/or modify\n"
     "it under the terms of the GNU General Public License as published by\n"
     "the Free Software Foundation, either version 3 of the License, or\n"
     "(at your option) any later version.\n"
-	"\n"
+    "\n"
     "This program is distributed in the hope that it will be useful,\n"
     "but WITHOUT ANY WARRANTY; without even the implied warranty of\n"
     "MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n"
     "GNU General Public License for more details.\n"
-	"\n"
+    "\n"
     "You should have received a copy of the GNU General Public License\n"
     "along with this program.  If not, see <https://www.gnu.org/licenses/>.\n"
-	"\n"
-	);
+    "\n"
+    );
 
-	printf ("Please read the other licenses used in ZEsarUX, from the menu Help->Licenses or just open files from folder licenses/\n\n\n");
+    printf ("Please read the other licenses used in ZEsarUX, from the menu Help->Licenses or just open files from licenses/ folder\n\n\n");
 
 
 
@@ -7224,68 +8686,69 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
     buildnumber_int=atoi(BUILDNUMBER);
     //printf("build number %u\n",buildnumber_int);
 
+    menu_init_strings_language_array();
 
-	//Unos cuantos valores por defecto
-	cpu_step_mode.v=0;
-	current_machine_type=1;
-	noautoload.v=0;
-	ay_speech_enabled.v=1;
-	ay_envelopes_enabled.v=1;
-	tapefile=NULL;
-	realtape_name=NULL;
-	tape_out_file=NULL;
-	aofilename=NULL;
-	aofile_inserted.v=0;
-	vofilename=NULL;
-	vofile_inserted.v=0;
-	input_file_keyboard_inserted.v=0;
-	input_file_keyboard_playing.v=0;
-	input_file_keyboard_send_pause.v=1;
-
-
-	/*
-		OLD : Activado por defecto. La versión de windows, tanto pthreads, como sin threads, y validado en 5.0, 6.0 y 6,1.
-		hace un clic continuo a veces. Y activando el detector, como se apaga el audio, se deja de escuchar
-
-		Desactivado por defecto: Version windows sin pthreads, no hace click continuo aun sin tener detector de silencio
-		Version windows con pthreads, hace clicks independientemente del detector de silencio
-	*/
-
-	silence_detector_setting.v=0;
+    //Unos cuantos valores por defecto
+    cpu_step_mode.v=0;
+    current_machine_type=1;
+    noautoload.v=0;
+    ay_speech_enabled.v=1;
+    ay_envelopes_enabled.v=1;
+    tapefile=NULL;
+    realtape_name=NULL;
+    tape_out_file=NULL;
+    aofilename=NULL;
+    aofile_inserted.v=0;
+    vofilename=NULL;
+    vofile_inserted.v=0;
+    send_text_as_keystrokes_is_inserted.v=0;
+    send_text_as_keystrokes_playing.v=0;
+    send_text_as_keystrokes_send_pause.v=1;
 
 
+    /*
+        OLD : Activado por defecto. La versión de windows, tanto pthreads, como sin threads, y validado en 5.0, 6.0 y 6,1.
+        hace un clic continuo a veces. Y activando el detector, como se apaga el audio, se deja de escuchar
 
-	scr_z88_cpc_load_keymap=NULL;
+        Desactivado por defecto: Version windows sin pthreads, no hace click continuo aun sin tener detector de silencio
+        Version windows con pthreads, hace clicks independientemente del detector de silencio
+    */
+
+    silence_detector_setting.v=0;
 
 
 
-	scrfile=NULL;
-	snapfile=NULL;
-	modificado_border.v=1;
-	border_enabled.v=1;
+    scr_z88_cpc_load_keymap=NULL;
 
-	scr_putpixel=NULL;
+
+
+    scrfile=NULL;
+    snapfile=NULL;
+    modificado_border.v=1;
+    border_enabled.v=1;
+
+    scr_putpixel=NULL;
     //scr_driver_can_ext_desktop=NULL;
-	//scr_putpixel_final=NULL;
+    //scr_putpixel_final=NULL;
 
-	simulate_screen_zx8081.v=0;
-	tape_any_flag_loading.v=0;
+    simulate_screen_zx8081.v=0;
+    tape_any_flag_loading.v=0;
 
-	video_interlaced_mode.v=0;
+    video_interlaced_mode.v=0;
 
-	tape_loadsave_inserted=0;
+    tape_loadsave_inserted=0;
 
-	//tape_load_inserted.v=0;
-	//tape_save_inserted.v=0;
+    //tape_load_inserted.v=0;
+    //tape_save_inserted.v=0;
 
-	menu_splash_text_active.v=0;
-	opcion_no_welcome_message.v=0;
-	spec_smp_memory=NULL;
+    menu_splash_text_active.v=0;
+    opcion_no_welcome_message.v=0;
+    spec_smp_memory=NULL;
 
-	autoselect_snaptape_options.v=1;
+    autoselect_snaptape_options.v=1;
 
-	tape_loading_simulate.v=0;
-	tape_loading_simulate_fast.v=0;
+    tape_loading_simulate.v=0;
+    tape_loading_simulate_fast.v=0;
 
 
     //Valores de ZX80/81
@@ -7299,9 +8762,9 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
     ram_in_32768.v=0;
     ram_in_49152.v=0;
     wrx_present.v=0;
-    zx8081_vsync_sound.v=0;
+    //zx8081_vsync_sound.v=0;
     //video_zx8081_shows_vsync_on_display.v=0;
-    video_zx8081_estabilizador_imagen.v=1;
+
     //video_zx8081_decremento_x_cuando_mayor=8;
 
     //19KB (3+16)
@@ -7313,6 +8776,7 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
     video_fast_mode_emulation.v=0;
 
     simulate_lost_vsync.v=0;
+    simulate_lost_hsync.v=0;
 
 
     last_x_atributo=0;
@@ -7331,9 +8795,11 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
 
     debug_printf_sem_init();
 
+    cache_putpixel_end_lock_semaphore();
+
 
 #ifndef NETWORKING_DISABLED
-	omplir_adr_internet_semaforo_init();
+    omplir_adr_internet_semaforo_init();
 #endif
 
 
@@ -7341,10 +8807,10 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
 
 
 #ifdef COMPILE_XWINDOWS
-	#ifdef USE_XEXT
-	#else
-	disable_shm=1;
-	#endif
+    #ifdef USE_XEXT
+    #else
+    disable_shm=1;
+    #endif
 #endif
 
 
@@ -7363,48 +8829,55 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
 
     tooltip_enabled.v=1;
 
-	autosave_snapshot_on_exit.v=0;
-	autoload_snapshot_on_start.v=0;
-	autosave_snapshot_path_buffer[0]=0;
+    autosave_snapshot_on_exit.v=0;
+    autoload_snapshot_on_start.v=0;
+    autosave_snapshot_path_buffer[0]=0;
 
-	audio_ay_player_mem=NULL;
+    audio_ay_player_mem=NULL;
 
-	menu_first_aid_startup=1;
+    menu_first_aid_startup=1;
 
-	//Inicializar rutinas de cpu core para que, al parsear breakpoints del config file, donde aun no hay inicializada maquina,
-	//funciones como opcode1=XX , peek(x), etc no peten porque utilizan funciones peek. Inicializar también las de puerto por si acaso
-	poke_byte=poke_byte_vacio;
-	poke_byte_no_time=poke_byte_vacio;
-	peek_byte=peek_byte_vacio;
-	peek_byte_no_time=peek_byte_vacio;
-	lee_puerto=lee_puerto_vacio;
-	//lee_puerto_no_time=lee_puerto_vacio;
-	out_port=out_port_vacio;
-	fetch_opcode=fetch_opcode_vacio;
-	realjoystick_init=realjoystick_null_init;
-	realjoystick_main=realjoystick_null_main;
+    //Inicializar rutinas de cpu core para que, al parsear breakpoints del config file, donde aun no hay inicializada maquina,
+    //funciones como opcode1=XX , peek(x), etc no peten porque utilizan funciones peek. Inicializar también las de puerto por si acaso
+    poke_byte=poke_byte_vacio;
+    poke_byte_no_time=poke_byte_vacio;
+    peek_byte=peek_byte_vacio;
+    peek_byte_no_time=peek_byte_vacio;
+    lee_puerto=lee_puerto_vacio;
+    //lee_puerto_no_time=lee_puerto_vacio;
+    out_port=out_port_vacio;
+    fetch_opcode=fetch_opcode_vacio;
+    realjoystick_init=realjoystick_null_init;
+    realjoystick_main=realjoystick_null_main;
 
-	ql_readbyte_no_ports_function=ql_readbyte_no_ports_vacio;
-	//realjoystick_hit=realjoystick_null_hit;
+    ql_readbyte_no_ports_function=ql_readbyte_no_ports_vacio;
+    //realjoystick_hit=realjoystick_null_hit;
 
-	//Inicializo tambien la de push
-	push_valor=push_valor_default;
-
-
-
-	clear_lista_teclas_redefinidas();
-
-	debug_nested_cores_pokepeek_init();
+    //Inicializo tambien la de push
+    push_valor=push_valor_default;
 
 
-	//esto va aqui, asi podemos parsear el establecer set-breakpoint desde linea de comandos
-	init_breakpoints_table();
-	init_watches_table();
 
-	extended_stack_clear();
+    clear_lista_teclas_redefinidas();
 
-	last_filesused_clear();
-	menu_first_aid_init();
+    debug_nested_cores_pokepeek_init();
+
+
+    //esto va aqui, asi podemos parsear el establecer set-breakpoint desde linea de comandos
+    init_breakpoints_table();
+    init_watches_table();
+    init_debug_user_variables();
+
+    extended_stack_clear();
+
+    init_screen_effects_table();
+
+    last_filesused_clear();
+    menu_first_aid_init();
+
+    snapshots_in_ram_reset();
+
+    charset_generate_zesarux_tiny();
 
     main_leezx81_init_semaphore();
 
@@ -7416,19 +8889,14 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
 
     ay_player_playlist_init();
 
-	//estos dos se inicializan para que al hacer set_emulator_speed, que se ejecuta antes de init audio,
-	//si no hay driver inicializado, no llamarlos
-	audio_end=NULL;
-	audio_init=NULL;
+    //estos dos se inicializan para que al hacer set_emulator_speed, que se ejecuta antes de init audio,
+    //si no hay driver inicializado, no llamarlos
+    audio_end=NULL;
+    audio_init=NULL;
 
-//temp
-//parse_string_to_number_add_label("sinclair",16384);
-//parse_string_to_number_add_label("research",32768);
-//parse_string_to_number_add_label("ltd",8192);
 
-//labels_load("prueba.sym");
 
-	quickload_inicial.v=0;
+    quickload_inicial.v=0;
     z88_slotcard_inicial.v=0;
 
 //Establecer rutas de utilidades externas
@@ -7437,20 +8905,20 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
     sprintf (external_tool_gunzip,"/usr/bin/gunzip");
 #endif
 
-	//antiguo
-	//realjoystick_new_set_default_functions();
+    //antiguo
+    //realjoystick_new_set_default_functions();
 
-	//nuevo:
-	realjoystick_init_events_keys_tables();
+    //nuevo:
+    realjoystick_init_events_keys_tables();
 
 
     //por si lanzamos un cpu_panic antes de inicializar video, que esto este a NULL y podamos detectarlo para no ejecutarlo
-	scr_end_pantalla=NULL;
-	memoria_spectrum=NULL;
+    scr_end_pantalla=NULL;
+    memoria_spectrum=NULL;
 
 
-	//Primero parseamos archivo de configuracion
-	debug_parse_config_file.v=0;
+    //Primero parseamos archivo de configuracion
+    debug_parse_config_file.v=0;
 
     //Si hay parametro de debug parse config file...
     //main_argc,char *main_argv[])
@@ -7462,7 +8930,7 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
     }
 
 
-	int noconfigfile=0;
+    int noconfigfile=0;
 
     if (main_argc>1) {
         if (!strcmp(main_argv[1],"--noconfigfile")) {
@@ -7493,7 +8961,7 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
 
 
 
-	if (noconfigfile==0) {
+    if (noconfigfile==0) {
         //parametros del archivo de configuracion
         zesarux_first_start=configfile_parse();
 
@@ -7517,63 +8985,63 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
             }
         }
         */
-	}
+    }
 
 
-  	//Luego parseamos parametros por linea de comandos
-  	argc=main_argc;
-  	argv=main_argv;
-  	puntero_parametro=0;
+      //Luego parseamos parametros por linea de comandos
+      argc=main_argc;
+      argv=main_argv;
+      puntero_parametro=0;
 
-  	if (parse_cmdline_options(1)) {
-		printf ("\n\n");
+      if (parse_cmdline_options(1)) {
+        printf ("\n\n");
         zesarux_cmdline_help();
         exit(1);
-	}
+    }
 
-	//Parsear dev config file, si especificada opcion
-	if (load_additional_config.v) {
+    //Parsear dev config file, si especificada opcion
+    if (load_additional_config.v) {
 
         if (devconfigfile_parse()) {
 
 
-			argc=devconfigfile_argc;
-			argv=devconfigfile_argv;
-			puntero_parametro=0;
+            argc=devconfigfile_argc;
+            argv=devconfigfile_argv;
+            puntero_parametro=0;
 
-			//Desde parseo de archivo de config no se genera error nunca, se es mas tolerante, avisando del error, pero
-			//parseando siguientes parametros
+            //Desde parseo de archivo de config no se genera error nunca, se es mas tolerante, avisando del error, pero
+            //parseando siguientes parametros
 
-			parse_cmdline_options(0);
-		}
-	}
+            parse_cmdline_options(0);
+        }
+    }
 
-	if (test_config_and_exit.v) exit(0);
+    if (test_config_and_exit.v) exit(0);
 
-	//Init random value. Usado en AY Chip y Random ram y mensajes "kidding"
+    //Init random value. Usado en AY Chip y Random ram y mensajes "kidding"
     init_randomize_noise_value();
 
 #ifdef SNAPSHOT_VERSION
-	printf ("Build number: " BUILDNUMBER "\n");
+    printf ("Build number: " BUILDNUMBER "\n");
 
-	printf ("WARNING. This is a Snapshot version and not a stable one\n"
-			 "Some features may not work, random crashes could happen, abnormal CPU use, or lots of debug messages on console\n\n");
+    printf ("WARNING. This is a Snapshot version and not a stable one\n"
+             "Some features may not work, random crashes could happen, abnormal CPU usage, or lots of debug messages on console\n\n");
 
-    int pausa_warning_snapshot=1;
+    //int pausa_warning_snapshot=1;
 
     //Si coincide ese parametro, no hacer pausa
-    if (!strcmp(parameter_disablebetawarning,EMULATOR_VERSION)) pausa_warning_snapshot=0;
+    //if (!strcmp(parameter_disablebetawarning,EMULATOR_VERSION)) pausa_warning_snapshot=0;
 
-    if (parameter_disable_allbetawarningsleep.v) pausa_warning_snapshot=0;
+    //if (parameter_disable_allbetawarningsleep.v) pausa_warning_snapshot=0;
 
 
-	if (pausa_warning_snapshot) {
-		sleep (3);
-	}
+    //if (pausa_warning_snapshot) {
+    //	sleep (3);
+    //}
 #endif
 
 
-	print_funny_message();
+    print_funny_message();
 
 
 
@@ -7600,100 +9068,106 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
 
 
 
-	init_cpu_tables();
+    init_cpu_tables();
 
-	//movemos esto antes, asi podemos parsear el establecer set-breakpoint desde linea de comandos
-	//init_breakpoints_table();
+    //movemos esto antes, asi podemos parsear el establecer set-breakpoint desde linea de comandos
+    //init_breakpoints_table();
 
 
-	init_ulaplus_table();
-	init_prism_palettes();
-		//init_cpc_rgb_table();
-	screen_init_colour_table();
+    init_ulaplus_table();
+    init_prism_palettes();
+        //init_cpc_rgb_table();
+    screen_init_colour_table();
 
     screen_init_ext_desktop();
     init_visual_real_tape();
-	init_screen_addr_table();
+    init_screen_addr_table();
 
-	init_cpc_line_display_table();
+    init_cpc_line_display_table();
 
 #ifdef EMULATE_VISUALMEM
-	init_visualmembuffer();
+    init_visualmembuffer();
 #endif
 
-	menu_debug_daad_init_flagobject();
+    menu_debug_daad_init_flagobject();
 
-	inicializa_tabla_contend_speed_higher();
+    inicializa_tabla_contend_speed_higher();
+
+    zxevo_reset_nvram();
 
     get_os_release();
+
+    get_machine_hardware_name();
 
 
 
 #ifdef USE_LINUXREALJOYSTICK
 
-	//Soporte nativo de linux joystick
-	if (no_native_linux_realjoystick.v==0) {
-		realjoystick_init=realjoystick_linux_init;
-		realjoystick_main=realjoystick_linux_main;
-	}
+    //Soporte nativo de linux joystick
+    if (no_native_linux_realjoystick.v==0) {
+        realjoystick_init=realjoystick_linux_init;
+        realjoystick_main=realjoystick_linux_main;
+    }
 #endif
 
 
-	TIMESENSOR_INIT();
+    TIMESENSOR_INIT();
 
 
-	debug_printf (VERBOSE_INFO,"Starting emulator");
+    debug_printf (VERBOSE_INFO,"Starting emulator");
 
 
 
 
 #ifdef USE_PTHREADS
-		debug_printf (VERBOSE_INFO,"Using phtreads");
+        debug_printf (VERBOSE_INFO,"Using phtreads");
 #else
-		debug_printf (VERBOSE_INFO,"Not using phtreads");
+        debug_printf (VERBOSE_INFO,"Not using phtreads");
 #endif
 
-	if (silence_detector_setting.v) debug_printf (VERBOSE_INFO,"Enabling Silence Detector");
-	else debug_printf (VERBOSE_INFO,"Disabling Silence Detector");
+    if (silence_detector_setting.v) debug_printf (VERBOSE_INFO,"Enabling Silence Detector");
+    else debug_printf (VERBOSE_INFO,"Disabling Silence Detector");
 
 
-	debug_printf (VERBOSE_INFO,"Initializing Machine");
+    debug_printf (VERBOSE_INFO,"Initializing Machine");
 
-	//Si hemos especificado una rom diferente por linea de comandos
-
-
-	/*if (param_custom_romfile!=NULL) {
-		set_machine(param_custom_romfile);
-	}*/
+    //Si hemos especificado una rom diferente por linea de comandos
 
 
-	//else {
-		set_machine(NULL);
-	//}
+    /*if (param_custom_romfile!=NULL) {
+        set_machine(param_custom_romfile);
+    }*/
 
-	cold_start_cpu_registers();
 
-	reset_cpu();
+    //else {
+        set_machine(NULL);
+    //}
 
-	//Algun parametro que se resetea con reset_cpu y/o set_machine y se puede haber especificado por linea de comandos
-	if (command_line_zx8081_vsync_sound.v) zx8081_vsync_sound.v=1;
+    cold_start_cpu_registers();
+
+    reset_cpu();
+
+    //Algun parametro que se resetea con reset_cpu y/o set_machine y se puede haber especificado por linea de comandos
+    if (command_line_zx8081_vsync_sound.v) zx8081_vsync_sound.v=1;
 
     //llamar a set_menu_gui_zoom para establecer zoom menu. Ya se ha llamado desde set_machine pero como no hay driver de video aun ahi,
     //no se aplica zoom de gui dado que eso solo es para driver xwindows, sdl etc y no para curses y otros
-	//Esto tiene que ir justo aqui antes de init driver video pues al cambiar a veces gui zoom a 2 (caso tbblue o cpc por ejemplo),
-	//el tamaño de zx desktop se multiplica por el gui zoom y entonces la memoria a asignar del driver de video es mayor
+    //Esto tiene que ir justo aqui antes de init driver video pues al cambiar a veces gui zoom a 2 (caso tbblue o cpc por ejemplo),
+    //el tamaño de zx desktop se multiplica por el gui zoom y entonces la memoria a asignar del driver de video es mayor
     set_menu_gui_zoom();
 
     //Preparar los timers disponibles
     init_timer();
+
+    set_default_window_title();
 
     //Inicializamos Video antes que el resto de cosas.
     main_init_video();
 
 
   //Activar deteccion automatica de rutina de impresion de caracteres, si conviene
-	//Esto se hace tambien al inicializar cpu... Pero como al inicializar cpu aun no hemos inicializado driver video,
-	//y por tanto no se sabe si hay stdout... Entonces hacemos esto justo despues de inicializar video
+    //Esto se hace tambien al inicializar cpu... Pero como al inicializar cpu aun no hemos inicializado driver video,
+    //y por tanto no se sabe si hay stdout... Entonces hacemos esto justo despues de inicializar video
   //Activar deteccion automatica de rutina de impresion de caracteres, si conviene
     if (chardetect_detect_char_enabled.v) {
         chardetect_init_automatic_char_detection();
@@ -7702,46 +9176,46 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
 
 
     set_putpixel_zoom();
-	menu_init_footer();
+    menu_init_footer();
 
     //Muy al principio cargar scr file de fondo, para que al entrar ya se vea
     zxdesktop_draw_scrfile_load();
 
 
-	//Despues de inicializar video, llamar a esta funcion, por si hay que cambiar frameskip (especialmente en cocoa)
-	screen_set_parameters_slow_machines();
+    //Despues de inicializar video, llamar a esta funcion, por si hay que cambiar frameskip (especialmente en cocoa)
+    screen_set_parameters_slow_machines();
 
 
-	tape_init();
+    //tape_init();
 
-    tape_out_init();
+    //tape_out_init();
 
-	//Si hay realtape insertado
-	if (realtape_name!=NULL) realtape_insert();
-
-
-	main_init_audio();
+    //Si hay realtape insertado
+    //if (realtape_name!=NULL) realtape_insert();
 
 
-
-	init_chip_ay();
-	init_chip_sn();
-	ay_init_filters();
-	sn_init_filters();
-
-	mid_reset_export_buffers();
+    main_init_audio();
 
 
 
-	//Inicializar joystick en caso de linux native o simulador
-	if (realjoystick_is_linux_native() || simulador_joystick) {
-		realjoystick_initialize_joystick();
-	}
+    init_chip_ay();
+    init_chip_sn();
+    ay_init_filters();
+    sn_init_filters();
+
+    mid_reset_export_buffers();
 
 
-	if (aofilename!=NULL) {
-			init_aofile();
-	}
+
+    //Inicializar joystick en caso de linux native o simulador
+    if (realjoystick_is_linux_native() || simulador_joystick) {
+        realjoystick_initialize_joystick();
+    }
+
+
+    if (aofilename!=NULL) {
+            init_aofile();
+    }
 
     if (vofilename!=NULL) {
         init_vofile();
@@ -7749,10 +9223,10 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
 
 
 
-	//Load Screen
-	if (scrfile!=NULL) {
-		load_screen(scrfile);
-	}
+    //Load Screen
+    if (scrfile!=NULL) {
+        load_screen(scrfile);
+    }
 
 
     //ajustar estilo del gui, si driver video permite ese estilo o si hay que ir al primero que permita
@@ -7762,21 +9236,21 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
     create_default_zxdesktop_configurable_icons();
 
     //despues de leer los iconos de la config, e inicializar pantalla, ver si algun icono esta en alguna posicion que no debe y reasignar
-    zxvision_check_all_configurable_icons_positions();
+    zxvision_check_all_configurable_icons_positions(se_abre_emulated_display);
 
     set_last_dimensiones_ventana();
 
-	scr_refresca_pantalla();
+    scr_refresca_pantalla();
 
 
 
-	//Capturar segmentation fault
-	//desactivado normalmente en versiones snapshot
-	signal(SIGSEGV, segfault_signal_handler);
+    //Capturar segmentation fault
+    //desactivado normalmente en versiones snapshot
+    signal(SIGSEGV, segfault_signal_handler);
 
-	//Capturar floating point exception
-	//desactivado normalmente en versiones snapshot
-	signal(SIGFPE, floatingpoint_signal_handler);
+    //Capturar floating point exception
+    //desactivado normalmente en versiones snapshot
+    signal(SIGFPE, floatingpoint_signal_handler);
 
   //Capturar sigbus.
   //desactivado normalmente en versiones snapshot
@@ -7784,63 +9258,63 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
     signal(SIGBUS, sigbus_signal_handler);
 #endif
 
-	//Capturar segint (CTRL+C)
-	signal(SIGINT, segint_signal_handler);
+    //Capturar segint (CTRL+C)
+    signal(SIGINT, segint_signal_handler);
 
-	//Capturar segterm
-	signal(SIGTERM, segterm_signal_handler);
+    //Capturar segterm
+    signal(SIGTERM, segterm_signal_handler);
 
 #ifndef MINGW
-	//Capturar sigpipe
-	signal(SIGPIPE, sigpipe_signal_handler);
+    //Capturar sigpipe
+    signal(SIGPIPE, sigpipe_signal_handler);
 #endif
 
 
-	//Restaurar ventanas, si conviene. Hacerlo aqui y no mas tarde, para evitar por ejemplo que al salir el logo de splash
-	//aparezcan las ventanas en background
-	zxvision_restore_windows_on_startup();
+    //Restaurar ventanas, si conviene. Hacerlo aqui y no mas tarde, para evitar por ejemplo que al salir el logo de splash
+    //aparezcan las ventanas en background
+    zxvision_restore_windows_on_startup();
 
-	//Inicio bucle principal
-	reg_pc=0;
-	interrupcion_maskable_generada.v=0;
-	interrupcion_non_maskable_generada.v=0;
-	interrupcion_timer_generada.v=0;
+    //Inicio bucle principal
+    reg_pc=0;
+    interrupcion_maskable_generada.v=0;
+    interrupcion_non_maskable_generada.v=0;
+    interrupcion_timer_generada.v=0;
 
-	z80_halt_signal.v=0;
+    z80_halt_signal.v=0;
     z80_wait_signal.v=0;
 
-	esperando_tiempo_final_t_estados.v=0;
-	framescreen_saltar=0;
+    esperando_tiempo_final_t_estados.v=0;
+    framescreen_saltar=0;
 
     //Si modo navidad
     check_christmas_mode();
 
     //Texto recordatorio de David, solo la primera vez
-	//solo si el autoguardado de config esta activado
+    //solo si el autoguardado de config esta activado
     //Al salir, se activara la opcion de no mostrar de nuevo el recordatorio
-	if (save_configuration_file_on_exit.v && do_no_show_david_in_memoriam.v==0) {
+    if (save_configuration_file_on_exit.v && do_no_show_david_in_memoriam.v==0) {
 
         if (!strcmp(EMULATOR_GAME_EDITION,"David")) {
 
-			//Y si driver permite menu normal
-			if (si_normal_menu_video_driver()) {
+            //Y si driver permite menu normal
+            if (si_normal_menu_video_driver()) {
                 activated_in_memoriam_david.v=1;
-			}
+            }
 
             //Solo mostrarlo una vez, a la siguiente ya no se vera
             do_no_show_david_in_memoriam.v=1;
-		}
-	}
+        }
+    }
 
 
-	if (opcion_no_welcome_message.v==0) {
-		set_welcome_message();
-	}
+    if (opcion_no_welcome_message.v==0) {
+        set_welcome_message();
+    }
 
-	else {
-		//Cuando hay splash, la propia funcion set_welcome_message llama a cls_menu_overlay y esta llama a menu_draw_ext_desktop
+    else {
+        //Cuando hay splash, la propia funcion set_welcome_message llama a cls_menu_overlay y esta llama a menu_draw_ext_desktop
         //y luego a show_all_windows_startup
-		menu_draw_ext_desktop();
+        menu_draw_ext_desktop();
         show_all_windows_startup();
 
 
@@ -7848,7 +9322,7 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
         if (activated_in_memoriam_david.v) {
              menu_set_menu_abierto(1);
         }
-	}
+    }
 
     if (zesarux_first_start) {
         menu_set_menu_abierto(1);
@@ -7856,120 +9330,119 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
 
     zxvision_index_load_from_disk();
 
-	//Algun parametro que se resetea con reset_cpu y/o set_machine y se puede haber especificado por linea de comandos
-	if (command_line_wrx.v) enable_wrx();
+    //Algun parametro que se resetea con reset_cpu y/o set_machine y se puede haber especificado por linea de comandos
+    if (command_line_wrx.v) enable_wrx();
 
-	if (command_line_load_binary_file!=NULL) {
-		load_binary_file(command_line_load_binary_file,command_line_load_binary_address,command_line_load_binary_length);
-	}
-
-
-
-	if (command_line_chardetect_printchar_enabled != -1) {
-		chardetect_printchar_enabled.v=command_line_chardetect_printchar_enabled;
-	}
-
-	if (command_line_spectra.v) spectra_enable();
-
-	if (command_line_ulaplus.v) enable_ulaplus();
-
-	if (command_line_gigascreen.v) enable_gigascreen();
-
-	if (command_line_16c.v) enable_16c_mode();
-
-	if (command_line_interlaced.v) enable_interlace();
-
-	if (command_line_timex_video.v) enable_timex_video();
-
-	if (command_line_spritechip.v) spritechip_enable();
+    if (command_line_load_binary_file!=NULL) {
+        load_binary_file(command_line_load_binary_file,command_line_load_binary_address,command_line_load_binary_length);
+    }
 
 
-	if (command_line_chroma81.v) enable_chroma81();
 
-	//MMC
+    if (command_line_chardetect_printchar_enabled != -1) {
+        chardetect_printchar_enabled.v=command_line_chardetect_printchar_enabled;
+    }
+
+    if (command_line_spectra.v) spectra_enable();
+
+    if (command_line_ulaplus.v) enable_ulaplus();
+
+    if (command_line_gigascreen.v) enable_gigascreen();
+
+    if (command_line_16c.v) enable_16c_mode();
+
+    if (command_line_interlaced.v) enable_interlace();
+
+    if (command_line_timex_video.v) enable_timex_video();
+
+    if (command_line_spritechip.v) spritechip_enable();
+
+    if (command_line_chroma81.v) enable_chroma81();
+
+    //MMC
     //Antes ver si hay que copiar archivos
     util_copy_files_to_mmc_doit();
 
-	if (command_line_mmc.v) mmc_enable(0);
+    if (command_line_mmc.v) mmc_enable(0);
     if (command_line_mmc_2.v) mmc_enable(1);
 
-	if (command_line_divmmc_ports.v) {
-		divmmc_mmc_ports_enable();
-	}
+    if (command_line_divmmc_ports.v) {
+        divmmc_mmc_ports_enable();
+    }
 
-	if (command_line_divmmc_paging.v) {
-		divmmc_diviface_enable();
-	}
+    if (command_line_divmmc_paging.v) {
+        divmmc_diviface_enable();
+    }
 
-	if (command_line_divmmc.v) {
-		divmmc_mmc_ports_enable();
-		divmmc_diviface_enable();
-	}
+    if (command_line_divmmc.v) {
+        divmmc_mmc_ports_enable();
+        divmmc_diviface_enable();
+    }
 
-	if (command_line_zxmmc.v) zxmmc_emulation.v=1;
-	if (command_line_8bitide.v) eight_bit_simple_ide_enable();
+    if (command_line_zxmmc.v) zxmmc_emulation.v=1;
+    if (command_line_8bitide.v) eight_bit_simple_ide_enable();
 
-	if (command_line_zxmmcplus.v) zxmmcplus_enable();
+    if (command_line_zxmmcplus.v) zxmmcplus_enable();
 
 
-	//IDE
-	if (command_line_ide.v) ide_enable();
+    //IDE
+    if (command_line_ide.v) ide_enable();
 
-	if (command_line_divide_ports.v) {
-		divide_ide_ports_enable();
-	}
+    if (command_line_divide_ports.v) {
+        divide_ide_ports_enable();
+    }
 
-	if (command_line_divide_paging.v) {
-		divide_diviface_enable();
-	}
+    if (command_line_divide_paging.v) {
+        divide_diviface_enable();
+    }
 
-	if (command_line_divide.v) {
-		divide_ide_ports_enable();
-		divide_diviface_enable();
+    if (command_line_divide.v) {
+        divide_ide_ports_enable();
+        divide_diviface_enable();
     }
 
     if (command_line_if1.v) {
         enable_if1();
     }
 
-	if (command_line_esxdos_handler.v) {
-		esxdos_handler_enable();
+    if (command_line_esxdos_handler.v) {
+        esxdos_handler_enable();
 
-		// Solo meter el directorio local si esta habilitado esxdos
-        	if (command_line_esxdos_local_dir.v) {
-	                // Esto lo hacemos aqui porque antes en el esxdos_handler_enable se inicializa tambien esxdos y por tanto se borra esxdos_handler_cwd
-        	        strcpy(esxdos_handler_cwd,command_line_esxdos_local_dir_path);
-        	}
-	}
-
-
-	if (command_line_zxpand.v) zxpand_enable();
+        // Solo meter el directorio local si esta habilitado esxdos
+            if (command_line_esxdos_local_dir.v) {
+                    // Esto lo hacemos aqui porque antes en el esxdos_handler_enable se inicializa tambien esxdos y por tanto se borra esxdos_handler_cwd
+                    strcpy(esxdos_handler_cwd,command_line_esxdos_local_dir_path);
+            }
+    }
 
 
-	//Dandanator
-	if (command_line_dandanator.v) dandanator_enable();
-	if (command_line_dandanator_push_button.v) dandanator_press_button();
+    if (command_line_zxpand.v) zxpand_enable();
 
-	//Superupgrade
-	if (command_line_superupgrade.v) superupgrade_enable(1);
 
-	//Kartusho
-	if (command_line_kartusho.v) kartusho_enable();
+    //Dandanator
+    if (command_line_dandanator.v) dandanator_enable();
+    if (command_line_dandanator_push_button.v) dandanator_press_button();
 
-	//iFrom
-	if (command_line_ifrom.v) ifrom_enable();
+    //Superupgrade
+    if (command_line_superupgrade.v) superupgrade_enable(1);
 
-	//Betadisk
-	if (command_line_betadisk.v) {
-		betadisk_enable();
-		//Gestionar autoboot. Si este betadisk_enable estuviese antes del hacer el reset_cpu desde aqui,
-		//no haria falta este truco
-		betadisk_reset();
-	}
+    //Kartusho
+    if (command_line_kartusho.v) kartusho_enable();
 
-	if (command_line_trd.v) trd_enable();
+    //iFrom
+    if (command_line_ifrom.v) ifrom_enable();
 
-	if (command_line_dsk.v) dskplusthree_enable();
+    //Betadisk
+    if (command_line_betadisk.v) {
+        betadisk_enable();
+        //Gestionar autoboot. Si este betadisk_enable estuviese antes del hacer el reset_cpu desde aqui,
+        //no haria falta este truco
+        betadisk_reset();
+    }
+
+    if (command_line_trd.v) trd_enable();
+
+    if (command_line_dsk.v) dskplusthree_enable();
 
     //hilow
     if (command_line_hilow.v) {
@@ -7984,41 +9457,44 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
         }
     }
 
-	if (command_line_set_breakpoints.v) {
-		if (debug_breakpoints_enabled.v==0) {
-		        debug_breakpoints_enabled.v=1;
-		        breakpoints_enable();
-		}
+    if (command_line_set_breakpoints.v) {
+        if (debug_breakpoints_enabled.v==0) {
+                debug_breakpoints_enabled.v=1;
+                breakpoints_enable();
+        }
 
-	}
+    }
 
-	if (command_line_enable_midi.v) {
-		if (audio_midi_output_init() ) debug_printf (VERBOSE_ERR,"Error initializing midi device");
-	}
+    if (command_line_enable_midi.v) {
+        if (audio_midi_output_init() ) debug_printf (VERBOSE_ERR,"Error initializing midi device");
+    }
 
     if (command_line_ayplayer_start_playlist.v) {
         ay_player_start_playing_all_items();
     }
 
+    if (command_line_snapshots_in_ram.v) {
+        snapshot_in_ram_enabled.v=1;
+    }
 
 
-	//Si la version actual es mas nueva que la anterior mostrar changelog
+    //Si la version actual es mas nueva que la anterior mostrar changelog
     //eso solo si el autoguardado de config esta activado
     //Y no hacer saltar esto cuando sale el In Memoriam de David
-	if (save_configuration_file_on_exit.v && do_no_show_changelog_when_update.v==0 && activated_in_memoriam_david.v==0) {
-		//if (strcmp(last_version_string,EMULATOR_VERSION)) {  //Si son diferentes
-		if (strcmp(last_version_string,BUILDNUMBER) && last_version_string[0]!=0) {  //Si son diferentes y last_version_string no es nula
-			//Y si driver permite menu normal
-			if (si_normal_menu_video_driver()) {
+    if (save_configuration_file_on_exit.v && do_no_show_changelog_when_update.v==0 && activated_in_memoriam_david.v==0) {
+        //if (strcmp(last_version_string,EMULATOR_VERSION)) {  //Si son diferentes
+        if (strcmp(last_version_string,BUILDNUMBER) && last_version_string[0]!=0) {  //Si son diferentes y last_version_string no es nula
+            //Y si driver permite menu normal
+            if (si_normal_menu_video_driver()) {
                 //Y si version actual es mayor que la anterior
                 if (buildnumber_int>last_buildnumber_int) {
                     menu_event_new_version_show_changes.v=1;
                     menu_set_menu_abierto(1);
                 }
-				//menu_abierto=1;
-			}
-		}
-	}
+                //menu_set_menu_abierto(1);
+            }
+        }
+    }
 
 
 
@@ -8032,33 +9508,38 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
     stop_current_timer();
 
     start_timer();
-	//start_timer_thread();
+    //start_timer_thread();
 
-	gettimeofday(&z80_interrupts_timer_antes, NULL);
-
-
-	//Apuntar momento de inicio para estadisticas-uptime
-	gettimeofday(&zesarux_start_time, NULL);
+    gettimeofday(&z80_interrupts_timer_antes, NULL);
 
 
-	//antes de cargar otros snapshots por linea de comandos, ver si hay autocarga
-	//si hay autocarga, pero luego se indica otro snapshot, se cargara el del autoload pero despues el indicado...
-	//y por tanto la autocarga no permanece
-	if (autoload_snapshot_on_start.v) {
-		autoload_snapshot();
-	}
+    //Apuntar momento de inicio para estadisticas-uptime
+    gettimeofday(&zesarux_start_time, NULL);
 
 
-	//Ver si hay que cargar snapshot. considerar quickload
-	if (quickload_inicial.v==1) {
-		debug_printf(VERBOSE_INFO,"Smartloading %s",quickload_nombre);
-		quickload(quickload_nombre);
-	}
+    //antes de cargar otros snapshots por linea de comandos, ver si hay autocarga
+    //si hay autocarga, pero luego se indica otro snapshot, se cargara el del autoload pero despues el indicado...
+    //y por tanto la autocarga no permanece
+    if (autoload_snapshot_on_start.v) {
+        autoload_snapshot();
+    }
 
-	else {
-		debug_printf(VERBOSE_INFO,"See if we have to load snapshot...");
-	    snapshot_load();
-	}
+    tape_init();
+    tape_out_init();
+
+    //Si hay realtape insertado
+    if (realtape_name!=NULL) realtape_insert();
+
+    //Ver si hay que cargar snapshot. considerar quickload
+    if (quickload_inicial.v==1) {
+        debug_printf(VERBOSE_INFO,"Smartloading %s",quickload_nombre);
+        quickload(quickload_nombre);
+    }
+
+    else {
+        debug_printf(VERBOSE_INFO,"See if we have to load snapshot...");
+        snapshot_load();
+    }
 
     //Ver si hay que insertar slot de z88
     if (z88_slotcard_inicial.v) {
@@ -8070,19 +9551,26 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
         }
     }
 
-	//Poner esto aqui porque se resetea al establecer parametros maquina en set_machine_params
-	if (command_line_vsync_minimum_lenght) {
-		minimo_duracion_vsync=command_line_vsync_minimum_lenght;
-	}
+    //Poner esto aqui porque se resetea al establecer parametros maquina en set_machine_params
+    if (command_line_vsync_minimum_lenght) {
+        //minimo_duracion_vsync=command_line_vsync_minimum_lenght;
+    }
 
 
-	init_network_tables();
+    if (command_line_keystrokes_turbo.v) {
+        send_text_as_keystrokes_turbo_mode.v=1;
+        if (send_text_as_keystrokes_is_inserted.v) {
+            util_send_text_as_keystrokes_setreset_nested_turbo();
+        }
+    }
+
+    init_network_tables();
 
     //Inicializar ZENG online
     init_zeng_online_rooms();
 
-	//Iniciar ZRCP
-	init_remote_protocol();
+    //Iniciar ZRCP
+    init_remote_protocol();
 
     //Habilitar zeng online si conviene
     if (command_line_start_zeng_online_server.v) {
@@ -8094,82 +9582,82 @@ Also, you should keep the following copyright message, beginning with "Begin Cop
 
     generate_stats_uuid();
 
-	//Funciones de red en background
-	stats_check_updates();
-	send_stats_server();
-	stats_check_yesterday_users();
+    //Funciones de red en background
+    stats_check_updates();
+    send_stats_server();
+    stats_check_yesterday_users();
 
 
-	//printf("menu abierto: %d menu_overlay_activo: %d\n",menu_abierto,menu_overlay_activo);
+    //printf("menu abierto: %d menu_overlay_activo: %d\n",menu_abierto,menu_overlay_activo);
 
 
-	//Restaurar ventanas, si conviene
-	//zxvision_restore_windows_on_startup();
+    //Restaurar ventanas, si conviene
+    //zxvision_restore_windows_on_startup();
 
-	//printf("menu abierto: %d menu_overlay_activo: %d\n",menu_abierto,menu_overlay_activo);
+    //printf("menu abierto: %d menu_overlay_activo: %d\n",menu_abierto,menu_overlay_activo);
 
-	//Inicio bucle de emulacion
+    //Inicio bucle de emulacion
 
 
 //En SDL2 y SDL1, rutinas de refresco de pantalla se deben lanzar desde el thread principal. Por tanto:
 #ifdef COMPILE_SDL
-	if (!strcmp(driver_screen,"sdl")) {
-		debug_printf (VERBOSE_INFO,"Calling main loop emulator on the main thread as it is required by SDL");
-		emulator_main_loop();
+    if (!strcmp(driver_screen,"sdl")) {
+        debug_printf (VERBOSE_INFO,"Calling main loop emulator on the main thread as it is required by SDL");
+        emulator_main_loop();
 
-		//Aqui no se llega nunca pero por si acaso
-		return 0;
-	}
+        //Aqui no se llega nunca pero por si acaso
+        return 0;
+    }
 #endif
 
-	//si no tenemos pthreads, entrar en el bucle principal tal cual
-	//si hay pthreads, lanzarlo como thread aparte y quedarnos en un bucle con sleep
+    //si no tenemos pthreads, entrar en el bucle principal tal cual
+    //si hay pthreads, lanzarlo como thread aparte y quedarnos en un bucle con sleep
 
 #ifdef USE_PTHREADS
 
 
-	//Esto deberia estar disponible en todos menos en Windows. Logicamente si USE_PTHREADS esta habilitado
-	ver_si_enable_thread_main_loop();
+    //Esto deberia estar disponible en todos menos en Windows. Logicamente si USE_PTHREADS esta habilitado
+    ver_si_enable_thread_main_loop();
 
 
-	if (si_thread_main_loop) {
-		debug_printf (VERBOSE_INFO,"Calling main loop emulator on a thread");
+    if (si_thread_main_loop) {
+        debug_printf (VERBOSE_INFO,"Calling main loop emulator on a thread");
                 if (pthread_create( &thread_main_loop, NULL, &thread_main_loop_function, NULL) ) {
                         cpu_panic("Can not create main loop pthread");
                 }
-	}
+    }
 
-	else {
-		debug_printf (VERBOSE_INFO,"Calling main loop emulator without threads (although pthreads are available)");
-		emulator_main_loop();
-		//De aqui hacia abajo no se deberia llegar nunca... ya que esto es para pthreads y windows
-		//(y lo de abajo es para cocoa y mas abajo para sistemas sin pthreads)
-	}
+    else {
+        debug_printf (VERBOSE_INFO,"Calling main loop emulator without threads (although pthreads are available)");
+        emulator_main_loop();
+        //De aqui hacia abajo no se deberia llegar nunca... ya que esto es para pthreads y windows
+        //(y lo de abajo es para cocoa y mas abajo para sistemas sin pthreads)
+    }
 
 
 
-	#ifdef USE_COCOA
+    #ifdef USE_COCOA
 
     //Si hay soporte COCOA, dejar solo el thread con el main loop y volver a main (de scrcocoa)
 
-	#else
+    #else
     //Bucle cerrado con sleep. El bucle main se ha lanzado como thread
     while (1) {
         timer_sleep(1000);
         //printf ("bucle con sleep\n");
     }
-	#endif
+    #endif
 
 
 
 #else
-	debug_printf (VERBOSE_INFO,"Calling main loop emulator without threads");
-	emulator_main_loop();
+    debug_printf (VERBOSE_INFO,"Calling main loop emulator without threads");
+    emulator_main_loop();
 #endif
 
-	//Aqui solo se llega en caso de cocoa
+    //Aqui solo se llega en caso de cocoa
 
-	return 0;
+    return 0;
 
 }
 
@@ -8181,21 +9669,21 @@ int ending_emulator_flag=0;
 //pues generaba segfaults en las rutinas de guardar ventanas (--restorewindow)
 void end_emulator_saveornot_config(int saveconfig)
 {
-	debug_printf (VERBOSE_INFO,"End emulator");
+    debug_printf (VERBOSE_INFO,"End emulator");
 
-	//Para indicar al thread de emulacion que tiene que salir, esto es valido cuando se llega aqui con ctrl-c
-	//Si no, se quedaria el loop de emulacion por debajo y en cuanto aqui cerramos el driver de video,
-	//petaria con segfault al intentar refrescar la pantalla o similar
+    //Para indicar al thread de emulacion que tiene que salir, esto es valido cuando se llega aqui con ctrl-c
+    //Si no, se quedaria el loop de emulacion por debajo y en cuanto aqui cerramos el driver de video,
+    //petaria con segfault al intentar refrescar la pantalla o similar
     ending_emulator_flag=1;
-	//Dejamos un ligero tiempo para que el thread se entere
-	//1 milisegundo mas que suficiente
-	usleep(1000);
+    //Dejamos un ligero tiempo para que el thread se entere
+    //1 milisegundo mas que suficiente
+    usleep(1000);
 
 
 
-	dump_ram_file_on_exit();
+    dump_ram_file_on_exit();
 
-	top_speed_timer.v=0;
+    top_speed_timer.v=0;
 
 //Si se ha llamado aqui desde otro sitio que no sea el pthread del main_loop_emulator, hay que destruir antes el pthread con:
 //#ifdef USE_PTHREADS
@@ -8207,80 +9695,80 @@ void end_emulator_saveornot_config(int saveconfig)
 
 
 
-	menu_abierto=0;
+    menu_set_menu_abierto(0);
 
-	if (saveconfig && save_configuration_file_on_exit.v) {
-		int uptime_seconds=timer_get_uptime_seconds();
+    if (saveconfig && save_configuration_file_on_exit.v) {
+        int uptime_seconds=timer_get_uptime_seconds();
 
-  		total_minutes_use +=uptime_seconds/60;
-		util_write_configfile();
-	}
+          total_minutes_use +=uptime_seconds/60;
+        util_write_configfile();
+    }
 
     //Guardar indice de busqueda de menu
-	if (saveconfig) {
-    	zxvision_index_save_to_disk();
-	}
+    if (saveconfig) {
+        zxvision_index_save_to_disk();
+    }
 
-	//end_remote_protocol(); porque si no, no se puede finalizar el emulador desde el puerto telnet
-	if (!remote_calling_end_emulator.v) {
-		end_remote_protocol();
-	}
+    //end_remote_protocol(); porque si no, no se puede finalizar el emulador desde el puerto telnet
+    if (!remote_calling_end_emulator.v) {
+        end_remote_protocol();
+    }
 
-	reset_menu_overlay_function();
+    reset_menu_overlay_function();
 
-	cls_menu_overlay();
+    cls_menu_overlay();
 
-	close_aofile();
-	close_vofile();
-	close_zxprinter_bitmap_file();
-	close_zxprinter_ocr_file();
+    close_aofile();
+    close_vofile();
+    close_zxprinter_bitmap_file();
+    close_zxprinter_ocr_file();
 
-	//Flush write devices
-	zxuno_flush_flash_to_disk();
-	z88_flush_eprom_or_flash_to_disk();
-	mmc_flush_flash_to_disk();
-	ide_flush_flash_to_disk();
-	trd_flush_contents_to_disk();
+    //Flush write devices
+    zxuno_flush_flash_to_disk();
+    z88_flush_eprom_or_flash_to_disk();
+    mmc_flush_flash_to_disk();
+    ide_flush_flash_to_disk();
+    trd_flush_contents_to_disk();
     microdrive_force_flush_to_disk();
     hilow_raw_flush_contents_to_disk();
     zxmmcplus_flashrom_flush_contents_to_disk();
     dskplusthree_flush_contents_to_disk();
 
-	superupgrade_flush_flash_to_disk();
+    superupgrade_flush_flash_to_disk();
     hilow_flush_contents_to_disk();
 
-	audio_midi_output_finish();
+    audio_midi_output_finish();
 
 
-	audio_thread_finish();
-	audio_playing.v=0;
-	audio_end();
+    audio_thread_finish();
+    audio_playing.v=0;
+    audio_end();
 
-	//printf ("footer: %d\n",menu_footer);
+    //printf ("footer: %d\n",menu_footer);
 
-	//Desactivo footer para que no se actualice, sino a veces aparece el footer (cpu, fps, etc) en color grisaceo mientras hace el fade
-	//menu_footer=0;
+    //Desactivo footer para que no se actualice, sino a veces aparece el footer (cpu, fps, etc) en color grisaceo mientras hace el fade
+    //menu_footer=0;
 
-	//Parece ser que el fadeout y en particular el refresco de pantalla no sienta muy bien
-	//cuando se ejecuta desde remote protocol y con el driver cocoa gl. No se muy bien porque,
-	//probado a poner un check de que no se refresque dos veces simultaneamente la pantalla y aun asi peta con segmentation fault
-	if (!remote_calling_end_emulator.v) {
-		if (!no_fadeout_exit.v) {
-			scr_fadeout();
-		}
-	}
+    //Parece ser que el fadeout y en particular el refresco de pantalla no sienta muy bien
+    //cuando se ejecuta desde remote protocol y con el driver cocoa gl. No se muy bien porque,
+    //probado a poner un check de que no se refresque dos veces simultaneamente la pantalla y aun asi peta con segmentation fault
+    if (!remote_calling_end_emulator.v) {
+        if (!no_fadeout_exit.v) {
+            scr_fadeout();
+        }
+    }
 
 
   scr_end_pantalla();
 
-	//Borrar archivos de speech en Windows
-	//Borrar archivo de lock
-	textspeech_borrar_archivo_windows_lock_file();
-	//Borrar archivo de speech
-	textspeech_borrar_archivo_windows_speech_file();
+    //Borrar archivos de speech en Windows
+    //Borrar archivo de lock
+    textspeech_borrar_archivo_windows_lock_file();
+    //Borrar archivo de speech
+    textspeech_borrar_archivo_windows_speech_file();
 
 
-	if (remote_calling_end_emulator.v) end_remote_protocol();
+    if (remote_calling_end_emulator.v) end_remote_protocol();
 
 
     //Aqui desasignariamos algunos punteros a memoria no liberada para que herramientas como valgrind no avisen de memoria
@@ -8310,7 +9798,12 @@ void end_emulator_saveornot_config(int saveconfig)
 
 void end_emulator(void)
 {
-	end_emulator_saveornot_config(1);
+    if (ventana_fullscreen && disable_fullscreen_on_exit_zesarux) {
+        scr_reset_fullscreen();
+        menu_interface_fullscreen_disable();
+    }
+
+    end_emulator_saveornot_config(1);
 }
 
 void end_emulator_autosave_snapshot(void)

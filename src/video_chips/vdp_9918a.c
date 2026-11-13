@@ -30,6 +30,7 @@
 #include "screen.h"
 #include "settings.h"
 #include "vdp_9918a_sms.h"
+#include "video_chips_common.h"
 
 /*
 Nota: parece que en el documento chipstms9918 la numeracion de bits está al revés, por ejemplo,
@@ -588,11 +589,10 @@ void vdp_9918a_render_ula_no_rainbow(z80_byte *vram)
 						//int fila=(x*char_width+bit)/8;
 
 
-						//Ver en casos en que puede que haya menu activo y hay que hacer overlay
-						//if (scr_ver_si_refrescar_por_menu_activo(fila,y)) {
+
 							color= ( byte_leido & 128 ? ink : paper );
 							scr_putpixel_zoom(x*char_width+bit,y*8+scanline,VDP_9918_INDEX_FIRST_COLOR+color);
-						//}
+
 
 						byte_leido=byte_leido<<1;
         	        }
@@ -639,8 +639,7 @@ void vdp_9918a_render_ula_no_rainbow(z80_byte *vram)
 						int col;
 						for (col=0;col<2;col++) {
 
-							//Ver en casos en que puede que haya menu activo y hay que hacer overlay
-							//if (scr_ver_si_refrescar_por_menu_activo(x,y)) {
+
 
 								//Primera columna usa color en parte parte alta y luego baja
 								color=(byte_leido>>4)&15;
@@ -661,7 +660,7 @@ void vdp_9918a_render_ula_no_rainbow(z80_byte *vram)
 
 								}
 
-							//}
+
 
 						}
 
@@ -738,11 +737,10 @@ void vdp_9918a_render_ula_no_rainbow(z80_byte *vram)
 							//int fila=(x*char_width+bit)/8;
 
 
-							//Ver en casos en que puede que haya menu activo y hay que hacer overlay
-							//if (scr_ver_si_refrescar_por_menu_activo(fila,y)) {
+
 								color= ( byte_leido & 128 ? ink : paper );
 								scr_putpixel_zoom(x*char_width+bit,y*8+scanline,VDP_9918_INDEX_FIRST_COLOR+color);
-							//}
+
 
 							byte_leido=byte_leido<<1;
 						}
@@ -899,6 +897,8 @@ void vdp_9918a_render_sprites_no_rainbow(z80_byte *vram)
 
                                         //Si dentro de limites
                                         if (pos_x_final>=0 && pos_x_final<=255 && pos_y_final>=0 && pos_y_final<=191) {
+
+                                            if (x==0 && y==0) video_chips_common_set_sprite_used_in_frame(sprite_name);
 
                                             //Si bit a 1
                                             if (byte_leido & 128) {
@@ -1228,13 +1228,12 @@ void vdp_9918a_render_rainbow_display_line(int scanline,z80_int *scanline_buffer
 						//int columna=(x*char_width+bit)/8;
 
 
-						//Ver en casos en que puede que haya menu activo y hay que hacer overlay
-						//if (scr_ver_si_refrescar_por_menu_activo(columna,fila)) {
+
 							color= ( byte_leido & 128 ? ink : paper );
 							//scr_putpixel_zoom(x*char_width+bit,y*8+scanline,VDP_9918_INDEX_FIRST_COLOR+color);
                             *destino_scanline_buffer=VDP_9918_INDEX_FIRST_COLOR+color;
                             destino_scanline_buffer++;
-						//}
+
 
 						byte_leido=byte_leido<<1;
         	        }
@@ -1287,8 +1286,7 @@ void vdp_9918a_render_rainbow_display_line(int scanline,z80_int *scanline_buffer
 						int col;
 						for (col=0;col<2;col++) {
 
-							//Ver en casos en que puede que haya menu activo y hay que hacer overlay
-							//if (scr_ver_si_refrescar_por_menu_activo(x,fila)) {
+
 
 								//Primera columna usa color en parte parte alta y luego baja
 								color=(byte_leido>>4)&15;
@@ -1315,7 +1313,7 @@ void vdp_9918a_render_rainbow_display_line(int scanline,z80_int *scanline_buffer
 
 								//}
 
-							//}
+
 
 						}
 
@@ -1397,13 +1395,12 @@ void vdp_9918a_render_rainbow_display_line(int scanline,z80_int *scanline_buffer
 							//int columna=(x*char_width+bit)/8;
 
 
-							//Ver en casos en que puede que haya menu activo y hay que hacer overlay
-							//if (scr_ver_si_refrescar_por_menu_activo(columna,fila)) {
+
 								color= ( byte_leido & 128 ? ink : paper );
 								//scr_putpixel_zoom(x*char_width+bit,y*8+scanline,VDP_9918_INDEX_FIRST_COLOR+color);
                                 *destino_scanline_buffer=VDP_9918_INDEX_FIRST_COLOR+color;
                                 destino_scanline_buffer++;
-							//}
+
 
 							byte_leido=byte_leido<<1;
 						}
@@ -1604,7 +1601,7 @@ void vdp_9918a_render_rainbow_sprites_line_post(int scanline,z80_int *destino_sc
                 //if (vert_pos<192) {
                     //int offset_pattern_table=sprite_name*bytes_per_sprite+sprite_pattern_table;
 
-
+                    video_chips_common_set_sprite_used_in_frame(sprite_name);
 
                       int offset_pattern_table=sprite_name*8+sprite_pattern_table;
                     z80_byte color=attr_color_etc & 15;
@@ -2052,30 +2049,5 @@ void screen_store_scanline_rainbow_vdp_9918a_border_and_display(z80_int *scanlin
 //Comun a todas las maquinas que usan este chip VDP
 void vdp_9918a_scr_refresca_pantalla_y_border_rainbow(void)
 {
-
-	int ancho,alto;
-
-	ancho=get_total_ancho_rainbow();
-	alto=get_total_alto_rainbow();
-
-	int x,y;
-
-
-	z80_int color_pixel;
-	z80_int *puntero;
-
-	puntero=rainbow_buffer;
-
-
-	for (y=0;y<alto;y++) {
-
-		for (x=0;x<ancho;x++) {
-
-            color_pixel=*puntero++;
-            scr_putpixel_zoom_rainbow(x,y,color_pixel);
-
-		}
-
-	}
-
+	scr_refresca_pantalla_rainbow_comun();
 }

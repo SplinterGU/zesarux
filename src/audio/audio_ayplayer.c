@@ -41,6 +41,7 @@
 #include "start.h"
 #include "menu_items.h"
 #include "menu_filesel.h"
+#include "compileoptions.h"
 
 
 
@@ -240,6 +241,9 @@ int audio_ay_player_load(char *filename)
 		debug_printf(VERBOSE_ERR,"File version>3 not supported yet (file version: %d)",file_version);
 		return 1;
 	}
+
+    //Activar el autohabilitado de chip ay, porque si está en spectrum 48k (sin chip ay) no sonará nada
+    if (autoenable_ay_chip.v==0) autoenable_ay_chip.v=1;
 
 
     return 0;
@@ -1294,8 +1298,18 @@ void ay_player_add_directory_playlist(char *directorio)
     else {
 
 #ifndef MINGW
+
+    #ifdef OTHER_UNIX
+    n = scandir_mingw(".", &namelist, ay_player_add_directory_playlist_filter_func, ay_player_add_directory_playlist_alphasort);
+    #else
+
+    //Linux, Mac, ...
 	n = scandir(".", &namelist, ay_player_add_directory_playlist_filter_func, ay_player_add_directory_playlist_alphasort);
+    #endif
 #else
+
+    //Windows
+
 	//alternativa scandir, creada por mi
 	n = scandir_mingw(".", &namelist, ay_player_add_directory_playlist_filter_func, ay_player_add_directory_playlist_alphasort);
 #endif

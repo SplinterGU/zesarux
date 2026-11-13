@@ -42,6 +42,9 @@
 #include "sms.h"
 #include "svi.h"
 #include "pcw.h"
+#include "baseconf.h"
+#include "scorpion.h"
+#include "atmturbo.h"
 
 int scrcaca_imgwidth,scrcaca_imgheight;
 
@@ -253,6 +256,17 @@ void scrcaca_refresca_pantalla(void)
 
 		if (MACHINE_IS_TSCONF)	screen_tsconf_refresca_pantalla();
 
+        else if (MACHINE_IS_BASECONF)	{
+            baseconf_refresca_pantalla();
+        }
+
+        else if (MACHINE_IS_SCORPION_GMX)	{
+            scorpiongmx_refresca_pantalla();
+        }
+
+        else if (MACHINE_IS_ATM_TURBO)	{
+            atmturbo_refresca_pantalla();
+        }
 
 		  else { //Spectrum no TSConf
 
@@ -275,7 +289,7 @@ void scrcaca_refresca_pantalla(void)
 
                 else {
                         //modo rainbow - real video
-                        scr_refresca_pantalla_rainbow_comun();
+                        scr_refresca_pantalla_rainbow_comun_spectrum();
                 }
 
 		}
@@ -534,12 +548,12 @@ int pressrelease=1;
 		    mouse_x=cev.data.mouse.x;
 		    mouse_y=cev.data.mouse.y;
 
-	            gunstick_x=mouse_x*scrcaca_totalrealwidth/scrcaca_imgwidth;
-		    gunstick_y=mouse_y*scrcaca_totalrealheight/scrcaca_imgheight;
+	            lightgun_x=mouse_x*scrcaca_totalrealwidth/scrcaca_imgwidth;
+		    lightgun_y=mouse_y*scrcaca_totalrealheight/scrcaca_imgheight;
 
 
-		    kempston_mouse_x=gunstick_x;
-		    kempston_mouse_y=255-gunstick_y;
+		    kempston_mouse_x=lightgun_x;
+		    kempston_mouse_y=255-lightgun_y;
 
 
 		debug_printf(VERBOSE_PARANOID,"CACA_EVENT_MOUSE_MOTION X=%d Y=%d kempston mouse: x: %d y: %d",mouse_x,mouse_y,kempston_mouse_x,kempston_mouse_y);
@@ -553,7 +567,6 @@ int pressrelease=1;
 	break;
 	case CACA_EVENT_MOUSE_PRESS:
 		util_set_reset_mouse(UTIL_MOUSE_LEFT_BUTTON,1);
-		//mouse_left=1;
 	break;
 	case CACA_EVENT_MOUSE_RELEASE:
 		util_set_reset_mouse(UTIL_MOUSE_LEFT_BUTTON,0);
@@ -703,21 +716,16 @@ void scrcaca_detectedchar_print(z80_byte caracter)
 //Estos valores no deben ser mayores de OVERLAY_SCREEN_MAX_WIDTH y OVERLAY_SCREEN_MAX_HEIGTH
 int scrcaca_get_menu_width(void)
 {
-        return 32;
+        return 32/screen_reduce_menu_ancho;
 }
 
 
 int scrcaca_get_menu_height(void)
 {
-        return 24;
+        return 24/screen_reduce_menu_alto;
 }
 
-/*
-int scrcaca_driver_can_ext_desktop (void)
-{
-        return 0;
-}
-*/
+
 
 
 int scrcaca_init (void)
@@ -749,6 +757,8 @@ scr_putchar_footer=scrcaca_putchar_footer;
 
         scr_get_menu_width=scrcaca_get_menu_width;
         scr_get_menu_height=scrcaca_get_menu_height;
+        scr_update_window_title=NULL;
+        scr_get_text_clipboard=NULL;
 //scr_driver_can_ext_desktop=scrcaca_driver_can_ext_desktop;
 
 scr_set_fullscreen=scrcaca_set_fullscreen;

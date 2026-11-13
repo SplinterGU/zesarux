@@ -65,6 +65,8 @@
 #include "interface007.h"
 #include "dinamid3.h"
 #include "dsk.h"
+#include "contend.h"
+#include "core_spectrum.h"
 
 #include "autoselectoptions.h"
 
@@ -102,7 +104,7 @@ int autoload_spectrum_loadpp_mode;
 //z80_bit autodetect_loaders={1};
 
 //Si hay que acelerar rutinas de cargadores
-z80_bit accelerate_loaders={0};
+//z80_bit accelerate_realtape_loaders={0};
 
 //Si hay que autorebobinar cinta
 z80_bit tape_auto_rewind={0};
@@ -182,18 +184,18 @@ void draw_realtape_icon_activity(void)
 void draw_tape_text(void)
 {
 //printf("draw_tape_text\n");
-		//tape_loading_counter=2;
+        //tape_loading_counter=2;
 
-		if (top_speed_timer.v) {
-			draw_tape_text_top_speed();
-		}
-		else {
+        if (top_speed_timer.v) {
+            draw_tape_text_top_speed();
+        }
+        else {
                         //menu_footer_activity("TAPE");
                         generic_footertext_print_operating("TAPE");
 
                         //Y poner icono de cinta en inverso
                         draw_tape_icon_activity();
-		}
+        }
 
     watermark_tell_device_activity();
 
@@ -202,19 +204,19 @@ void draw_tape_text(void)
 void draw_realtape_text(void)
 {
 //printf("draw_realtape_text\n");
-		//tape_loading_counter=2;
+        //tape_loading_counter=2;
 
-		//color inverso
-		if (top_speed_timer.v) {
-			draw_tape_text_top_speed();
-		}
-		else {
+        //color inverso
+        if (top_speed_timer.v) {
+            draw_tape_text_top_speed();
+        }
+        else {
             //menu_footer_activity("TAPE");
             generic_footertext_print_operating("TAPE");
 
             //Y poner icono de cinta en inverso
             draw_realtape_icon_activity();
-		}
+        }
 
 }
 
@@ -226,19 +228,19 @@ void draw_realtape_text(void)
 
 void insert_tape_load(void)
 {
-	tape_loadsave_inserted = tape_loadsave_inserted | TAPE_LOAD_INSERTED;
-	//tape_load_inserted.v=1;
+    tape_loadsave_inserted = tape_loadsave_inserted | TAPE_LOAD_INSERTED;
+    //tape_load_inserted.v=1;
 }
 
 void insert_tape_save(void)
 {
-	tape_loadsave_inserted = tape_loadsave_inserted | TAPE_SAVE_INSERTED;
+    tape_loadsave_inserted = tape_loadsave_inserted | TAPE_SAVE_INSERTED;
         //tape_save_inserted.v=1;
 }
 
 void eject_tape_load(void)
 {
-	tape_loadsave_inserted = tape_loadsave_inserted & (255 - TAPE_LOAD_INSERTED);
+    tape_loadsave_inserted = tape_loadsave_inserted & (255 - TAPE_LOAD_INSERTED);
         //tape_load_inserted.v=0;
 
         //Actualizar zxdesktop. Para refrescar iconos de cinta y que aparezca como expulsado
@@ -247,7 +249,7 @@ void eject_tape_load(void)
 
 void eject_tape_save(void)
 {
-	tape_loadsave_inserted = tape_loadsave_inserted & (255 - TAPE_SAVE_INSERTED);
+    tape_loadsave_inserted = tape_loadsave_inserted & (255 - TAPE_SAVE_INSERTED);
         //tape_save_inserted.v=0;
 }
 
@@ -282,12 +284,12 @@ return 0;
 
 void set_tape_file_options(char *filename)
 {
-        set_snaptape_fileoptions(filename);
+    set_snaptape_fileoptions(filename);
 }
 
 void set_tape_file_machine(char *filename)
 {
-        set_snaptape_filemachine(filename);
+    set_snaptape_filemachine(filename);
 }
 
 
@@ -324,6 +326,29 @@ void tape_visual_casette_advance_reel(void)
     visual_cassette_tape_rodillo_arrastre_grados=(visual_cassette_tape_rodillo_arrastre_grados % 360);
 }
 
+void tape_trap_load_spectrum(void)
+{
+    //si estamos en pausa, no hacer nada
+    if (!tape_pause) {
+        audio_playing.v=0;
+
+        draw_tape_text();
+
+        tap_load();
+        all_interlace_scr_refresca_pantalla();
+
+        //audio_playing.v=1;
+        timer_reset();
+    }
+
+    else {
+        core_spectrum_store_rainbow_current_atributes();
+        //generamos nada. como si fuera un NOP
+        contend_read( reg_pc, 4 );
+
+    }
+}
+
 void tape_init(void)
 {
 
@@ -339,7 +364,7 @@ void tape_init(void)
 
 
 
-                if (tapefile!=0) {
+    if (tapefile!=0) {
                         debug_printf (VERBOSE_INFO,"Initializing Tape File");
 
                         //if (strstr(tapefile,".tap")!=NULL  || strstr(tapefile,".TAP")!=NULL) {
@@ -400,12 +425,12 @@ void tape_init(void)
 
 
 
-			//else if (!util_compare_file_extension(tapefile,"smp") ) {
+            //else if (!util_compare_file_extension(tapefile,"smp") ) {
                         //                debug_printf (VERBOSE_INFO,"SMP - raw audio -  Tape file detected");
-			else if (!util_compare_file_extension(tapefile,"rwa") || !util_compare_file_extension(tapefile,"smp")
-				|| !util_compare_file_extension(tapefile,"wav")
+            else if (!util_compare_file_extension(tapefile,"rwa") || !util_compare_file_extension(tapefile,"smp")
+                || !util_compare_file_extension(tapefile,"wav")
 
-				) {
+                ) {
                                         debug_printf (VERBOSE_INFO,"RWA - raw audio -  Tape file detected");
                                         tape_block_open=tape_block_smp_open;
                                         tape_block_read=tape_block_smp_read;
@@ -431,9 +456,64 @@ void tape_init(void)
                         if (tapefile!=0) tap_open();
 
 
-			set_tape_file_machine(tapefile);
-			set_tape_file_options(tapefile);
+            set_tape_file_machine(tapefile);
+            set_tape_file_options(tapefile);
+
+
+        //Adicional. En spectrum si antes de insertar la cinta estaba en la rutina de carga de la rom esperando cinta,
+        //y si no hay cinta real insertada y si no hay autoload, salir de esa subrutina de la rom y hacer que entre por la normal
+        //printf("reg_pc %d noautoload %d realtape inserted %d\n",reg_pc,noautoload.v,realtape_inserted.v);
+        if (MACHINE_IS_SPECTRUM && noautoload.v && realtape_inserted.v==0) {
+            if (reg_pc>=1517 && reg_pc<=1530) {
+
+                //Si estamos en la rom correspondiente
+                int en_rom_load=1;
+
+                if (MACHINE_IS_SPECTRUM_P2A_P3) {
+                    if (get_actual_rom_p2a()!=3) en_rom_load=0;
                 }
+
+                if (MACHINE_IS_SPECTRUM_128_P2) {
+                    if (get_actual_rom_128k()!=1) en_rom_load=0;
+                }
+
+                //printf("en_rom_load: %d\n",en_rom_load);
+
+                if (en_rom_load) {
+
+                    debug_printf(VERBOSE_INFO,"Inserting tape when CPU was on the rom load routine");
+                    //*direccion de retorno en sp+4 habitualmente al entrar por la 1366
+                    pop_valor();
+
+                    //Si se ha entrado por la 1366, aqui habra un 53f
+                    z80_int valor_stack=peek_word(reg_sp);
+                    if (valor_stack==0x053f) {
+                        //printf("Parece que hemos entrado por la 1366. Quitar un word del stack\n");
+                        pop_valor();
+                    }
+                    else {
+                        //printf("Parece que se ha entrado al load de la rom desde una direccion diferente a la 1366\n");
+                    }
+
+
+                    //printf("Flag: %02XH\n",reg_a_shadow);
+
+                    //Flag de carga esta en A' y el modo de carga (Z=0 normal, Z=1 para any flag) en F'
+                    //Tal cual es como entra en la 1378
+
+
+                    //Reentrar como si se hubiera tenido cinta insertada
+                    reg_pc=1378;
+                    tape_trap_load_spectrum();
+                }
+            }
+
+        }
+
+    }
+
+
+
 }
 
 void tape_out_init(void)
@@ -490,13 +570,13 @@ if (tape_out_file!=0) {
 
                         else if (!util_compare_file_extension(tape_out_file,"o") ) {
                                         debug_printf (VERBOSE_INFO,"Out .O file detected");
-					if (!(MACHINE_IS_ZX80_TYPE)) {
-						debug_printf (VERBOSE_ERR,"Out Tape format only supported on ZX80 models");
-						tape_out_file=NULL;
-					}
-					else {
-	                                        tape_out_block_open=tape_out_block_p_open;
-					}
+                    if (!(MACHINE_IS_ZX80_TYPE)) {
+                        debug_printf (VERBOSE_ERR,"Out Tape format only supported on ZX80 models");
+                        tape_out_file=NULL;
+                    }
+                    else {
+                                            tape_out_block_open=tape_out_block_p_open;
+                    }
                                 }
 
                         else if (!util_compare_file_extension(tape_out_file,"p") ) {
@@ -562,7 +642,9 @@ int tap_open(void)
             reset_cpu();
 
             //Activamos top speed si conviene
-            if (fast_autoload.v && !MACHINE_IS_MSX && !MACHINE_IS_ACE && !MACHINE_IS_TBBLUE) {
+            if (fast_autoload.v && !MACHINE_IS_MSX && !MACHINE_IS_SVI && !MACHINE_IS_ACE &&
+                !MACHINE_IS_TBBLUE && !MACHINE_IS_SCORPION && !MACHINE_IS_BASECONF &&
+                !MACHINE_IS_TSCONF && !MACHINE_IS_ATM_TURBO) {
                 debug_printf (VERBOSE_INFO,"Set top speed from TAP open");
                 top_speed_timer.v=1;
             }
@@ -583,8 +665,8 @@ int tap_open(void)
 
 int tap_close(void)
 {
-	eject_tape_load();
-	return 0;
+    eject_tape_load();
+    return 0;
 }
 
 
@@ -605,7 +687,7 @@ int tap_out_open(void)
 int tap_out_close(void)
 {
         eject_tape_save();
-	return 0;
+    return 0;
 }
 
 
@@ -627,7 +709,7 @@ void tap_save_ace(void)
         tape_block_begin_save(longitud,0);
 
         //Escribimos longitud (contando checksum)
-		//TAP en jupiter ace no incluye el flag, aunque la cinta real si
+        //TAP en jupiter ace no incluye el flag, aunque la cinta real si
         longitud+=1;
 
         //Si es TZX, agregamos flag
@@ -665,7 +747,7 @@ void tap_save_ace(void)
         //Escribimos bytes
         longitud-=1;
         //z80_byte checksum=flag;
-			z80_byte checksum=0;
+            z80_byte checksum=0;
         z80_byte leido;
 
         for (;longitud;longitud--,dir++) {
@@ -694,8 +776,8 @@ leido=peek_byte_no_time(dir);
 
 
         tape_out_block_close();
-			DE=0;
-			HL=dir;
+            DE=0;
+            HL=dir;
         return;
 
 
@@ -708,7 +790,7 @@ void tap_load_ace(void)
 
 
 
-	if (buffer_tap_read==NULL) {
+    if (buffer_tap_read==NULL) {
         //asignamos buffer memoria temporal para lectura
         buffer_tap_read=malloc(65536);
         if (buffer_tap_read==NULL) {
@@ -716,12 +798,12 @@ void tap_load_ace(void)
         }
     }
 
-	z80_int cinta_pedido_inicio=reg_hl;
-	z80_int cinta_pedido_longitud=value_8_to_16(reg_d,reg_e);
-	z80_byte flag_asked=reg_c;
+    z80_int cinta_pedido_inicio=reg_hl;
+    z80_int cinta_pedido_longitud=value_8_to_16(reg_d,reg_e);
+    z80_byte flag_asked=reg_c;
 
 
-	//leemos longitud, flag de la cinta
+    //leemos longitud, flag de la cinta
 
     z80_int cinta_longitud;
 
@@ -781,8 +863,8 @@ void tap_load_ace(void)
             cinta_pedido_inicio,cinta_pedido_longitud,cinta_longitud,cinta_longitud,flag_asked);
 
 
-	int leidos=0;
-	z80_byte checksum;
+    int leidos=0;
+    z80_byte checksum;
 
 
     if (cinta_longitud != cinta_pedido_longitud) {
@@ -826,44 +908,44 @@ void tap_load_ace(void)
 
     }
 
-	//Copiamos estos datos en destino
-	z80_byte *puntero;
-	puntero=buffer_tap_read;
+    //Copiamos estos datos en destino
+    z80_byte *puntero;
+    puntero=buffer_tap_read;
 
-	//Primero metemos tipo de bloque, que no esta incluido en cinta tap
-	/*
-	if (flag_asked==0) {
-		debug_printf(VERBOSE_INFO,"Tape block is header. Writing 0 value");
-		poke_byte_no_time(cinta_pedido_inicio++,0);
-	}
-	else {
-		debug_printf(VERBOSE_INFO,"Tape block is data. Writing 255 value");
-		poke_byte_no_time(cinta_pedido_inicio++,255);
-	}
-	*/
-
-
+    //Primero metemos tipo de bloque, que no esta incluido en cinta tap
+    /*
+    if (flag_asked==0) {
+        debug_printf(VERBOSE_INFO,"Tape block is header. Writing 0 value");
+        poke_byte_no_time(cinta_pedido_inicio++,0);
+    }
+    else {
+        debug_printf(VERBOSE_INFO,"Tape block is data. Writing 255 value");
+        poke_byte_no_time(cinta_pedido_inicio++,255);
+    }
+    */
 
 
 
-	//for (;cinta_pedido_longitud>0;cinta_pedido_longitud--,puntero++) {
-	for (;leidos>0;leidos--,puntero++) {
-		//z80_byte c;
-		//c=*puntero;
-		//if (c>31 && c<128) printf ("%c",c);
-		poke_byte_no_time(cinta_pedido_inicio++,*puntero);
-	}
-
-	HL=cinta_pedido_inicio;
-	DE=0;
 
 
-	debug_printf(VERBOSE_INFO,"Returning tape routine without error");
+    //for (;cinta_pedido_longitud>0;cinta_pedido_longitud--,puntero++) {
+    for (;leidos>0;leidos--,puntero++) {
+        //z80_byte c;
+        //c=*puntero;
+        //if (c>31 && c<128) printf ("%c",c);
+        poke_byte_no_time(cinta_pedido_inicio++,*puntero);
+    }
 
-	Z80_FLAGS |=FLAG_C;
+    HL=cinta_pedido_inicio;
+    DE=0;
 
-	//volver
-	reg_pc=pop_valor();
+
+    debug_printf(VERBOSE_INFO,"Returning tape routine without error");
+
+    Z80_FLAGS |=FLAG_C;
+
+    //volver
+    reg_pc=pop_valor();
 }
 
 //Indicador de que bloque estamos leyendo el siguiente, para el visor de cinta
@@ -908,236 +990,240 @@ void tape_seek_to_block(int index_to_seek)
 void tap_load(void)
 {
 
-//printf ("tap load\n");
+    //printf ("tap load\n");
 
 
-			if (buffer_tap_read==NULL) {
-				//asignamos buffer memoria temporal para lectura
-				buffer_tap_read=malloc(65536);
-				if (buffer_tap_read==NULL) {
-					cpu_panic("Error allocating tap read memory buffer");
-				}
-			}
+    if (buffer_tap_read==NULL) {
+        //asignamos buffer memoria temporal para lectura
+        buffer_tap_read=malloc(65536);
+        if (buffer_tap_read==NULL) {
+            cpu_panic("Error allocating tap read memory buffer");
+        }
+    }
 
-			z80_int cinta_pedido_inicio=reg_ix;
-			z80_byte cinta_pedido_flag=reg_a_shadow;
-			z80_int cinta_pedido_longitud=value_8_to_16(reg_d,reg_e);
+    z80_int cinta_pedido_inicio=reg_ix;
+    z80_byte cinta_pedido_flag=reg_a_shadow;
+    z80_int cinta_pedido_longitud=value_8_to_16(reg_d,reg_e);
 
-			//z80_byte h,l;
-			z80_byte checksum,checksum_calculado;
+    //z80_byte h,l;
+    z80_byte checksum,checksum_calculado;
 
 
 
-			//leemos longitud, flag de la cinta
+    //leemos longitud, flag de la cinta
 
-			z80_int cinta_longitud;
+    z80_int cinta_longitud;
 
-			if (tape_block_readlength==NULL) {
-				debug_printf (VERBOSE_ERR,"Tape functions uninitialized");
-                                //tapefile=NULL;
-				eject_tape_load();
-				//tape_load_inserted.v=0;
-				Z80_FLAGS &=(255-FLAG_C);
-				reg_pc=pop_valor();
+    if (tape_block_readlength==NULL) {
+        debug_printf (VERBOSE_ERR,"Tape functions uninitialized");
+                        //tapefile=NULL;
+        eject_tape_load();
+        //tape_load_inserted.v=0;
+        Z80_FLAGS &=(255-FLAG_C);
+        reg_pc=pop_valor();
 
-				return;
-			}
+        return;
+    }
 
-            //Movemos indicador de bloque, para el visor de cinta y saber donde estamos
-            tape_viewer_block_index++;
+    //Movemos indicador de bloque, para el visor de cinta y saber donde estamos
+    tape_viewer_block_index++;
 
-			cinta_longitud=tape_block_readlength();
-			if (cinta_longitud==0) {
-                int retornar_error=1;
-                if (tape_auto_rewind.v) {
-                    if (tape_block_feof()) {
-                        debug_printf(VERBOSE_INFO,"End of tape and autorewind enabled. Rewind tape");
-                        tape_viewer_block_index=0;
-                        tape_block_rewindbegin();
+    cinta_longitud=tape_block_readlength();
+    if (cinta_longitud==0) {
+        int retornar_error=1;
+        if (tape_auto_rewind.v) {
+            if (tape_block_feof()) {
+                debug_printf(VERBOSE_INFO,"End of tape and autorewind enabled. Rewind tape");
+                tape_viewer_block_index=0;
+                tape_block_rewindbegin();
 
-                        tape_viewer_block_index++;
-                        cinta_longitud=tape_block_readlength();
+                tape_viewer_block_index++;
+                cinta_longitud=tape_block_readlength();
 
-                        if (cinta_longitud!=0) retornar_error=0;
-                    }
-                }
-
-                if (retornar_error) {
-                    debug_printf(VERBOSE_INFO,"Error read tape. Bytes=0");
-                    //tapefile=NULL;
-                    eject_tape_load();
-                    //tape_load_inserted.v=0;
-                    Z80_FLAGS &=(255-FLAG_C);
-                    reg_pc=pop_valor();
-                    return;
-                }
+                if (cinta_longitud!=0) retornar_error=0;
             }
+        }
+
+        if (retornar_error) {
+            debug_printf(VERBOSE_INFO,"Error read tape. Bytes=0");
+            //tapefile=NULL;
+            eject_tape_load();
+            //tape_load_inserted.v=0;
+            Z80_FLAGS &=(255-FLAG_C);
+            reg_pc=pop_valor();
+            return;
+        }
+    }
 
 
 
-			z80_byte cinta_flag=0;
+    z80_byte cinta_flag=0;
 
 
-			//if (tape_any_flag_loading.v==0) flag_Z_shadow.v=0;
-			if (tape_any_flag_loading.v==0) Z80_FLAGS_SHADOW &=(255-FLAG_Z);
-
-
-			//if (flag_Z_shadow.v==1) {
-                        if (Z80_FLAGS_SHADOW & FLAG_Z) {
-				debug_printf(VERBOSE_INFO,"Mode any flag");
-
-				char buffer_reg[1000];
-				print_registers(buffer_reg);
-
-				debug_printf(VERBOSE_INFO,"%s",buffer_reg);
-
-				cinta_flag=0;
+    //if (tape_any_flag_loading.v==0) flag_Z_shadow.v=0;
+    if (tape_any_flag_loading.v==0) Z80_FLAGS_SHADOW &=(255-FLAG_Z);
 
 
 
-				//TODO. En teoria el modo de cualquier flag deberia cargar el flag como byte... pero esto no funciona bien
-				//con rocman o en snapshot de chase hq por ejemplo. deberia ser cinta_longitud-=1 y no hacer el fread,
-				//para que se leyese el flag como byte
-			}
+    if (Z80_FLAGS_SHADOW & FLAG_Z) {
+        debug_printf(VERBOSE_INFO,"Mode any flag");
 
-			else	{
-				cinta_longitud-=2;
-				tape_block_read(&cinta_flag,1);
-			}
+        char buffer_reg[1000];
+        print_registers(buffer_reg);
 
+        debug_printf(VERBOSE_INFO,"%s",buffer_reg);
 
-			debug_printf(VERBOSE_INFO,"load start=%d flag asked=%d length asked=%d flag tape=%d length tape=%d",
-				cinta_pedido_inicio,cinta_pedido_flag,cinta_pedido_longitud,cinta_flag,cinta_longitud);
-
-
-			if (cinta_pedido_flag!=cinta_flag && (Z80_FLAGS_SHADOW & FLAG_Z)==0 ) {
-				debug_printf(VERBOSE_INFO,"Tape flag is not what asked");
-				//fseek(ptr_mycinta,cinta_longitud,SEEK_CUR);
-				tape_block_seek(cinta_longitud,SEEK_CUR);
-                                //saltamos checksum
-                                tape_block_read(&checksum,1);
-				//volver a cargar
-				if (MACHINE_IS_ZXUNO) reg_pc=zxuno_punto_entrado_load;
-				else if (MACHINE_IS_TIMEX_TS_TC_2068) reg_pc=255;
-                                else reg_pc=1378;
-
-			}
-
-			//leemos bytes
-			else {
-				Z80_FLAGS |=FLAG_C;
-
-				//no hace falta inicializarlo a 0, solo es para evitar un warning de compilacion
-				//warning: ‘leidos’ may be used uninitialized in this function
-				//Realmente no pasara nunca, siempre entrara en alguno de los if o else y se inicializará
-				int leidos=0;
-
-				if (cinta_longitud != cinta_pedido_longitud) {
-					debug_printf(VERBOSE_INFO,"Tape length (%d) is not what asked (%d)",cinta_longitud,cinta_pedido_longitud);
-					if (cinta_longitud>cinta_pedido_longitud) {
-						debug_printf(VERBOSE_INFO,"Tape length is more than asked");
-						leidos=tape_block_read(buffer_tap_read,cinta_pedido_longitud);
-						//leemos checksum si no en modo any flag
-						if ((Z80_FLAGS_SHADOW & FLAG_Z)==0)	tape_block_read(&checksum,1);
-
-						//y saltamos el resto que sobra
-						debug_printf(VERBOSE_INFO,"Skipping %d bytes",cinta_longitud-cinta_pedido_longitud);
-		                                //fseek(ptr_mycinta,cinta_longitud-cinta_pedido_longitud,SEEK_CUR);
-
-						tape_block_seek(cinta_longitud-cinta_pedido_longitud,SEEK_CUR);
-
-					}
-					if (cinta_longitud<cinta_pedido_longitud) {
-						debug_printf(VERBOSE_INFO,"Tape length is less than asked. Reading %d bytes",cinta_longitud);
-
-						leidos=tape_block_read(buffer_tap_read,cinta_longitud);
+        cinta_flag=0;
 
 
 
-						checksum=0;
+        //TODO. En teoria el modo de cualquier flag deberia cargar el flag como byte... pero esto no funciona bien
+        //con rocman o en snapshot de chase hq por ejemplo. deberia ser cinta_longitud-=1 y no hacer el fread,
+        //para que se leyese el flag como byte
+    }
 
-						//devolver error si no es que estamos en modo any flag
-						if ((Z80_FLAGS_SHADOW & FLAG_Z)==0) {
-						//TODO: completar esto
-						//descartar checksum
-						z80_byte nada;
-						tape_block_read(&nada,1);
-
-							debug_printf(VERBOSE_INFO,"Returning load error");
-							Z80_FLAGS &=(255-FLAG_C);
-						}
+    else	{
+        cinta_longitud-=2;
+        tape_block_read(&cinta_flag,1);
+    }
 
 
-					}
-				}
+    debug_printf(VERBOSE_INFO,"load start=%d flag asked=%d length asked=%d flag tape=%d length tape=%d",
+        cinta_pedido_inicio,cinta_pedido_flag,cinta_pedido_longitud,cinta_flag,cinta_longitud);
 
-				else {
-					//leidos=fread(buffer_tap_read,1,cinta_longitud,ptr_mycinta);
-					leidos=tape_block_read(buffer_tap_read,cinta_longitud);
-        	                        //leemos checksum
-                	                tape_block_read(&checksum,1);
-				}
+
+    if (cinta_pedido_flag!=cinta_flag && (Z80_FLAGS_SHADOW & FLAG_Z)==0 ) {
+        debug_printf(VERBOSE_INFO,"Tape flag is not what asked");
+        //fseek(ptr_mycinta,cinta_longitud,SEEK_CUR);
+        tape_block_seek(cinta_longitud,SEEK_CUR);
+                        //saltamos checksum
+                        tape_block_read(&checksum,1);
+        //volver a cargar
+        if (MACHINE_IS_ZXUNO) reg_pc=zxuno_punto_entrado_load;
+        else if (MACHINE_IS_TIMEX_TS_TC_2068) reg_pc=255;
+                        else reg_pc=1378;
+
+    }
+
+    //leemos bytes
+    else {
+        Z80_FLAGS |=FLAG_C;
+
+        //no hace falta inicializarlo a 0, solo es para evitar un warning de compilacion
+        //warning: ‘leidos’ may be used uninitialized in this function
+        //Realmente no pasara nunca, siempre entrara en alguno de los if o else y se inicializará
+        int leidos=0;
+
+        if (cinta_longitud != cinta_pedido_longitud) {
+            debug_printf(VERBOSE_INFO,"Tape length (%d) is not what asked (%d)",cinta_longitud,cinta_pedido_longitud);
+            if (cinta_longitud>cinta_pedido_longitud) {
+                debug_printf(VERBOSE_INFO,"Tape length is more than asked");
+                leidos=tape_block_read(buffer_tap_read,cinta_pedido_longitud);
+                //leemos checksum si no en modo any flag
+                if ((Z80_FLAGS_SHADOW & FLAG_Z)==0)	tape_block_read(&checksum,1);
+
+                //y saltamos el resto que sobra
+                debug_printf(VERBOSE_INFO,"Skipping %d bytes",cinta_longitud-cinta_pedido_longitud);
+                                //fseek(ptr_mycinta,cinta_longitud-cinta_pedido_longitud,SEEK_CUR);
+
+                tape_block_seek(cinta_longitud-cinta_pedido_longitud,SEEK_CUR);
+
+            }
+            if (cinta_longitud<cinta_pedido_longitud) {
+                debug_printf(VERBOSE_INFO,"Tape length is less than asked. Reading %d bytes",cinta_longitud);
+
+                leidos=tape_block_read(buffer_tap_read,cinta_longitud);
+
+
+
+                checksum=0;
+
+                //devolver error si no es que estamos en modo any flag
+                if ((Z80_FLAGS_SHADOW & FLAG_Z)==0) {
+                //TODO: completar esto
+                //descartar checksum
+                z80_byte nada;
+                tape_block_read(&nada,1);
+
+                    debug_printf(VERBOSE_INFO,"Returning load error");
+                    Z80_FLAGS &=(255-FLAG_C);
+                }
+
+
+            }
+        }
+
+        else {
+            //leidos=fread(buffer_tap_read,1,cinta_longitud,ptr_mycinta);
+            leidos=tape_block_read(buffer_tap_read,cinta_longitud);
+            //leemos checksum
+            tape_block_read(&checksum,1);
+        }
 
 //				printf ("leidos: %d\n",leidos);
 
-				//simulamos sonido de carga, pokeando en destino tambien
-				load_spectrum_simulate_loading(buffer_tap_read,cinta_pedido_inicio,leidos,cinta_flag);
+        //simulamos sonido de carga, pokeando en destino tambien
+        load_spectrum_simulate_loading(buffer_tap_read,cinta_pedido_inicio,leidos,cinta_flag);
 
 
-				//calculamos checksum
-				z80_byte *origen,tempbyte;
-				origen=buffer_tap_read;
-				checksum_calculado=cinta_flag;
+        //calculamos checksum
+        z80_byte *origen,tempbyte;
+        origen=buffer_tap_read;
+        checksum_calculado=cinta_flag;
 
-				//printf ("calculamos checksum. leidos=%d checksum_calculado_inicial: %d\n",leidos,checksum_calculado);
+        //printf ("calculamos checksum. leidos=%d checksum_calculado_inicial: %d\n",leidos,checksum_calculado);
 
-				for (;leidos;leidos--) {
-					tempbyte=*origen;
-					poke_byte_no_time(cinta_pedido_inicio++,tempbyte);
+        for (;leidos;leidos--) {
+            tempbyte=*origen;
+            poke_byte_no_time(cinta_pedido_inicio++,tempbyte);
 //					printf ("byte\n");
-					origen++;
-					checksum_calculado=checksum_calculado ^ tempbyte;
-					//printf ("0x%x ", checksum_calculado);
-				}
+            origen++;
+            checksum_calculado=checksum_calculado ^ tempbyte;
+            //printf ("0x%x ", checksum_calculado);
+        }
 
-				checksum_calculado=checksum_calculado ^ checksum;
-
-
+        checksum_calculado=checksum_calculado ^ checksum;
 
 
 
-				if (checksum_calculado!=0) {
-					debug_printf(VERBOSE_INFO,"Tape checksum is not 0");
-					Z80_FLAGS &=(255-FLAG_C);
-                                }
+        if (checksum_calculado!=0) {
+            debug_printf(VERBOSE_INFO,"Tape checksum is not 0");
+            Z80_FLAGS &=(255-FLAG_C);
+                        }
 
-				reg_pc=pop_valor();
+        reg_pc=pop_valor();
 
-				//reg_a=checksum_calculado;
-				//H=checksum
-				reg_h=checksum_calculado;
-				reg_ix=cinta_pedido_inicio++;
+        //reg_a=checksum_calculado;
+        //H=checksum
+        reg_h=checksum_calculado;
+        reg_ix=cinta_pedido_inicio++;
 
+        //Registro C en el retorno tiene valores diferentes, aunque no útiles ni documentados,
+        //sin embargo esto es necesario para el juego Sweet Fighter II
+        //Puede retornar valores 0x01, 0x21, 0xFE, 0xDE... en teoria son los ultimos valores enviados al puerto FEH
+        reg_c=1;
 
-                                //En principio la salida de carga siempre retorna flag Z a 0
-                                //esto corrige un problema en la carga de Rocman:
-                                //carga bloque de atributos, con "any flag loading" (flag Z' a 1), en 22527, con longitud 769
-                                //al volver de ese bloque, carga el siguiente (tal cual como esté flag Z, no lo toca),
-                                //y si no lo ponemos a 0, entonces el siguiente bloque lo cargaria como any flag loading, de nuevo,
-                                //cosa que es error, pues el siguiente bloque lo carga en 16384
-                                //de ahi que reseteemos siempre flag Z al volver
-                                //Probablemente este comportamiento sea un bug en el juego, en como carga,
-                                //pues antes de cargar el primer bloque, hace un XOR A, esto activa flag Z, cosa que no tiene sentido,
-                                //probablemente el programador vio que cargaba los atributos en 22529, sin saber por qué (metiendo en 22528 el flag),
-                                //y simplemente cambió la carga a 225287 y aumentó la longitud en 1. O no... quien sabe
-                                Z80_FLAGS &=(255-FLAG_Z);
+        //Registro DE decrementado en cantidad de bytes leidos
+        DE -= cinta_longitud;
 
 
-				debug_printf(VERBOSE_INFO,"Returning H=0x%x IX=%d",reg_h,reg_ix);
+        //En principio la salida de carga siempre retorna flag Z a 0
+        //esto corrige un problema en la carga de Rocman:
+        //carga bloque de atributos, con "any flag loading" (flag Z' a 1), en 22527, con longitud 769
+        //al volver de ese bloque, carga el siguiente (tal cual como esté flag Z, no lo toca),
+        //y si no lo ponemos a 0, entonces el siguiente bloque lo cargaria como any flag loading, de nuevo,
+        //cosa que es error, pues el siguiente bloque lo carga en 16384
+        //de ahi que reseteemos siempre flag Z al volver
+        //Probablemente este comportamiento sea un bug en el juego, en como carga,
+        //pues antes de cargar el primer bloque, hace un XOR A, esto activa flag Z, cosa que no tiene sentido,
+        //probablemente el programador vio que cargaba los atributos en 22529, sin saber por qué (metiendo en 22528 el flag),
+        //y simplemente cambió la carga a 225287 y aumentó la longitud en 1. O no... quien sabe
+        Z80_FLAGS &=(255-FLAG_Z);
 
-			}
 
-		//}
+        debug_printf(VERBOSE_INFO,"Returning H=0x%x IX=%d",reg_h,reg_ix);
+
+    }
 
 
 
@@ -1149,13 +1235,13 @@ void tap_load(void)
 void tap_save(void)
 {
 
-	z80_byte flag=reg_a;
-	z80_int dir=reg_ix;
-	z80_int longitud=value_8_to_16(reg_d,reg_e);
+    z80_byte flag=reg_a;
+    z80_int dir=reg_ix;
+    z80_int longitud=value_8_to_16(reg_d,reg_e);
 
-	reg_pc=pop_valor();
+    reg_pc=pop_valor();
 
-	debug_printf(VERBOSE_INFO,"Saving %d bytes at %d address with flag %d",longitud,dir,flag);
+    debug_printf(VERBOSE_INFO,"Saving %d bytes at %d address with flag %d",longitud,dir,flag);
 
 
         if (tape_out_block_open()) return;
@@ -1163,8 +1249,8 @@ void tap_save(void)
         //Escribimos longitud (contando flag+checksum)
         longitud+=2;
 
-	//Avisamos que vamos a escribir un bloque... en tzx se usa para meter el id correspondiente
-	tape_block_begin_save(longitud,flag);
+    //Avisamos que vamos a escribir un bloque... en tzx se usa para meter el id correspondiente
+    tape_block_begin_save(longitud,flag);
 
 
         //Solo hacer esto si no es un archivo tipo PZX
@@ -1173,9 +1259,9 @@ void tap_save(void)
         if (tape_block_save(&longitud, 2)!=2) {
                 debug_printf(VERBOSE_ERR,"Error writing length");
                 //tape_out_file=0;
-		eject_tape_save();
-		//tape_save_inserted.v=0;
-		tape_out_block_close();
+        eject_tape_save();
+        //tape_save_inserted.v=0;
+        tape_out_block_close();
                 return;
         }
 
@@ -1186,9 +1272,9 @@ void tap_save(void)
         if (tape_block_save(&flag, 1)!=1) {
                 debug_printf(VERBOSE_ERR,"Error writing flag");
                 //tape_out_file=0;
-		eject_tape_save();
-		//tape_save_inserted.v=0;
-		tape_out_block_close();
+        eject_tape_save();
+        //tape_save_inserted.v=0;
+        tape_out_block_close();
                 return;
         }
 
@@ -1203,9 +1289,9 @@ void tap_save(void)
                 if (tape_block_save(&leido, 1)!=1) {
                         debug_printf(VERBOSE_ERR,"Error writing bytes");
                         //tape_out_file=0;
-			eject_tape_save();
-			//tape_save_inserted.v=0;
-			tape_out_block_close();
+            eject_tape_save();
+            //tape_save_inserted.v=0;
+            tape_out_block_close();
                         return;
                 }
         }
@@ -1215,14 +1301,14 @@ void tap_save(void)
         if (tape_block_save(&checksum, 1)!=1) {
                 debug_printf(VERBOSE_ERR,"Error writing checksum");
                 //tape_out_file=0;
-		eject_tape_save();
-		//tape_save_inserted.v=0;
-		tape_out_block_close();
+        eject_tape_save();
+        //tape_save_inserted.v=0;
+        tape_out_block_close();
                 return;
         }
 
 
-	tape_out_block_close();
+    tape_out_block_close();
         return;
 
 
@@ -1250,27 +1336,35 @@ lbytes vale: 3F02H
 
 int is_tape_inserted(void)
 {
-	if ((tape_loadsave_inserted & TAPE_LOAD_INSERTED)!=0 && tapefile!=NULL) return 1;
-	else return 0;
+    if ((tape_loadsave_inserted & TAPE_LOAD_INSERTED)!=0 && tapefile!=NULL) return 1;
+    else return 0;
 }
 
 int tap_load_detect(void)
 {
 
-		//En ZX-UNO detectar carga tipica de la rom o la de la bios
-		if (MACHINE_IS_ZXUNO) {
-			if (reg_pc!=1378 && reg_pc!=0x3F02) return 0;
-		}
+        //En ZX-UNO detectar carga tipica de la rom o la de la bios
+        if (MACHINE_IS_ZXUNO) {
+            if (reg_pc!=1378 && reg_pc!=0x3F02) return 0;
+        }
 
-		else if (MACHINE_IS_PRISM) {
-			if (reg_pc!=1378) return 0;
-		}
+        else if (MACHINE_IS_PRISM) {
+            if (reg_pc!=1378) return 0;
+        }
 
-		else if (MACHINE_IS_TSCONF) {
-			if (reg_pc!=1378) return 0;
-		}
+        else if (MACHINE_IS_BASECONF) {
+            if (reg_pc!=1378) return 0;
+        }
 
-		else if (MACHINE_IS_TBBLUE) {
+        else if (MACHINE_IS_ATM_TURBO) {
+            if (reg_pc!=1378) return 0;
+        }
+
+        else if (MACHINE_IS_TSCONF) {
+            if (reg_pc!=1378) return 0;
+        }
+
+        else if (MACHINE_IS_TBBLUE) {
                         if (reg_pc!=1378) return 0;
                 }
 
@@ -1279,10 +1373,10 @@ int tap_load_detect(void)
                 }
 
 
-		//Para Timex
-		else if (MACHINE_IS_TIMEX_TS_TC_2068) {
-			if (reg_pc!=255) return 0;
-		}
+        //Para Timex
+        else if (MACHINE_IS_TIMEX_TS_TC_2068) {
+            if (reg_pc!=255) return 0;
+        }
 
         //Transtape se entra desde 3817h, en modo carga sin menu
         else if (transtape_enabled.v && transtape_mapped_rom_memory.v) {
@@ -1293,23 +1387,23 @@ int tap_load_detect(void)
 
 
                 if (tapefile==0) return 0;
-		//if (tape_load_inserted.v==0) return 0;
-		if ( (tape_loadsave_inserted & TAPE_LOAD_INSERTED)==0) return 0;
+        //if (tape_load_inserted.v==0) return 0;
+        if ( (tape_loadsave_inserted & TAPE_LOAD_INSERTED)==0) return 0;
 
 
 
     //Si esta multiface y esta mapeada su rom, no detectar carga
     if (multiface_enabled.v && multiface_switched_on.v) return 0;
 
-		//Caso superupgrade
-		//no mirar rom porque no sabemos que rom estamos leyendo (si la rom 3 de carga en un +2a, si la rom 1 en un 128k, etc)
+        //Caso superupgrade
+        //no mirar rom porque no sabemos que rom estamos leyendo (si la rom 3 de carga en un +2a, si la rom 1 en un 128k, etc)
                 //Detectar por PC y por instrucciones
                 if (superupgrade_enabled.v) {
                                 //Ver que instruccion sea IN A,FEH, en caso de rutina normal de la ROM
                                 if (peek_byte_no_time(reg_pc)!=0xDB) return 0;
                                 if (peek_byte_no_time(reg_pc+1)!=0xFE) return 0;
 
-				return 1;
+                return 1;
                 }
 
 
@@ -1317,6 +1411,11 @@ int tap_load_detect(void)
                 if (MACHINE_IS_SPECTRUM_16_48) {
 
                                 //maquina 16k, inves ,48k o tk
+                                return 1;
+                }
+
+                if (MACHINE_IS_DIDAKTIKGAMA) {
+
                                 return 1;
                 }
 
@@ -1330,12 +1429,12 @@ int tap_load_detect(void)
 
 
                 //Para Timex
-		if (MACHINE_IS_TIMEX_TS_TC_2068) {
+        if (MACHINE_IS_TIMEX_TS_TC_2068) {
                         //Si rom EX mapeada
                         if ( (timex_port_f4 &1) == 0) return 0; //Home mapeada , volver
                         if ( (timex_port_ff&128) == 0 ) return 0; //Dock mapeada, volver
-			return 1;
-		}
+            return 1;
+        }
 
                 if (MACHINE_IS_SPECTRUM_P2A_P3) {
                                 //maquina +2A
@@ -1343,72 +1442,98 @@ int tap_load_detect(void)
                                 return 1;
                 }
 
-		//Para PRISM, detectar como zxuno. Por PC y por instrucciones
-		//no mirar rom porque no sabemos que rom estamos leyendo (si la rom 3 de carga en un +2a, si la rom 1 en un 128k, etc)
+        //Para PRISM, detectar como zxuno. Por PC y por instrucciones
+        //no mirar rom porque no sabemos que rom estamos leyendo (si la rom 3 de carga en un +2a, si la rom 1 en un 128k, etc)
                 //Detectar por PC y por instrucciones
-		if (MACHINE_IS_PRISM) {
-				//Ver que instruccion sea IN A,FEH, en caso de rutina normal de la ROM
+        if (MACHINE_IS_PRISM) {
+                //Ver que instruccion sea IN A,FEH, en caso de rutina normal de la ROM
                                 if (peek_byte_no_time(reg_pc)!=0xDB) return 0;
                                 if (peek_byte_no_time(reg_pc+1)!=0xFE) return 0;
 
-				return 1;
+                return 1;
 
-		}
+        }
 
-		//Para TSCONF, detectar como zxuno. Por PC y por instrucciones
-		//no mirar rom porque no sabemos que rom estamos leyendo (si la rom 3 de carga en un +2a, si la rom 1 en un 128k, etc)
+        /* En BaseConf el EVO Service tiene prioridad mediante su breakpoint
+           hardware en #0556. Si no ha interceptado la carga y se alcanza el
+           IN A,(#FE) normal de la ROM, se permite usar el TAP de ZEsarUX. */
+        if (MACHINE_IS_BASECONF) {
+                if (peek_byte_no_time(reg_pc)!=0xDB) return 0;
+                if (peek_byte_no_time(reg_pc+1)!=0xFE) return 0;
+
+                return 1;
+        }
+
+        //No mirar que rom está mapeada
+        if (MACHINE_IS_ATM_TURBO) {
+                if (peek_byte_no_time(reg_pc)!=0xDB) return 0;
+                if (peek_byte_no_time(reg_pc+1)!=0xFE) return 0;
+
+                return 1;
+        }
+
+        //No mirar que rom está mapeada
+        if (MACHINE_IS_SCORPION) {
+                if (peek_byte_no_time(reg_pc)!=0xDB) return 0;
+                if (peek_byte_no_time(reg_pc+1)!=0xFE) return 0;
+
+                return 1;
+        }
+
+        //Para TSCONF, detectar como zxuno. Por PC y por instrucciones
+        //no mirar rom porque no sabemos que rom estamos leyendo (si la rom 3 de carga en un +2a, si la rom 1 en un 128k, etc)
                 //Detectar por PC y por instrucciones
-		if (MACHINE_IS_TSCONF) {
-				//Ver que instruccion sea IN A,FEH, en caso de rutina normal de la ROM
+        if (MACHINE_IS_TSCONF) {
+                //Ver que instruccion sea IN A,FEH, en caso de rutina normal de la ROM
                                 if (peek_byte_no_time(reg_pc)!=0xDB) return 0;
                                 if (peek_byte_no_time(reg_pc+1)!=0xFE) return 0;
 
-				return 1;
+                return 1;
 
-		}
+        }
 
-		//Para TBBlue, detectar como zxuno. Por PC y por instrucciones
+        //Para TBBlue, detectar como zxuno. Por PC y por instrucciones
                 //no mirar rom porque no sabemos que rom estamos leyendo (si la rom 3 de carga en un +2a, si la rom 1 en un 128k, etc)
                 //Detectar por PC y por instrucciones
 
-		if (MACHINE_IS_TBBLUE) {
-				//Ver que instruccion sea IN A,FEH, en caso de rutina normal de la ROM
+        if (MACHINE_IS_TBBLUE) {
+                //Ver que instruccion sea IN A,FEH, en caso de rutina normal de la ROM
                                 if (peek_byte_no_time(reg_pc)!=0xDB) return 0;
                                 if (peek_byte_no_time(reg_pc+1)!=0xFE) return 0;
 
-				return 1;
+                return 1;
 
                 }
 
   if (MACHINE_IS_CHROME) {
-            				//Ver que instruccion sea IN A,FEH, en caso de rutina normal de la ROM
+                            //Ver que instruccion sea IN A,FEH, en caso de rutina normal de la ROM
           if (peek_byte_no_time(reg_pc)!=0xDB) return 0;
           if (peek_byte_no_time(reg_pc+1)!=0xFE) return 0;
 
-            				return 1;
+                            return 1;
 
       }
 
 
                 if (MACHINE_IS_ZXUNO_BOOTM_DISABLED) {
-		/*
-		Nota. Rutinas rom carga 1378 y grabacion 1222 en otras roms diferentes de la 3:
-		-Spectrum 128k, +2. Rom0. 1378. Corresponde a mensaje L0561:  DEFB $7F                           ; '(c)'.
-								        DEFM " 1986 Sinclair Research Lt"  ;
-		  registro PC no llegara ahi nunca
-		-Spectrum 128k, +2. Rom0. 1222. Corresponde a mensaje L04C1:  DEFM "File already exist"          ; Report 'e'.
-							        DEFB 's'+$80
+        /*
+        Nota. Rutinas rom carga 1378 y grabacion 1222 en otras roms diferentes de la 3:
+        -Spectrum 128k, +2. Rom0. 1378. Corresponde a mensaje L0561:  DEFB $7F                           ; '(c)'.
+                                        DEFM " 1986 Sinclair Research Lt"  ;
+          registro PC no llegara ahi nunca
+        -Spectrum 128k, +2. Rom0. 1222. Corresponde a mensaje L04C1:  DEFM "File already exist"          ; Report 'e'.
+                                    DEFB 's'+$80
 
-		-Spanish Spectrum 128k. Rom0. 1222. Corresponde a mensaje L04C0:  DEFM "NOTA FUERA DE RANG"          ; Report 'm'.
+        -Spanish Spectrum 128k. Rom0. 1222. Corresponde a mensaje L04C0:  DEFM "NOTA FUERA DE RANG"          ; Report 'm'.
         DEFB 'O'+$80
 
-		-Spanish Spectrum 128k. Rom0. 1378. Corresponde a         DEFB $06, $00     ; Stream $02 leads to channel 'S'.
+        -Spanish Spectrum 128k. Rom0. 1378. Corresponde a         DEFB $06, $00     ; Stream $02 leads to channel 'S'.
 
 
-		-Spectrum +2A. rom0. english. 1222. entra en medio de ultima instruccion:.l04bf  ld      ($fc9a),hl
-		        call    $1420
-		        ld      (E_PPC),hl
-		-Spectrum +2A. rom0. english. 1378. entra en ultimo cp!!!!!! : .l0559  push    bc
+        -Spectrum +2A. rom0. english. 1222. entra en medio de ultima instruccion:.l04bf  ld      ($fc9a),hl
+                call    $1420
+                ld      (E_PPC),hl
+        -Spectrum +2A. rom0. english. 1378. entra en ultimo cp!!!!!! : .l0559  push    bc
         ld      bc,$0023
         lddr
         pop     bc
@@ -1418,30 +1543,30 @@ int tap_load_detect(void)
         jr      c,l0559             ; (-12)
 
 .l0565  ex      de,hl
-		En este caso se pensaria que esa rutina es la de carga... :(
+        En este caso se pensaria que esa rutina es la de carga... :(
 
 
-		*/
+        */
 
-			if (reg_pc==0x3F02) {
-				//Trap para rutina de la bios del zx-uno
-				if (peek_byte_no_time(reg_pc)==0xF3) {
-					//metemos flag
-					reg_a_shadow=255;
-					zxuno_punto_entrado_load=0x3F02;
+            if (reg_pc==0x3F02) {
+                //Trap para rutina de la bios del zx-uno
+                if (peek_byte_no_time(reg_pc)==0xF3) {
+                    //metemos flag
+                    reg_a_shadow=255;
+                    zxuno_punto_entrado_load=0x3F02;
 
-					return 1;
-				}
-				return 0;
-			}
+                    return 1;
+                }
+                return 0;
+            }
 
-				zxuno_punto_entrado_load=1378;
+                zxuno_punto_entrado_load=1378;
 
-				//Ver que instruccion sea IN A,FEH, en caso de rutina normal de la ROM
-				if (peek_byte_no_time(reg_pc)!=0xDB) return 0;
-				if (peek_byte_no_time(reg_pc+1)!=0xFE) return 0;
+                //Ver que instruccion sea IN A,FEH, en caso de rutina normal de la ROM
+                if (peek_byte_no_time(reg_pc)!=0xDB) return 0;
+                if (peek_byte_no_time(reg_pc+1)!=0xFE) return 0;
 
-				return 1;
+                return 1;
 
                 }
 
@@ -1509,8 +1634,8 @@ int tap_save_detect(void)
     else if (reg_pc!=1222) return 0;
 
     if (tape_out_file==0) return 0;
-		//if (tape_save_inserted.v==0) return 0;
-		if ( (tape_loadsave_inserted & TAPE_SAVE_INSERTED)==0) return 0;
+        //if (tape_save_inserted.v==0) return 0;
+        if ( (tape_loadsave_inserted & TAPE_SAVE_INSERTED)==0) return 0;
 
     //Si esta multiface y esta mapeada su rom, no detectar grabacion
     if (multiface_enabled.v && multiface_switched_on.v) return 0;
@@ -1537,6 +1662,12 @@ int tap_save_detect(void)
     if (MACHINE_IS_SPECTRUM_16_48) {
 
                     //maquina 16k, inves o 48k
+                    return 1;
+    }
+
+    if (MACHINE_IS_DIDAKTIKGAMA) {
+
+
                     return 1;
     }
 
@@ -1583,6 +1714,36 @@ int tap_save_detect(void)
                             return 1;
     }
 
+    /* BaseConf, igual que Prism: detectar la entrada de la rutina estándar
+       de grabación mediante LD HL,#1F80, sin depender de una ROM concreta. */
+    if (MACHINE_IS_BASECONF) {
+                    if (peek_byte_no_time(reg_pc)!=0x21) return 0;
+                    if (peek_byte_no_time(reg_pc+1)!=0x80) return 0;
+                    if (peek_byte_no_time(reg_pc+2)!=0x1f) return 0;
+
+                    return 1;
+    }
+
+    /* ATM Turbo, igual que Prism: detectar la entrada de la rutina estándar
+       de grabación mediante LD HL,#1F80, sin depender de una ROM concreta. */
+    if (MACHINE_IS_ATM_TURBO) {
+                    if (peek_byte_no_time(reg_pc)!=0x21) return 0;
+                    if (peek_byte_no_time(reg_pc+1)!=0x80) return 0;
+                    if (peek_byte_no_time(reg_pc+2)!=0x1f) return 0;
+
+                    return 1;
+    }
+
+    /* Scorpion, igual que Prism: detectar la entrada de la rutina estándar
+       de grabación mediante LD HL,#1F80, sin depender de una ROM concreta. */
+    if (MACHINE_IS_SCORPION) {
+                    if (peek_byte_no_time(reg_pc)!=0x21) return 0;
+                    if (peek_byte_no_time(reg_pc+1)!=0x80) return 0;
+                    if (peek_byte_no_time(reg_pc+2)!=0x1f) return 0;
+
+                    return 1;
+    }
+
     if (MACHINE_IS_TSCONF) {
     //Como maquina +2A
     //Ver que instruccion sea ld hl,1f80
@@ -1597,8 +1758,8 @@ int tap_save_detect(void)
 
 
     if (MACHINE_IS_CHROME) {
-			//Como maquina +2A
-			//Ver que instruccion sea ld hl,1f80
+            //Como maquina +2A
+            //Ver que instruccion sea ld hl,1f80
                                 if (peek_byte_no_time(reg_pc)!=0x21) return 0;
                                 if (peek_byte_no_time(reg_pc+1)!=0x80) return 0;
                                 if (peek_byte_no_time(reg_pc+2)!=0x1f) return 0;
@@ -1606,7 +1767,7 @@ int tap_save_detect(void)
 
                                 //Sea cual sea la rom, si reg_pc coincide e instruccion es la indicada antes
                                 return 1;
-		}
+        }
 
     if (MACHINE_IS_TBBLUE) {
     //Como maquina +2A
@@ -1641,12 +1802,12 @@ int tap_save_detect(void)
 int tap_load_detect_ace(void)
 {
 
-	if (tapefile==0) return 0;
+    if (tapefile==0) return 0;
         if ( (tape_loadsave_inserted & TAPE_LOAD_INSERTED)==0) return 0;
 
 
-	if (reg_pc==0x18a7) return 1;
-	return 0;
+    if (reg_pc==0x18a7) return 1;
+    return 0;
 }
 
 int tap_save_detect_ace(void)
@@ -1679,9 +1840,9 @@ void gestionar_autoload_spectrum_start_loadpp(void)
 
 void gestionar_autoload_spectrum_start_jloadpp(void)
 {
-	debug_printf (VERBOSE_INFO,"Autoload tape with LOAD(J) \"\" ");
-	initial_tap_sequence=1;
-	autoload_spectrum_loadpp_mode=1;
+    debug_printf (VERBOSE_INFO,"Autoload tape with LOAD(J) \"\" ");
+    initial_tap_sequence=1;
+    autoload_spectrum_loadpp_mode=1;
 }
 
 void gestionar_autoload_spectrum_start_enter(void)
@@ -1694,22 +1855,22 @@ void gestionar_autoload_spectrum_start_enter(void)
 
 void gestionar_autoload_spectrum_48kmode(void)
 {
-	if (reg_pc==0x12a9) {
-		gestionar_autoload_spectrum_start_jloadpp();
-	}
+    if (reg_pc==0x12a9) {
+        gestionar_autoload_spectrum_start_jloadpp();
+    }
 }
 
 
 void gestionar_autoload_spectrum(void)
 {
 
-	if (initial_tap_load.v==1 && initial_tap_sequence==0 &&
-		( (tape_loadsave_inserted & TAPE_LOAD_INSERTED)!=0  || (realtape_inserted.v==1)  || (dskplusthree_emulation.v))
+    if (initial_tap_load.v==1 && initial_tap_sequence==0 &&
+        ( (tape_loadsave_inserted & TAPE_LOAD_INSERTED)!=0  || (realtape_inserted.v==1)  || (dskplusthree_emulation.v))
 
-		) {
+        ) {
 
 
-		if (superupgrade_enabled.v) {
+        if (superupgrade_enabled.v) {
                                 //Para superupgrade. Pasa como zxuno
                                 //dado que no sabemos exactamente que maquina ha ejecutado superupgrade y por ejemplo,
                                 //un spectrum 48k se carga en rom0 (y lo ideal seria que se cargase en rom3)
@@ -1734,16 +1895,18 @@ void gestionar_autoload_spectrum(void)
 
 
 
-		int actual_rom;
+        int actual_rom;
 
-		switch (current_machine_type) {
+        switch (current_machine_type) {
 
-			case MACHINE_ID_SPECTRUM_16:
-			case MACHINE_ID_SPECTRUM_48:
-			case MACHINE_ID_INVES:
-			case MACHINE_ID_MICRODIGITAL_TK90X:
-			case MACHINE_ID_MICRODIGITAL_TK90X_SPA:
-			case MACHINE_ID_MICRODIGITAL_TK95:
+            case MACHINE_ID_SPECTRUM_16:
+            case MACHINE_ID_SPECTRUM_48:
+            case MACHINE_ID_INVES:
+            case MACHINE_ID_MICRODIGITAL_TK90X_POR:
+            case MACHINE_ID_MICRODIGITAL_TK90X_SPA:
+            case MACHINE_ID_MICRODIGITAL_TK90X_FERRANTI_POR:
+            case MACHINE_ID_MICRODIGITAL_TK90X_FERRANTI_SPA:
+            case MACHINE_ID_MICRODIGITAL_TK95_POR:
             case MACHINE_ID_MICRODIGITAL_TK95_SPA:
             case MACHINE_ID_SPECTRUM_48_PLUS_SPA:
             case MACHINE_ID_SPECTRUM_48_PLUS_ENG:
@@ -1751,29 +1914,30 @@ void gestionar_autoload_spectrum(void)
             case MACHINE_ID_CZ_2000:
             case MACHINE_ID_CZ_SPECTRUM:
             case MACHINE_ID_CZ_SPECTRUM_PLUS:
-				//Ver para maquinas 48k
-				gestionar_autoload_spectrum_48kmode();
-				break;
+            case MACHINE_ID_DIDAKTIKGAMA:
+                //Ver para maquinas 48k
+                gestionar_autoload_spectrum_48kmode();
+                break;
 
-			case 6:
-			case 21:
+            case 6:
+            case 21:
             case 22:
-				//Para maquina 128k
-				//si en rom0
-				actual_rom=get_actual_rom_128k();
-				if (actual_rom==0) {
-					if (reg_pc==0x3683) gestionar_autoload_spectrum_start_enter();
-				}
+                //Para maquina 128k
+                //si en rom0
+                actual_rom=get_actual_rom_128k();
+                if (actual_rom==0) {
+                    if (reg_pc==0x3683) gestionar_autoload_spectrum_start_enter();
+                }
 
-				//rom 1, la de 48k
-				else gestionar_autoload_spectrum_48kmode();
+                //rom 1, la de 48k
+                else gestionar_autoload_spectrum_48kmode();
 
-				break;
+                break;
 
 
-			case 7:
-				//Para maquina 128k spanish
-				//si en rom0
+            case 7:
+                //Para maquina 128k spanish
+                //si en rom0
                                 actual_rom=get_actual_rom_128k();
                                 if (actual_rom==0) {
                                         if (reg_pc==0x25a0) gestionar_autoload_spectrum_start_loadpp();
@@ -1781,23 +1945,23 @@ void gestionar_autoload_spectrum(void)
 
                                 //rom 1, la de 48k
                                 else gestionar_autoload_spectrum_48kmode();
-				break;
+                break;
 
-			case 8:
+            case 8:
 
-				//Para maquina +2
-				actual_rom=get_actual_rom_128k();
-				if (actual_rom==0) {
-					if (reg_pc==0x36a9) gestionar_autoload_spectrum_start_enter();
-				}
+                //Para maquina +2
+                actual_rom=get_actual_rom_128k();
+                if (actual_rom==0) {
+                    if (reg_pc==0x36a9) gestionar_autoload_spectrum_start_enter();
+                }
 
-				//rom 1, la de 48k
-				else gestionar_autoload_spectrum_48kmode();
+                //rom 1, la de 48k
+                else gestionar_autoload_spectrum_48kmode();
 
 
-				break;
+                break;
 
-			case 9:
+            case 9:
 
                                 //Para maquina +2 french
                                 actual_rom=get_actual_rom_128k();
@@ -1826,20 +1990,20 @@ void gestionar_autoload_spectrum(void)
                                 break;
 
 
-			case MACHINE_ID_SPECTRUM_P2A_40:
+            case MACHINE_ID_SPECTRUM_P2A_40:
             case MACHINE_ID_SPECTRUM_P3_40:
 
-				//Para maquina +2A English rom 4.0
-				actual_rom=get_actual_rom_p2a();
-				if (actual_rom==0) {
-					if (reg_pc==0x1875) gestionar_autoload_spectrum_start_enter();
-				}
+                //Para maquina +2A English rom 4.0
+                actual_rom=get_actual_rom_p2a();
+                if (actual_rom==0) {
+                    if (reg_pc==0x1875) gestionar_autoload_spectrum_start_enter();
+                }
 
-				else if (actual_rom==3) gestionar_autoload_spectrum_48kmode();
+                else if (actual_rom==3) gestionar_autoload_spectrum_48kmode();
 
-				break;
+                break;
 
-			case MACHINE_ID_SPECTRUM_P2A_41:
+            case MACHINE_ID_SPECTRUM_P2A_41:
             case MACHINE_ID_SPECTRUM_P3_41:
 
                 //Para maquina +2A English rom 4.1
@@ -1853,59 +2017,59 @@ void gestionar_autoload_spectrum(void)
                 break;
 
 
-			case MACHINE_ID_SPECTRUM_P2A_SPA:
+            case MACHINE_ID_SPECTRUM_P2A_SPA:
             case MACHINE_ID_SPECTRUM_P3_SPA:
 
-				//Para maquina +2A Spanish
-				actual_rom=get_actual_rom_p2a();
-				if (actual_rom==0) {
-					if (reg_pc==0x1891) gestionar_autoload_spectrum_start_enter();
-				}
+                //Para maquina +2A Spanish
+                actual_rom=get_actual_rom_p2a();
+                if (actual_rom==0) {
+                    if (reg_pc==0x1891) gestionar_autoload_spectrum_start_enter();
+                }
 
-				else if (actual_rom==3) gestionar_autoload_spectrum_48kmode();
+                else if (actual_rom==3) gestionar_autoload_spectrum_48kmode();
 
-				break;
+                break;
 
-			case 14:
-				//Para ZX-Uno, bootm=0. como +2a
-				//en zx-uno dado que no sabemos exactamente que maquina ha ejecutado zxuno y por ejemplo,
-				//un spectrum 48k se carga en rom0 (y lo ideal seria que se cargase en rom3)
-				if (ZXUNO_BOOTM_DISABLED) {
-					//Para 128k, +2, +2a enviar enter
-					if (
-					  reg_pc==0x3683 ||
-					  reg_pc==0x36a9 ||
-					  reg_pc==0x36be ||
-					  reg_pc==0x36bb ||
-					  reg_pc==0x1875 ||
-					  reg_pc==0x187a ||
-					  reg_pc==0x1891
-					) gestionar_autoload_spectrum_start_enter();
+            case 14:
+                //Para ZX-Uno, bootm=0. como +2a
+                //en zx-uno dado que no sabemos exactamente que maquina ha ejecutado zxuno y por ejemplo,
+                //un spectrum 48k se carga en rom0 (y lo ideal seria que se cargase en rom3)
+                if (ZXUNO_BOOTM_DISABLED) {
+                    //Para 128k, +2, +2a enviar enter
+                    if (
+                      reg_pc==0x3683 ||
+                      reg_pc==0x36a9 ||
+                      reg_pc==0x36be ||
+                      reg_pc==0x36bb ||
+                      reg_pc==0x1875 ||
+                      reg_pc==0x187a ||
+                      reg_pc==0x1891
+                    ) gestionar_autoload_spectrum_start_enter();
 
-					//para spanish 128k
-					else if (reg_pc==0x25a0) gestionar_autoload_spectrum_start_loadpp();
+                    //para spanish 128k
+                    else if (reg_pc==0x25a0) gestionar_autoload_spectrum_start_loadpp();
 
-					//Para 48k
-					else gestionar_autoload_spectrum_48kmode();
+                    //Para 48k
+                    else gestionar_autoload_spectrum_48kmode();
 
-				}
-				break;
-
-
+                }
+                break;
 
 
-			case MACHINE_ID_TIMEX_TS2068:
+
+
+            case MACHINE_ID_TIMEX_TS2068:
             case MACHINE_ID_TIMEX_TC2068:
-				//Para Timex
+                //Para Timex
 
-				//Si rom mapeada en segmento bajo
+                //Si rom mapeada en segmento bajo
                                 if ( (timex_port_f4 &1)==0 ) {
-					if (reg_pc==0x11f8) gestionar_autoload_spectrum_start_jloadpp();
-				}
-				break;
+                    if (reg_pc==0x11f8) gestionar_autoload_spectrum_start_jloadpp();
+                }
+                break;
 
 
-			case 18:
+            case 18:
                                 //Para Prism. Pasa como zxuno
                                 //dado que no sabemos exactamente que maquina ha ejecutado prism y por ejemplo,
                                 //un spectrum 48k se carga en rom0 (y lo ideal seria que se cargase en rom3)
@@ -1928,8 +2092,8 @@ void gestionar_autoload_spectrum(void)
 
                         break;
 
-			case MACHINE_ID_TBBLUE:
-				//Para TBBlue. Pasa como Prism
+            case MACHINE_ID_TBBLUE:
+                //Para TBBlue. Pasa como Prism
                 //Actualmente esto NO se usa
 
                 //Siempre que no este en la rom de arranque,
@@ -1956,7 +2120,7 @@ void gestionar_autoload_spectrum(void)
 
             break;
 
-			case 23:
+            case 23:
                                 //Para TSConf. Pasa como zxuno
                                 //dado que no sabemos exactamente que maquina ha ejecutado prism y por ejemplo,
                                 //un spectrum 48k se carga en rom0 (y lo ideal seria que se cargase en rom3)
@@ -1979,10 +2143,10 @@ void gestionar_autoload_spectrum(void)
 
                         break;
 
-		}
+        }
 
 
-	}
+    }
 
 
 }
@@ -2013,11 +2177,11 @@ void gestionar_autoload_cpc(void)
                 ) {
 
 
-			if (reg_pc==0x1a4f) {
-        			debug_printf (VERBOSE_INFO,"Autoload tape with CTRL+Enter");
-			        initial_tap_sequence=1;
-			}
-	}
+            if (reg_pc==0x1a4f) {
+                    debug_printf (VERBOSE_INFO,"Autoload tape with CTRL+Enter");
+                    initial_tap_sequence=1;
+            }
+    }
 
 }
 
@@ -2067,20 +2231,21 @@ char realtape_wave_offset=0;
 //5= O
 //6= TAP
 //7= PZX
+//TODO: creo que no sirve de mucho esta variable...
 int realtape_tipo=0;
 
 
 //ajusta un valor de sample de unsigned char a char, teniendo en cuenta offset de onda
 char realtape_adjust_offset_sign(unsigned char value)
 {
-	//pasamos a int con mayor precision para controlar topes
-	int value16=value;
-	value16 = value16-128+realtape_wave_offset;
+    //pasamos a int con mayor precision para controlar topes
+    int value16=value;
+    value16 = value16-128+realtape_wave_offset;
 
-	if (value16>127) value16=127;
-	if (value16<-128) value16=-128;
+    if (value16>127) value16=127;
+    if (value16<-128) value16=-128;
 
-	return value16;
+    return value16;
 }
 
 //Para mostrar indicador de progreso cargado
@@ -2091,7 +2256,7 @@ void realtape_get_byte_rwa(void)
 {
 
 
-	if (feof(ptr_realtape)) {
+    if (feof(ptr_realtape)) {
         //printf("Fin de cinta\n");
 
         //Si autorewind
@@ -2108,10 +2273,10 @@ void realtape_get_byte_rwa(void)
 
 
     //reset_beeper_silence_detection_counter();
-	unsigned char valor_leido_audio;
+    unsigned char valor_leido_audio;
 
-	fread(&valor_leido_audio, 1,1 , ptr_realtape);
-	realtape_last_value=realtape_adjust_offset_sign(valor_leido_audio);
+    fread(&valor_leido_audio, 1,1 , ptr_realtape);
+    realtape_last_value=realtape_adjust_offset_sign(valor_leido_audio);
     realtape_file_size_counter++;
 }
 
@@ -2119,10 +2284,10 @@ void realtape_get_byte_cont(void)
 {
 
     //RWA, SMP, WAV, TZX, P, O, TAP, PZX
-	if (realtape_tipo>=0 || realtape_tipo<=7) {
-		realtape_get_byte_rwa();
-		return;
-	}
+    if (realtape_tipo>=0 && realtape_tipo<=7) {
+        realtape_get_byte_rwa();
+        return;
+    }
 
 }
 
@@ -2217,8 +2382,8 @@ void realtape_print_footer(void)
 
     sprintf (buffer_texto,"%s %s",buffer_texto_playing,buffer_texto_progreso);
 
-	//color inverso
-	menu_putstring_footer(0,2,buffer_texto,WINDOW_FOOTER_PAPER,WINDOW_FOOTER_INK);
+    //color inverso
+    menu_putstring_footer(0,2,buffer_texto,WINDOW_FOOTER_PAPER,WINDOW_FOOTER_INK);
 
     //Y poner icono de cinta en inverso
     draw_realtape_icon_activity();
@@ -2323,14 +2488,20 @@ void realtape_get_byte(void)
     }
 
 
-	realtape_get_byte_cont();
+    realtape_get_byte_cont();
 
 }
 
 
-//almacenar los datos que se veran en la ventana de visual real tape. Valores maximo y minimo ([0] minimo, [1] maximo)
+//almacenar los datos que se veran en la ventana de visual real tape.
+//Valores maximo y minimo  y medio ([0] minimo, [1] maximo, [2] medio)
 //Un minimo de REALTAPE_VISUAL_MAX_SIZE y maximo REALTAPE_VISUAL_MAX_SIZE*2
-z80_byte realtape_visual_data[REALTAPE_VISUAL_MAX_SIZE*2][2];
+z80_byte realtape_visual_data[REALTAPE_VISUAL_MAX_SIZE*2][3];
+
+z80_byte realtape_visual_data_max_global=0;
+z80_byte realtape_visual_data_min_global=0;
+z80_byte realtape_visual_data_max_media_global=0;
+z80_byte realtape_visual_data_min_media_global=0;
 
 int realtape_visual_total_used=REALTAPE_VISUAL_MAX_SIZE;
 
@@ -2350,7 +2521,7 @@ void init_visual_real_tape(void)
     //Ponerlo todo a onda plana
     int i;
     for (i=0;i<REALTAPE_VISUAL_MAX_SIZE*2;i++) {
-        realtape_visual_data[i][0]=realtape_visual_data[i][1]=128;
+        realtape_visual_data[i][0]=realtape_visual_data[i][1]=realtape_visual_data[i][2]=128;
     }
 
     //Inicializar array de posiciones
@@ -2399,16 +2570,27 @@ void realtape_load_visuals(char *filename)
     int leidos=0;
     int posicion_visual=0;
 
-    minimo=maximo=128;
+    //minimo=maximo=128;
+    minimo=255;
+    maximo=0;
     z80_byte byte_leido;
 
+    z80_64bit acumulado_medio=0;
+
+    realtape_visual_data_max_global=0;
+    realtape_visual_data_min_global=255;
+    realtape_visual_data_max_media_global=0;
+    realtape_visual_data_min_media_global=255;
+    //int temp_debug=4;
     while (total_archivo>0) {
 
         byte_leido=*puntero;
-        puntero++;
-        //fread(&byte_leido,1,1,ptr_visual);
+        //if (temp_debug>0) printf("byte leido: %d\n",byte_leido);
 
-        //acumulado=acumulado+byte_leido;
+        puntero++;
+
+
+        acumulado_medio +=byte_leido;
         if (byte_leido<minimo) minimo=byte_leido;
         if (byte_leido>maximo) maximo=byte_leido;
 
@@ -2416,14 +2598,19 @@ void realtape_load_visuals(char *filename)
         leidos++;
 
         if ((leidos%tamanyo_trozo)==0) {
+            //temp_debug--;
             //siguiente trozo
-            //acumulado /=tamanyo_trozo;
+            //printf("Writing position %XH (leidos %XH) antes acumulado_medio %ld tamanyo_trozo %d\n",posicion_visual,leidos,acumulado_medio,tamanyo_trozo);
+            acumulado_medio /=tamanyo_trozo;
+
+            //printf("Writing position %XH (leidos %XH) acumulado_medio %ld tamanyo_trozo %d\n",posicion_visual,leidos,acumulado_medio,tamanyo_trozo);
 
             //por si acaso controlar maximo
             if (posicion_visual<realtape_visual_total_used) {
-                //printf("Writing position %4d value min %3d max %3d\n",posicion_visual,minimo,maximo);
+                //printf("Writing position %XH (leidos %XH) value min %3d max %3d medio %d\n",posicion_visual,leidos,minimo,maximo,acumulado_medio);
                 realtape_visual_data[posicion_visual][0]=minimo;
                 realtape_visual_data[posicion_visual][1]=maximo;
+                realtape_visual_data[posicion_visual][2]=acumulado_medio;
 
                 posicion_visual++;
             }
@@ -2433,7 +2620,16 @@ void realtape_load_visuals(char *filename)
                 return;
             }
 
-            minimo=maximo=128;
+            if (maximo>realtape_visual_data_max_global) realtape_visual_data_max_global=maximo;
+            if (minimo<realtape_visual_data_min_global) realtape_visual_data_min_global=minimo;
+            if (acumulado_medio>realtape_visual_data_max_media_global) realtape_visual_data_max_media_global=acumulado_medio;
+            if (acumulado_medio<realtape_visual_data_min_media_global) realtape_visual_data_min_media_global=acumulado_medio;
+
+
+
+            minimo=255;
+            maximo=0;
+            acumulado_medio=0;
 
         }
     }
@@ -2447,7 +2643,7 @@ void realtape_load_visuals(char *filename)
 
 
 struct realtape_insert_detect_blocks_struct {
-	char name_to_use[PATH_MAX];
+    char name_to_use[PATH_MAX];
 };
 
 struct realtape_insert_detect_blocks_struct realtape_insert_detect_blocks_parametros;
@@ -2530,11 +2726,11 @@ void realtape_insert_detect_blocks(char *name_to_use)
 {
         //precargar posiciones de cada bloque en cinta para luego mostrar en Visual Real Tape
 
-		//Esta funcion se puede lanzar como un thread aparte porque Visual Real Tape, mientras no
+        //Esta funcion se puede lanzar como un thread aparte porque Visual Real Tape, mientras no
         //finalice el pthread, no mostrará bloques
 
 
-		strcpy(realtape_insert_detect_blocks_parametros.name_to_use,name_to_use);
+        strcpy(realtape_insert_detect_blocks_parametros.name_to_use,name_to_use);
 
 
 
@@ -2557,7 +2753,7 @@ void realtape_insert_detect_blocks(char *name_to_use)
 {
 
 
-		strcpy(realtape_insert_detect_blocks_parametros.name_to_use,name_to_use);
+        strcpy(realtape_insert_detect_blocks_parametros.name_to_use,name_to_use);
 
         realtape_insert_detect_blocks_thread_function((void *)&realtape_insert_detect_blocks_parametros);
 
@@ -2570,76 +2766,76 @@ void realtape_insert(void)
 {
 
 
-	debug_printf (VERBOSE_INFO,"Inserting real tape: %s",realtape_name);
+    debug_printf (VERBOSE_INFO,"Inserting real tape: %s",realtape_name);
         realtape_file_size_counter=0;
 
-	if (!util_compare_file_extension(realtape_name,"rwa")) {
-		debug_printf (VERBOSE_INFO,"Detected raw file RWA");
-		realtape_tipo=0;
-		debug_printf (VERBOSE_INFO,"Opening File %s",realtape_name);
-        	ptr_realtape=fopen(realtape_name,"rb");
+    if (!util_compare_file_extension(realtape_name,"rwa")) {
+        debug_printf (VERBOSE_INFO,"Detected raw file RWA");
+        realtape_tipo=0;
+        debug_printf (VERBOSE_INFO,"Opening File %s",realtape_name);
+            ptr_realtape=fopen(realtape_name,"rb");
                 realtape_file_size=get_file_size(realtape_name);
-	}
+    }
 
-	else if (!util_compare_file_extension(realtape_name,"smp")) {
-		debug_printf (VERBOSE_INFO,"Detected raw file SMP");
-		realtape_tipo=1;
-		if (convert_smp_to_rwa_tmpdir(realtape_name,realtape_name_rwa)) {
-			//debug_printf(VERBOSE_ERR,"Error converting input file");
-			return;
-		}
+    else if (!util_compare_file_extension(realtape_name,"smp")) {
+        debug_printf (VERBOSE_INFO,"Detected raw file SMP");
+        realtape_tipo=1;
+        if (convert_smp_to_rwa_tmpdir(realtape_name,realtape_name_rwa)) {
+            //debug_printf(VERBOSE_ERR,"Error converting input file");
+            return;
+        }
 
-		if (!si_existe_archivo(realtape_name_rwa)) {
-			debug_printf(VERBOSE_ERR,"Error converting input file. Target file not found");
-			return;
-		}
+        if (!si_existe_archivo(realtape_name_rwa)) {
+            debug_printf(VERBOSE_ERR,"Error converting input file. Target file not found");
+            return;
+        }
 
-		debug_printf (VERBOSE_INFO,"Opening File %s",realtape_name_rwa);
-        	ptr_realtape=fopen(realtape_name_rwa,"rb");
+        debug_printf (VERBOSE_INFO,"Opening File %s",realtape_name_rwa);
+            ptr_realtape=fopen(realtape_name_rwa,"rb");
                 realtape_file_size=get_file_size(realtape_name_rwa);
-	}
+    }
 
     else if (!util_compare_file_extension(realtape_name,"wav")) {
                 debug_printf (VERBOSE_INFO,"Detected WAV file");
                 realtape_tipo=2;
-		if (convert_wav_to_rwa_tmpdir(realtape_name,realtape_name_rwa)) {
-			//debug_printf(VERBOSE_ERR,"Error converting input file");
+        if (convert_wav_to_rwa_tmpdir(realtape_name,realtape_name_rwa)) {
+            //debug_printf(VERBOSE_ERR,"Error converting input file");
                         return;
                 }
 
-		if (!si_existe_archivo(realtape_name_rwa)) {
-			debug_printf(VERBOSE_ERR,"Error converting input file. Target file not found");
-			return;
-		}
-		debug_printf (VERBOSE_INFO,"Opening File %s",realtape_name_rwa);
+        if (!si_existe_archivo(realtape_name_rwa)) {
+            debug_printf(VERBOSE_ERR,"Error converting input file. Target file not found");
+            return;
+        }
+        debug_printf (VERBOSE_INFO,"Opening File %s",realtape_name_rwa);
                 ptr_realtape=fopen(realtape_name_rwa,"rb");
                 realtape_file_size=get_file_size(realtape_name_rwa);
     }
 
 
     else if (!util_compare_file_extension(realtape_name,"tzx") ||
-		 !util_compare_file_extension(realtape_name,"cdt")
+         !util_compare_file_extension(realtape_name,"cdt")
 
-		) {
+        ) {
                 debug_printf (VERBOSE_INFO,"Detected TZX file");
                 realtape_tipo=3;
                 if (convert_tzx_to_rwa_tmpdir(realtape_name,realtape_name_rwa)) {
-			//debug_printf(VERBOSE_ERR,"Error converting input file");
+            //debug_printf(VERBOSE_ERR,"Error converting input file");
                         return;
                 }
 
-		if (!si_existe_archivo(realtape_name_rwa)) {
-			debug_printf(VERBOSE_ERR,"Error converting input file. Target file not found");
-			return;
-		}
+        if (!si_existe_archivo(realtape_name_rwa)) {
+            debug_printf(VERBOSE_ERR,"Error converting input file. Target file not found");
+            return;
+        }
 
-		debug_printf (VERBOSE_INFO,"Opening File %s",realtape_name_rwa);
+        debug_printf (VERBOSE_INFO,"Opening File %s",realtape_name_rwa);
                 ptr_realtape=fopen(realtape_name_rwa,"rb");
                 realtape_file_size=get_file_size(realtape_name_rwa);
     }
 
 
-    else if (!util_compare_file_extension(realtape_name,"p") || !util_compare_file_extension(realtape_name,"p81")) {
+    else if (!util_compare_file_extension(realtape_name,"p") || !util_compare_file_extension(realtape_name,"81") || !util_compare_file_extension(realtape_name,"p81")) {
                 debug_printf (VERBOSE_INFO,"Detected P/P81 file");
                 realtape_tipo=4;
                 if (convert_p_to_rwa_tmpdir(realtape_name,realtape_name_rwa)) {
@@ -2652,7 +2848,7 @@ void realtape_insert(void)
                         return;
                 }
 
-		debug_printf (VERBOSE_INFO,"Opening File %s",realtape_name_rwa);
+        debug_printf (VERBOSE_INFO,"Opening File %s",realtape_name_rwa);
                 ptr_realtape=fopen(realtape_name_rwa,"rb");
                 realtape_file_size=get_file_size(realtape_name_rwa);
     }
@@ -2690,7 +2886,7 @@ void realtape_insert(void)
                         return;
                 }
 
-		debug_printf (VERBOSE_INFO,"Opening File %s",realtape_name_rwa);
+        debug_printf (VERBOSE_INFO,"Opening File %s",realtape_name_rwa);
                 ptr_realtape=fopen(realtape_name_rwa,"rb");
                 realtape_file_size=get_file_size(realtape_name_rwa);
     }
@@ -2716,7 +2912,7 @@ void realtape_insert(void)
 
 
 
-	else {
+    else {
         debug_printf (VERBOSE_ERR,"Unknown input tape type");
         realtape_eject();
         return;
@@ -2727,8 +2923,8 @@ void realtape_insert(void)
         return;
     }
 
-	realtape_stop_playing();
-	realtape_inserted.v=1;
+    realtape_stop_playing();
+    realtape_inserted.v=1;
 
     char *name_to_use;
 
@@ -2748,14 +2944,14 @@ void realtape_insert(void)
 
 
 
-	//Activamos realvideo para que:
-	//En Spectrum, se vean las franjas de carga en el borde
-	//En ZX80,81, se vean las franjas de carga en toda la pantalla
+    //Activamos realvideo para que:
+    //En Spectrum, se vean las franjas de carga en el borde
+    //En ZX80,81, se vean las franjas de carga en toda la pantalla
 
-	//Aun asi esto solo es un motivo estetico, se puede desactivar realvideo y la carga funcionara igualmente
-	//Solo si autodetect real video esta activo
+    //Aun asi esto solo es un motivo estetico, se puede desactivar realvideo y la carga funcionara igualmente
+    //Solo si autodetect real video esta activo
     //y maquina no es cpc (carga normal no cambia border)
-	if (autodetect_rainbow.v && !MACHINE_IS_CPC) {
+    if (autodetect_rainbow.v && !MACHINE_IS_CPC) {
         debug_printf (VERBOSE_INFO,"Enabling realvideo due to real tape insert");
         enable_rainbow();
     }
@@ -2772,15 +2968,15 @@ void realtape_insert(void)
         initial_tap_load.v=1;
         initial_tap_sequence=0;
 
-		//Inicia play en cualquier maquina menos en CPC, dado que CPC controla el motor ella sola
-		if (!MACHINE_IS_CPC) realtape_start_playing();
+        //Inicia play en cualquier maquina menos en CPC, dado que CPC controla el motor ella sola
+        if (!MACHINE_IS_CPC) realtape_start_playing();
 
         //si esta autoload, tambien hacer reset para que luego se haga load automaticamente
         debug_printf (VERBOSE_INFO,"Reset cpu due to autoload");
         reset_cpu();
 
-		//Activamos top speed si conviene
-		if (fast_autoload.v) {
+        //Activamos top speed si conviene
+        if (fast_autoload.v && !MACHINE_IS_CPC) {
             debug_printf (VERBOSE_INFO,"Set top speed from Realtape insert");
             top_speed_timer.v=1;
         }
@@ -2792,37 +2988,37 @@ void realtape_insert(void)
 
 void realtape_eject(void)
 {
-	if (realtape_inserted.v) {
+    if (realtape_inserted.v) {
         realtape_stop_playing();
         realtape_inserted.v=0;
 
-		if (ptr_realtape!=NULL) {
-			fclose (ptr_realtape);
-			ptr_realtape=NULL;
-		}
+        if (ptr_realtape!=NULL) {
+            fclose (ptr_realtape);
+            ptr_realtape=NULL;
+        }
 
         realtape_delete_footer();
-	}
+    }
 }
 
 
 void realtape_start_playing(void)
 {
-	if (realtape_playing.v==0) {
-		realtape_playing.v=1;
-		draw_realtape_text();
-		//no quitar texto de TAPE
-		tape_loading_counter=9999999;
-	}
+    if (realtape_playing.v==0) {
+        realtape_playing.v=1;
+        draw_realtape_text();
+        //no quitar texto de TAPE
+        tape_loading_counter=9999999;
+    }
 }
 
 void realtape_stop_playing(void)
 {
-	if (realtape_playing.v==1) {
-		realtape_playing.v=0;
-		//quitar texto de tape en 1 segundo
-		tape_loading_counter=1;
-	}
+    if (realtape_playing.v==1) {
+        realtape_playing.v=0;
+        //quitar texto de tape en 1 segundo
+        tape_loading_counter=1;
+    }
 }
 
 
@@ -2898,8 +3094,8 @@ do_acceleration( void )
     reg_a |= 0x01;
     //z80.pc.b.l = peek_byte_no_time( z80.sp.w ); reg_sp++;
     //z80.pc.b.h = peek_byte_no_time( z80.sp.w ); reg_sp++;
-	reg_pc=peek_word_no_time(reg_sp);
-	reg_sp+=2;
+    reg_pc=peek_word_no_time(reg_sp);
+    reg_sp+=2;
 
     //event_remove_type( tape_edge_event );
     //tape_next_edge( tstates, 0, NULL );
@@ -2941,7 +3137,7 @@ acceleration_detector( z80_int pc )
       switch( b ) {
       case 0x00:			/* Search Loader */
       case 0x7f:			/* ROM loader and variants */
-	state = 4; break;		/* Data byte */
+    state = 4; break;		/* Data byte */
       default: return ACCELERATION_MODE_NONE;
       }
       break;
@@ -2970,7 +3166,7 @@ acceleration_detector( z80_int pc )
       case 0xa7:			/* AND A - Microsphere */
       case 0xc8:			/* RET Z - Paul Owens */
       case 0xd0:			/* RET NC - ROM loader */
-	state = 8; break;
+    state = 8; break;
       case 0xa9: state = 9; break;	/* XOR C - Speedlock */
       default: return ACCELERATION_MODE_NONE;
       }
@@ -3001,9 +3197,9 @@ acceleration_detector( z80_int pc )
       break;
     case 12:
       if( b == 0x100 - count ) {
-	return ACCELERATION_MODE_INCREASING;
+    return ACCELERATION_MODE_INCREASING;
       } else {
-	return ACCELERATION_MODE_NONE;
+    return ACCELERATION_MODE_NONE;
       }
       break;
 
@@ -3061,16 +3257,16 @@ acceleration_detector( z80_int pc )
       break;
     case 22:				/* LSB of jump target */
       if( b == ( reg_pc - 4 ) % 0x100 ) {
-	state = 23;
+    state = 23;
       } else {
-	return ACCELERATION_MODE_NONE;
+    return ACCELERATION_MODE_NONE;
       }
       break;
     case 23:				/* MSB of jump target */
       if( b == ( reg_pc - 4 ) / 0x100 ) {
-	return ACCELERATION_MODE_DECREASING;
+    return ACCELERATION_MODE_DECREASING;
       } else {
-	return ACCELERATION_MODE_NONE;
+    return ACCELERATION_MODE_NONE;
       }
 
       /* Search loader */
@@ -3128,7 +3324,7 @@ void tape_check_known_loaders(void)
 void detectar_conocidos(void)
 {
 
-	tape_check_known_loaders();
+    tape_check_known_loaders();
 
   if( acceleration_mode ) {
         //printf ("modo aceleracion\n");
@@ -3139,24 +3335,24 @@ void detectar_conocidos(void)
                 //printf ("registro PC: %d\n",reg_pc);
 
 
-	//Death Wish 3 (Erbe - Serie Leyenda).tzx -  (DeathWish3(IBSA).tzx.zip)
-	//tiene rutina de carga propia pero llama a las rutinas de la rom, por tanto,
-	//esta deteccion salta cuando pc=1523
-	//y por tanto no restringir solo a detecciones mas alla de la 16384
+    //Death Wish 3 (Erbe - Serie Leyenda).tzx -  (DeathWish3(IBSA).tzx.zip)
+    //tiene rutina de carga propia pero llama a las rutinas de la rom, por tanto,
+    //esta deteccion salta cuando pc=1523
+    //y por tanto no restringir solo a detecciones mas alla de la 16384
         //if (reg_pc>=16384) {
-		char buffer_mensaje[100];
-		sprintf (buffer_mensaje,"Detected custom loader routine at address %d. Reinserting tape as Real Tape",reg_pc);
-		debug_printf (VERBOSE_INFO,buffer_mensaje);
+        char buffer_mensaje[100];
+        sprintf (buffer_mensaje,"Detected custom loader routine at address %d. Reinserting tape as Real Tape",reg_pc);
+        debug_printf (VERBOSE_INFO,buffer_mensaje);
                 screen_print_splash_text_center(ESTILO_GUI_TINTA_NORMAL,ESTILO_GUI_PAPEL_NORMAL,buffer_mensaje);
 
 
                 //Meter como cinta real. Nos guardamos nombre
-		sprintf (menu_realtape_name,"%s",tapefile);
-		realtape_name=menu_realtape_name;
+        sprintf (menu_realtape_name,"%s",tapefile);
+        realtape_name=menu_realtape_name;
 
-        	//Expulsar cinta insertada
-	        eject_tape_load();
-        	tapefile=NULL;
+            //Expulsar cinta insertada
+            eject_tape_load();
+            tapefile=NULL;
 
                 //Y metemos cinta real
                 realtape_insert();
@@ -3229,23 +3425,23 @@ loader_detect_loader( void )
 
     if( realtape_playing.v ) {
       if( tstates_diff > 1000 || ( b_diff != 1 && b_diff != 0 &&
-				   b_diff != 0xff ) ) {
-	successive_reads++;
-	if( successive_reads >= 2 ) {
-	  //temp no parar cinta
-	  realtape_stop_playing();
-	}
+                   b_diff != 0xff ) ) {
+    successive_reads++;
+    if( successive_reads >= 2 ) {
+      //temp no parar cinta
+      realtape_stop_playing();
+    }
       } else {
-	successive_reads = 0;
+    successive_reads = 0;
       }
     } else {
       if( tstates_diff <= 500 && ( b_diff == 1 || b_diff == 0xff ) ) {
-	successive_reads++;
-	if( successive_reads >= 10 ) {
-	  realtape_start_playing();
-	}
+    successive_reads++;
+    if( successive_reads >= 10 ) {
+      realtape_start_playing();
+    }
       } else {
-	successive_reads = 0;
+    successive_reads = 0;
       }
     }
 
@@ -3256,7 +3452,7 @@ loader_detect_loader( void )
 
   }
 
-  if( accelerate_loaders.v && realtape_playing.v )
+  if( storage_accelerate_loading.v && realtape_playing.v )
     check_for_acceleration();
 
 }
@@ -3356,5 +3552,474 @@ int realtape_get_current_bit_playing(void)
             return 0;
         }
     }
+
+}
+
+
+int copion_trap_memory_pointer=0;
+
+z80_byte *copion_trap_memory_buffer=NULL;
+
+//mas que suficiente
+#define COPION_TRAP_MEMORY_SIZE (128*1024)
+
+void copion_trap_put_byte(z80_byte v)
+{
+    //Por si acaso
+    if (copion_trap_memory_buffer==NULL) return;
+
+    if (copion_trap_memory_pointer>=COPION_TRAP_MEMORY_SIZE) return;
+
+    copion_trap_memory_buffer[copion_trap_memory_pointer++]=v;
+
+}
+
+void copion_trap_tap_save(void)
+{
+
+    if (copion_trap_memory_buffer==NULL) return;
+
+    z80_byte flag=copion_trap_memory_buffer[0];
+
+    z80_int longitud;
+
+
+    longitud=copion_trap_memory_pointer;
+
+    debug_printf(VERBOSE_INFO,"Saving %d bytes to tape from Copy program with flag %d",longitud-2,flag);
+
+
+    if (tape_out_block_open()) return;
+
+    //Escribimos longitud (contando flag+checksum)
+
+
+    //Avisamos que vamos a escribir un bloque... en tzx se usa para meter el id correspondiente
+    tape_block_begin_save(longitud,flag);
+
+
+    //Solo hacer esto si no es un archivo tipo PZX
+    if (!tape_out_inserted_is_pzx) {
+
+        if (tape_block_save(&longitud, 2)!=2) {
+            debug_printf(VERBOSE_ERR,"Error writing length");
+
+            eject_tape_save();
+
+            tape_out_block_close();
+            return;
+        }
+
+    }
+
+
+    if (tape_block_save(copion_trap_memory_buffer, longitud)!=longitud) {
+        debug_printf(VERBOSE_ERR,"Error writing bytes");
+
+        eject_tape_save();
+
+        tape_out_block_close();
+        return;
+    }
+
+
+    tape_out_block_close();
+
+
+}
+
+
+int supertapecopier_nested_id_core;
+
+enum supertapecopier_status {
+    SUPERTAPECOPIER_IDLE,
+    SUPERTAPECOPIER_READING_BYTES
+};
+
+
+enum supertapecopier_status supertapecopier_status_block=SUPERTAPECOPIER_IDLE;
+
+
+
+/*
+-SuperTapecopier:  meter traps al grabar que permita identificar cuando se va a generar un nuevo bloque en un tap,
+y cada escritura de un byte del copi128 lo meta como byte en un tap. Asi se puede usar para grabar generando taps
+Este lógicamente usa rutinas propias de grabación (y carga) para poder usar los 128kb de ram y por eso no funcionan
+los traps que detectan solo grabacion desde rom
+
+
+8ED2: enviar a grabar flag, en registro L
+8EDC: Lectura de byte, en registro L. Pero no el flag del inicio
+8EDD: Si DE=0, fin bloque -> mejor 8f2e
+
+
+Y si se detiene con break? como lo sabremos?
+8f20: lectura de break
+
+8f2e: retorno de break y tambien final de bloque -> Mejor este para saber final de bloque
+
+87bc: despues de final de bloque y mira si pulsado break (si pulsado break, flag C=0). si pulsado break entra en 87be
+
+--
+
+8F02: decrementar DE (longitud) incrementar IX (direccion)
+
+8ED7: ver final bloque
+
+8EE5: cuando es final de bloque y generar checksum. Acaba en L?
+
+8EFC: entrada de grabar bit de registro L?
+
+8EFE: mira si ha escrito 8 bits. si los ha hecho, continua en 8F01
+
+bloque navidad tzx
+
+00000000  00 4e 41 56 49 44 41 44  20 20 20 b1 0a 01 00 b1  |.NAVIDAD   .....|
+00000010  0a
+*/
+
+
+
+void cpu_core_loop_supertapecopier_continue(void)
+{
+
+
+    if (tape_out_file==0) return;
+
+    if ( (tape_loadsave_inserted & TAPE_SAVE_INSERTED)==0) return;
+
+    //Si este core sigue activo pero el usuario ha hecho reset o lo que sea.. buscar al menos 3 bytes
+    //que sean del programa para saber que aun sigue ahi
+    //839b="SuperTapeCopier"
+    if (peek_byte_no_time(0x839b)!='S' || peek_byte_no_time(0x839c)!='u' || peek_byte_no_time(0x839d)!='p') return;
+
+
+    //int i;
+
+    switch (reg_pc) {
+        case 0x8ED2:
+        case 0x8EDC:
+            if (reg_pc==0x8ED2) {
+                debug_printf(VERBOSE_DEBUG,"Supertape copier trap, tape save flag %02X (index=%d)",reg_l,copion_trap_memory_pointer);
+            }
+            if (reg_pc==0x8EDC) {
+                debug_printf(VERBOSE_DEBUG,"Supertape copier trap, tape save byte %02X (index=%d) IX=%d",reg_l,copion_trap_memory_pointer,reg_ix);
+
+                /*if (reg_ix!=temp_debug_previo_ix+1) {
+                    printf("IX no consecutivo\n");
+
+                }*/
+
+
+                //temp_debug_previo_ix=reg_ix;
+            }
+
+            if (supertapecopier_status_block==SUPERTAPECOPIER_IDLE) {
+                supertapecopier_status_block=SUPERTAPECOPIER_READING_BYTES;
+                copion_trap_memory_pointer=0;
+                //temp_xor_bytes=0;
+            }
+
+            copion_trap_put_byte(reg_l);
+
+            //temp_xor_bytes ^=reg_l;
+
+        break;
+
+        //8EFE: mira si ha escrito 8 bits. si los ha hecho, continua en 8F01
+        //Para no esperar al tiempo de grabar cada byte
+        case 0x8EFE:
+            reg_pc +=3;
+        break;
+
+        //Para saltarse los tonos guia
+        case 0x8EAC:
+            reg_pc=0x8ED0;
+        break;
+
+
+        case 0x8F2E:
+            debug_printf(VERBOSE_DEBUG,"Supertape copier trap, end of tape block");
+
+            //debug
+            /*for (i=0;i<copion_trap_memory_pointer;i++) {
+                printf("%02X ",copion_trap_memory_buffer[i]);
+            }
+            printf("\n");
+            */
+
+            //save memory buffer
+
+            audio_playing.v=0;
+
+            draw_tape_text();
+
+            copion_trap_tap_save();
+
+            timer_reset();
+
+            supertapecopier_status_block=SUPERTAPECOPIER_IDLE;
+
+
+        break;
+    }
+
+
+
+}
+
+z80_bit supertapecopier_tape_traps={0};
+
+
+z80_byte cpu_core_loop_supertapecopier(z80_int dir GCC_UNUSED, z80_byte value GCC_UNUSED)
+{
+
+    //Si la cpu esta interrumpida esperando a que llegue final de frame de video, aqui no interceptar
+    if (esperando_tiempo_final_t_estados.v==0) {
+
+        cpu_core_loop_supertapecopier_continue();
+
+    }
+
+
+    //Llamar a anterior
+    debug_nested_core_call_previous(supertapecopier_nested_id_core);
+
+    //Para que no se queje el compilador, aunque este valor de retorno no lo usamos
+    return 0;
+
+}
+
+
+
+//Establecer rutinas propias
+void supertapecopier_set_core_functions(void)
+{
+    debug_printf (VERBOSE_DEBUG,"Setting supertapecopier core functions");
+
+
+    supertapecopier_nested_id_core=debug_nested_core_add(cpu_core_loop_supertapecopier,"supertapecopier core");
+
+}
+
+//Restaurar rutinas de supertapecopier
+void supertapecopier_restore_core_functions(void)
+{
+    debug_printf (VERBOSE_DEBUG,"Restoring original core functions before supertapecopier");
+
+    debug_nested_core_del(supertapecopier_nested_id_core);
+
+}
+
+
+void tape_enable_core_supertapecopier(void)
+{
+    debug_printf (VERBOSE_DEBUG,"Enabling supertape copier core");
+
+    if (supertapecopier_tape_traps.v) {
+        //printf("already enabled\n");
+        return;
+    }
+
+    supertapecopier_set_core_functions();
+
+    if (copion_trap_memory_buffer==NULL) {
+        copion_trap_memory_buffer=util_malloc(COPION_TRAP_MEMORY_SIZE,"Can not allocate memory for save buffer");
+    }
+
+    copion_trap_memory_pointer=0;
+
+    supertapecopier_tape_traps.v=1;
+
+
+}
+
+void tape_disable_core_supertapecopier(void)
+{
+    if (supertapecopier_tape_traps.v==0) {
+        //printf("already disabled\n");
+        return;
+    }
+
+    debug_printf (VERBOSE_DEBUG,"Disabling supertape copier core");
+
+    supertapecopier_restore_core_functions();
+
+    supertapecopier_tape_traps.v=0;
+
+}
+
+
+
+
+int laocopy_nested_id_core;
+
+enum laocopy_status {
+    LAOCOPY_IDLE,
+    LAOCOPY_READING_BYTES
+};
+
+
+enum laocopy_status laocopy_status_block=LAOCOPY_IDLE;
+
+
+
+
+/*
+FF52: se ha leido byte en L. Creo que le envia checksum tambien, pero no le envia flag
+FF48: se tiene el flag en L
+mejor: ff54: se tiene el byte en L, incluido flag y checksum
+5110h: retorno de grabar bloque
+reusar supertapecopier_tap_save y supertapecopier_put_byte, mas bien cambiarlo de nombre para que lo usen los dos
+*/
+
+void cpu_core_loop_laocopy_continue(void)
+{
+
+
+    if (tape_out_file==0) return;
+
+    if ( (tape_loadsave_inserted & TAPE_SAVE_INSERTED)==0) return;
+
+    //Si este core sigue activo pero el usuario ha hecho reset o lo que sea.. buscar al menos 3 bytes
+    //que sean del programa para saber que aun sigue ahi
+    //17480="LAO-COPY"
+
+    if (peek_byte_no_time(17480)!='L' || peek_byte_no_time(17481)!='A' || peek_byte_no_time(17482)!='O') return;
+
+
+    switch (reg_pc) {
+        case 0xFF54:
+
+            debug_printf(VERBOSE_DEBUG,"Laocopy trap, tape save byte %02X (index=%d) IX=%d",reg_l,copion_trap_memory_pointer,reg_ix);
+
+            if (laocopy_status_block==LAOCOPY_IDLE) {
+                laocopy_status_block=LAOCOPY_READING_BYTES;
+                copion_trap_memory_pointer=0;
+
+            }
+
+            copion_trap_put_byte(reg_l);
+
+        break;
+
+        //Para no esperar al tiempo de grabar cada byte
+        case 0xFF55:
+            reg_pc=0xFF77;
+        break;
+
+        //Para saltarse los tonos guia
+        case 0xFF22:
+            reg_pc=0xFF43;
+        break;
+
+        case 0x5110:
+            debug_printf(VERBOSE_DEBUG,"Laocopy copier trap, end of tape block");
+
+            //debug
+            /*for (i=0;i<copion_trap_memory_pointer;i++) {
+                printf("%02X ",copion_trap_memory_buffer[i]);
+            }
+            printf("\n");
+            */
+
+            //save memory buffer
+
+            audio_playing.v=0;
+
+            draw_tape_text();
+
+            copion_trap_tap_save();
+
+            timer_reset();
+
+            laocopy_status_block=LAOCOPY_IDLE;
+
+
+        break;
+    }
+
+
+
+}
+
+z80_bit laocopy_tape_traps={0};
+
+
+z80_byte cpu_core_loop_laocopy(z80_int dir GCC_UNUSED, z80_byte value GCC_UNUSED)
+{
+
+    //Si la cpu esta interrumpida esperando a que llegue final de frame de video, aqui no interceptar
+    if (esperando_tiempo_final_t_estados.v==0) {
+
+        cpu_core_loop_laocopy_continue();
+
+    }
+
+
+    //Llamar a anterior
+    debug_nested_core_call_previous(laocopy_nested_id_core);
+
+    //Para que no se queje el compilador, aunque este valor de retorno no lo usamos
+    return 0;
+
+}
+
+
+
+//Establecer rutinas propias
+void laocopy_set_core_functions(void)
+{
+    debug_printf (VERBOSE_DEBUG,"Setting laocopy core functions");
+
+
+    laocopy_nested_id_core=debug_nested_core_add(cpu_core_loop_laocopy,"laocopy core");
+
+}
+
+//Restaurar rutinas de laocopy
+void laocopy_restore_core_functions(void)
+{
+    debug_printf (VERBOSE_DEBUG,"Restoring original core functions before laocopy");
+
+    debug_nested_core_del(laocopy_nested_id_core);
+
+}
+
+
+void tape_enable_core_laocopy(void)
+{
+    debug_printf (VERBOSE_DEBUG,"Enabling laocopy core");
+
+    if (laocopy_tape_traps.v) {
+        //printf("already enabled\n");
+        return;
+    }
+
+    laocopy_set_core_functions();
+
+    if (copion_trap_memory_buffer==NULL) {
+        copion_trap_memory_buffer=util_malloc(COPION_TRAP_MEMORY_SIZE,"Can not allocate memory for save buffer");
+    }
+
+    copion_trap_memory_pointer=0;
+
+    laocopy_tape_traps.v=1;
+
+
+}
+
+void tape_disable_core_laocopy(void)
+{
+    if (laocopy_tape_traps.v==0) {
+        //printf("already disabled\n");
+        return;
+    }
+
+    debug_printf (VERBOSE_DEBUG,"Disabling laocopy core");
+
+    laocopy_restore_core_functions();
+
+    laocopy_tape_traps.v=0;
 
 }

@@ -29,6 +29,9 @@
 #include "screen.h"
 #include "zxvision.h"
 #include "zeng.h"
+#include "mem128.h"
+#include "ula.h"
+#include "menu_bitmaps.h"
 
 #ifdef COMPILE_CURSES
         #include "scrcurses.h"
@@ -47,19 +50,35 @@ int joystick_autoleftright_counter=0;
 //0=left, 1=right
 int joystick_autoleftright_status=0;
 
+/*
+Los dispositivos baratos meten "basura" en el bus: al generar una interrupción, en vez de haber el FFH habitual,
+meten el valor de lectura del disposito, porque creen que se está leyendo el joystick.
+Ejemplo extenso explicado por Miguel Angel Rodriguez, respecto a joysticks kempston que solo leen A5=0 y no tienen en cuenta
+que se active la señal de lectura:
+
+Resulta que durante el ciclo de reconocimiento de la interrupción, el Z80 activa IORQ, como si fuese
+un ciclo de entrada salida, pero no activa ni la señal de lectura ni la de escritura. Esas interfaces
+decodifican falsamente esa situación como una situación de lectura de puerto. Si da la casualidad de que
+en el bus de direcciones, en ese momento, A5 esté a cero (y eso depende de qué dirección de memoria es la
+que se estaba ejecutando en el momento en que ocurrió la interrupción) tienes al aparato enviando por el
+bus de datos lo que esté leyendo del Joy stick en ese momento, y el Z80 interpretándolo como un vector de interrupción
+
+IORQ se activa durante el ACK de una interrupción, es lo esperado, y es un comportamiento documentado.
+No es un error del procesador. En lugar de usar un pin del chip específico para notificar el reconocimiento de
+interrupción, se usa la secuencia de activar IORQ y también M1. Esa secuencia no se activa a la vez en ningún otro momento
+
+---
+
+Realmente si emulase solo dispositivo kempston barato, tendria que al menos ver si A5=0 y meter basura en el bus en ese caso
+Como lo estoy haciendo como una opción de joystick genérico barato, no miro A5=0 y meto siempre basura en el bus al generar interrupción
+
+Juegos que fallan con esta opción: pussy.tap, simulador de raton (Antonio Bermudez, 1991, Microhobby), The Humans
+
+*/
+int joystick_barato=0;
+
 //Que tecla actua como el Fire del joystick. Por defecto, Home
 //Si es <0, no actua ninguna tecla
-//#define JOYSTICK_KEY_FIRE_IS_HOME 0
-//#define JOYSTICK_KEY_FIRE_IS_RIGHTALT 1
-//#define JOYSTICK_KEY_FIRE_IS_RIGHTCTRL 2
-//#define JOYSTICK_KEY_FIRE_IS_RIGHTSHIFT 3
-//int joystick_defined_key_fire=JOYSTICK_KEY_FIRE_IS_HOME;
-
-//Para los otros 3 posibles botones de joystick
-//int joystick_defined_key_fire2=-1;
-//int joystick_defined_key_fire3=-1;
-//int joystick_defined_key_fire4=-1;
-
 //Para los 4 botones de joystick
 int joystick_defined_key_fire_array[4]={JOYSTICK_KEY_FIRE_IS_HOME,-1,-1,-1};
 
@@ -126,23 +145,25 @@ void joystick_possible_tab_key(int pressrelease)
     handle_pressed_a_fire_key(JOYSTICK_KEY_FIRE_IS_TAB,UTIL_KEY_TAB,pressrelease);
 }
 
-int gunstick_emulation=0;
+//Emulación de pistolas ópticas, lapices ópticos, etc
+z80_bit lightgun_emulation_enabled={0};
+
+int lightgun_emulation_type=0;
+
+z80_bit lightgun_scope={0};
+
+//En principio esto solo es necesario en Acid Killer
+int lightgun_vertical_threshold=0;
 
 //Coordenadas x,y en formato scanlines y pixeles totales, es decir,
 //x entre 0 y 351
 //y entre 0 y 295
 //0,0 esta arriba a la izquierda
 
-int gunstick_x,gunstick_y;
+int lightgun_x=0;
+int lightgun_y=0;
 
-//rangos de deteccion de electron, para pistola magnum light gun
-int gunstick_range_x=64;
-int gunstick_range_y=8;
 
-int gunstick_y_offset=0;
-
-//si detecta solo zonas con blanco y brillo 1. sino, detecta blanco sea con brillo o no
-int gunstick_solo_brillo=0;
 
 //Coordenadas x,y tal cual las retorna el driver de video, segun el tamanyo de ventana activo
 //en xwindows, normalmente entre
@@ -155,7 +176,10 @@ int gunstick_solo_brillo=0;
 //y entre 0 y 591
 //Para cacalib, tambien devuelve coordenadas dentro del tamanyo de la ventana
 //por defecto, 80x32
-int mouse_x=0,mouse_y=0;
+//Al entrar, no sabemos donde está el ratón, asumimos fuera de pantalla (-100 para que sea "lejos" de la pantalla). Si en cambio establecieramos 0,0,
+//al entrar y pulsar F5 (con topbar habilitado) sin haber movido el raton antes, se desplegaria el menu Z
+//porque se pensaria que el raton está arriba del todo a la izquierda
+int mouse_x=-100,mouse_y=-100;
 
 int mouse_pressed_close_window=0;
 int mouse_pressed_background_window=0;
@@ -181,14 +205,14 @@ int mouse_wheel_horizontal=0;
 
 //Coordenadas x,y de retorno a puerto kempston
 //Entre 0 y 255 las dos. Coordenada Y hacia abajo resta
-//se toma como base el mismo formato que gunstick x e y pero con modulo % 256
+//se toma como base el mismo formato que lightgun x e y pero con modulo % 256
 z80_byte kempston_mouse_x=0,kempston_mouse_y=0;
 
 
 //Mascara de bits (desde 7 hasta 0): Fire4 Fire3 Fire2 Fire1 Up Down Left Right
 z80_byte puerto_especial_joystick=0;
 
-//z80_byte puerto_especial_gunstick=0; //Fire 0 o 1
+
 
 char *joystick_texto[]={
     "None",
@@ -210,33 +234,65 @@ char *joystick_texto[]={
     "PCW DKTronics"
 };
 
-char *gunstick_texto[]={
-        "None",
-        "Sinclair 1",
-        "Sinclair 2",
-        "Kempston",
-	"AYChip",
-	"Port DFH"
+
+char *lightgun_types_list[LIGHTGUN_TOTAL]={
+    "Gunstick Sinclair 1",
+    "Gunstick Sinclair 2",
+    "Gunstick Kempston",
+    "Magnum (AUX port)",
+    "Magnum (EAR port)",
+    "Defender Light Gun",
+    "Stack Light Rifle",
+    "Trojan Light Pen (EAR port)",
+    "Datel Lightwriter",
+    "Spectrum Doodler"
 };
 
+void lightgun_print_types(void)
+{
+    int i;
+
+    for (i=0;i<LIGHTGUN_TOTAL;i++) {
+        printf ("%s",lightgun_types_list[i]);
+        if (i!=LIGHTGUN_TOTAL-1) printf (", ");
+    }
+}
+
+//Devuelve 0 si ok
+int lightgun_set_type(char *tipo)
+{
+
+    debug_printf (VERBOSE_INFO,"Setting lightgun type %s",tipo);
+
+    int i;
+    for (i=0;i<LIGHTGUN_TOTAL;i++) {
+        if (!strcasecmp(tipo,lightgun_types_list[i])) break;
+    }
+
+    if (i>=LIGHTGUN_TOTAL) {
+        return 1;
+    }
+
+    lightgun_emulation_type=i;
+    return 0;
+}
 
 void joystick_cycle_next_type_autofire(void)
 {
 
-
-                //desactivamos autofire
-                joystick_autofire_frequency=0;
-                //y ponemos tecla fire a 0, por si se habia quedado activa
-                puerto_especial_joystick=0;
+    //desactivamos autofire
+    joystick_autofire_frequency=0;
+    //y ponemos tecla fire a 0, por si se habia quedado activa
+    puerto_especial_joystick=0;
 
 }
 
 void joystick_cycle_next_type(void)
 {
-        if (joystick_emulation==JOYSTICK_TOTAL) joystick_emulation=0;
-        else joystick_emulation++;
+    if (joystick_emulation==JOYSTICK_TOTAL) joystick_emulation=0;
+    else joystick_emulation++;
 
-        joystick_cycle_next_type_autofire();
+    joystick_cycle_next_type_autofire();
 
 }
 
@@ -256,19 +312,19 @@ void joystick_set_right(int si_enviar_zeng_event)
 {
     joystick_clear_leftright();
 
-        //z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
-        puerto_especial_joystick |=1;
-	debug_printf(VERBOSE_DEBUG,"joystick_set_right");
+    //z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
+    puerto_especial_joystick |=1;
+    debug_printf(VERBOSE_DEBUG,"joystick_set_right");
 
-	if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_RIGHT,1);
+    if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_RIGHT,1);
 }
 
 void joystick_release_right(int si_enviar_zeng_event)
 {
-        puerto_especial_joystick &=255-1;
-	debug_printf(VERBOSE_DEBUG,"joystick_release_right");
+    puerto_especial_joystick &=255-1;
+    debug_printf(VERBOSE_DEBUG,"joystick_release_right");
 
-	if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_RIGHT,0);
+    if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_RIGHT,0);
 }
 
 
@@ -276,19 +332,19 @@ void joystick_set_left(int si_enviar_zeng_event)
 {
     joystick_clear_leftright();
 
-        //z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
-        puerto_especial_joystick |=2;
-	debug_printf(VERBOSE_DEBUG,"joystick_set_left");
+    //z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
+    puerto_especial_joystick |=2;
+    debug_printf(VERBOSE_DEBUG,"joystick_set_left");
 
-	if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_LEFT,1);
+    if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_LEFT,1);
 }
 
 void joystick_release_left(int si_enviar_zeng_event)
 {
-        puerto_especial_joystick &=255-2;
-	debug_printf(VERBOSE_DEBUG,"joystick_release_left");
+    puerto_especial_joystick &=255-2;
+    debug_printf(VERBOSE_DEBUG,"joystick_release_left");
 
-	if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_LEFT,0);
+    if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_LEFT,0);
 }
 
 
@@ -297,38 +353,38 @@ void joystick_set_down(int si_enviar_zeng_event)
 {
     joystick_clear_leftright();
 
-        //z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
-        puerto_especial_joystick |=4;
-	debug_printf(VERBOSE_DEBUG,"joystick_set_down");
+    //z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
+    puerto_especial_joystick |=4;
+    debug_printf(VERBOSE_DEBUG,"joystick_set_down");
 
-	if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_DOWN,1);
+    if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_DOWN,1);
 }
 
 void joystick_release_down(int si_enviar_zeng_event)
 {
-        puerto_especial_joystick &=255-4;
-	debug_printf(VERBOSE_DEBUG,"joystick_release_down");
+    puerto_especial_joystick &=255-4;
+    debug_printf(VERBOSE_DEBUG,"joystick_release_down");
 
-	if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_DOWN,0);
+    if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_DOWN,0);
 }
 
 void joystick_set_up(int si_enviar_zeng_event)
 {
     joystick_clear_leftright();
 
-        //z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
-        puerto_especial_joystick |=8;
-	debug_printf(VERBOSE_DEBUG,"joystick_set_up");
+    //z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
+    puerto_especial_joystick |=8;
+    debug_printf(VERBOSE_DEBUG,"joystick_set_up");
 
-	if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_UP,1);
+    if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_UP,1);
 }
 
 void joystick_release_up(int si_enviar_zeng_event)
 {
-        puerto_especial_joystick &=255-8;
-	debug_printf(VERBOSE_DEBUG,"joystick_release_up");
+    puerto_especial_joystick &=255-8;
+    debug_printf(VERBOSE_DEBUG,"joystick_release_up");
 
-	if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_UP,0);
+    if (si_enviar_zeng_event) zeng_send_key_event(UTIL_KEY_JOY_UP,0);
 }
 
 //fire_button: indica que boton de fuego: 0 primer boton, 1 segundo boton, etc
@@ -339,9 +395,9 @@ void joystick_set_fire(int si_enviar_zeng_event,int fire_button)
     //z80_byte puerto_especial_joystick=0; //Fire Up Down Left Right
     int mascara_fuego=16 << fire_button;
     puerto_especial_joystick |=mascara_fuego;
-	debug_printf(VERBOSE_DEBUG,"joystick_set_fire");
+    debug_printf(VERBOSE_DEBUG,"joystick_set_fire");
 
-	if (si_enviar_zeng_event) {
+    if (si_enviar_zeng_event) {
         if (fire_button==0)      zeng_send_key_event(UTIL_KEY_JOY_FIRE,1);
         else if (fire_button==1) zeng_send_key_event(UTIL_KEY_JOY_FIRE2,1);
         else if (fire_button==2) zeng_send_key_event(UTIL_KEY_JOY_FIRE3,1);
@@ -354,9 +410,9 @@ void joystick_release_fire(int si_enviar_zeng_event,int fire_button)
 {
     int mascara_fuego=16 << fire_button;
     puerto_especial_joystick &=255-mascara_fuego;
-	debug_printf(VERBOSE_DEBUG,"joystick_release_fire");
+    debug_printf(VERBOSE_DEBUG,"joystick_release_fire");
 
-	if (si_enviar_zeng_event) {
+    if (si_enviar_zeng_event) {
         if (fire_button==0)      zeng_send_key_event(UTIL_KEY_JOY_FIRE,0);
         else if (fire_button==1) zeng_send_key_event(UTIL_KEY_JOY_FIRE2,0);
         else if (fire_button==2) zeng_send_key_event(UTIL_KEY_JOY_FIRE3,0);
@@ -364,154 +420,328 @@ void joystick_release_fire(int si_enviar_zeng_event,int fire_button)
     }
 }
 
+//Retornar color de la pantalla, teniendo rainbow activo
+//De momento esto no funciona, juegos con la magnum no van bien con este método
+int lightgun_view_pixel_color_rainbow(int x,int y)
+{
+    int ancho,alto;
 
-//Ver si la zona donde apunta el raton (gunstick) esta en blanco. Usado en gunstick de MHT
-int gunstick_view_white(void)
+    ancho=get_total_ancho_rainbow();
+    alto=get_total_alto_rainbow();
+
+    if (x>=0 && y>=0 && x<ancho && y<alto) {
+        int indice;
+
+        indice=(ancho*y)+x;
+
+        int color=rainbow_buffer[indice];
+
+        //printf("x %d y %d color %d\n",x,y,color);
+
+        return color;
+    }
+
+    else return 0;
+}
+
+//Retornar color de un pixel de la memoria de pantalla del Spectrum
+//si fuera de pantalla, retornar color del border
+int lightgun_view_pixel_color_no_rainbow(int x,int y)
+{
+
+    if (x>255 || y>191 || x<0 || y<0) {
+
+        //TODO: esto obviamente lee un solo color para todo el border,
+        //si el juego está cambiando el color del border en el mismo frame (franjas por ejemplo u otros efectos)
+        //no funcionará
+        int color=out_254 & 7;
+        //printf("out of range. border color %d\n",color);
+        //retornar color border
+        return color;
+    }
+
+    //printf("lightgun_view_pixel_color_no_rainbow x=%4d y=%4d\n",x,y);
+
+    int dir_atributo=y/8;
+    dir_atributo *=32;
+    dir_atributo +=x/8;
+
+    int dir_pixel=screen_addr_table[y*32+(x/8)];
+
+    int bit_pixel=x % 8;
+
+    //printf("dpixel %d datributo %d\n",dir_pixel,dir_atributo);
+
+
+    z80_byte *screen_atributo=get_base_mem_pantalla_attributes();
+    z80_byte *screen_pixel=get_base_mem_pantalla();
+
+    z80_byte valor_pixeles=screen_pixel[dir_pixel];
+    z80_byte valor_atributo=screen_atributo[dir_atributo];
+
+    int tinta=valor_atributo & 7;
+    int papel=(valor_atributo>>3) & 7;
+
+    if (valor_atributo & 128) {
+        if (estado_parpadeo.v) {
+            int temp_tinta=tinta;
+            tinta=papel;
+            papel=temp_tinta;
+        }
+    }
+
+    int mascara=128 >> bit_pixel;
+    int pix=valor_pixeles & mascara;
+
+    int color;
+    if (pix) color=tinta;
+    else color=papel;
+
+    //printf("## x %3d y %3d color %d\n",x,y,color);
+
+    return color;
+
+}
+
+//Vieja rutina. Ver si la zona donde apunta el raton (lightgun) esta en blanco. Usado en Gunstick de MHT
+int old_lightgun_view_white(void)
 {
 
 //Si curses
 #ifdef COMPILE_CURSES
-	if (!strcmp(scr_new_driver_name,"curses")) {
-		return (scrcurses_return_gunstick_view_white() );
-	}
+    if (!strcmp(scr_new_driver_name,"curses")) {
+        return (scrcurses_return_lightgun_view_white() );
+    }
 #endif
 
-	//ver zona en blanco
-	//Proteccion para que no se salga de putpixel_cache
-	//dimensiones putpixel_cache
-	int ancho,alto;
-	//ancho=LEFT_BORDER_NO_ZOOM+ANCHO_PANTALLA+RIGHT_BORDER_NO_ZOOM;
-	//alto=TOP_BORDER_NO_ZOOM+ALTO_PANTALLA+BOTTOM_BORDER_NO_ZOOM;
+    //ver zona en blanco
+    //Proteccion para que no se salga de putpixel_cache
+    //dimensiones putpixel_cache
+    int ancho,alto;
+    //ancho=LEFT_BORDER_NO_ZOOM+ANCHO_PANTALLA+RIGHT_BORDER_NO_ZOOM;
+    //alto=TOP_BORDER_NO_ZOOM+ALTO_PANTALLA+BOTTOM_BORDER_NO_ZOOM;
 
-	ancho=screen_get_emulated_display_width_no_zoom();
-	alto=screen_get_emulated_display_height_no_zoom();
+    ancho=screen_get_emulated_display_width_no_zoom();
+    alto=screen_get_emulated_display_height_no_zoom();
 
-	if (gunstick_x<ancho && gunstick_y<alto) {
-		int indice_cache;
+    if (lightgun_x<ancho && lightgun_y<alto) {
+        int indice_cache;
 
-		indice_cache=(get_total_ancho_rainbow()*gunstick_y)+gunstick_x;
+        indice_cache=(get_total_ancho_rainbow()*lightgun_y)+lightgun_x;
 
-		z80_byte color=putpixel_cache[indice_cache];
+        z80_byte color=putpixel_cache[indice_cache];
 
-		//color blanco con o sin brillo
-		if (color==15 || color==7) {
-			debug_printf (VERBOSE_DEBUG,"white zone detected on lightgun");
-			return 1;
-		}
-	}
+        //color blanco con o sin brillo
+        if (color==15 || color==7) {
+            //debug_printf (VERBOSE_DEBUG,"white zone detected on lightgun");
+            return 1;
+        }
+    }
 
-	return 0;
+    return 0;
 }
 
-//Ver si la zona donde apunta el raton (gunstick) esta pasando el electron. Usado en magnum light phaser
-int gunstick_view_electron(void)
+//Ver si la zona donde apunta el raton (lightgun) esta en blanco. Usado en Gunstick de MHT
+int lightgun_view_white(void)
 {
-   //ver electron
 
-   //x inicialmente esta posicionada dentro de pantalla... sin contar border
-   int x=t_estados % screen_testados_linea;
-   int y=t_estados/screen_testados_linea;
 
-   //restamos zona no visible superior
-   //printf ("y calculada: %d t_scanline_draw: %d\n",y,t_scanline_draw);
-   y -=screen_invisible_borde_superior;
+    //printf("lightgun_view_white\n");
 
-   x=x+screen_testados_total_borde_izquierdo;
+//Si curses
+#ifdef COMPILE_CURSES
+    if (!strcmp(scr_new_driver_name,"curses")) {
+        return (scrcurses_return_lightgun_view_white() );
+    }
+#endif
 
-   if (x>=screen_testados_linea) {
-        y++;
-        x=x-screen_testados_linea;
-   }
+    //ver zona en blanco
+
+    int color;
+
+
+    color=lightgun_view_pixel_color_no_rainbow(lightgun_x-screen_testados_total_borde_izquierdo*2,
+                                    lightgun_y-screen_borde_superior);
+
+    //color blanco con o sin brillo
+    if (color==15 || color==7) {
+        //debug_printf (VERBOSE_DEBUG,"white zone detected on lightgun");
+        return 1;
+    }
+
+    else {
+        return 0;
+    }
+}
+
+
+
+int lightgun_view_electron_color(void)
+{
+
+    int x,y;
+
+    //Ver si hay algo en blanco cerca de donde se ha disparado
+
+    x=lightgun_x;
+    y=lightgun_y;
+
+
+    int color;
+
+
+    //printf("lightgun %3d %3d\n",x,y);
+    /*
+    if (rainbow_enabled.v) {
+        color=lightgun_view_pixel_color_rainbow(x,y);
+    }
+    else {
+        color=lightgun_view_pixel_color_no_rainbow(x-screen_testados_total_borde_izquierdo*2,
+                                    y-screen_borde_superior);
+    }
+    */
+
+    color=lightgun_view_pixel_color_no_rainbow(x-screen_testados_total_borde_izquierdo*2,
+                                y-screen_borde_superior);
+
+    if (color!=0 && color!=8) {
+        //debug_printf (VERBOSE_DEBUG,"Non black zone detected on lightgun. lightgun x: %d y: %d, color=%d",lightgun_x,lightgun_y,color);
+        return 1;
+    }
+
+
+
+    return 0;
+}
+
+int lightgun_view_electron_check_offset(int electron_offset,int lightgun_offset)
+{
+    int max_offset=(screen_testados_linea*2);
+    int delta_offset=electron_offset-lightgun_offset;
+
+    //printf("Offsets electron %6d lightgun %6d offset %7d max_offset %6d\n",electron_offset,lightgun_offset,delta_offset,max_offset);
+
+
+
+    if (delta_offset<0) {
+        //printf("No ha llegado aun el electron a donde esta la pistola\n");
+        return 0;
+    }
+
+    if (delta_offset>max_offset) {
+        //printf("Electron esta muy lejos de la pistola\n");
+        return 0;
+    }
+
+    //printf("Electron esta en rango de la pistola\n");
+
+    //debug_printf (VERBOSE_DEBUG,"lightgun y (%d) is in range of electron (%d)",lightgun_y,y);
+
+
+    return lightgun_view_electron_color();
+}
+
+
+//Ver si la zona donde apunta el raton (lightgun) esta pasando el electron (o si ha pasado hace poco rato) y hay color blanco
+//Como máximo el electron puede haber pasado hace 1 scanline (64 microsegundos máximo)
+//Usado en magnum light phaser y stack light rifle
+int lightgun_view_electron(void)
+{
+    //printf("view electron\n");
+    //ver electron
+
+    //x inicialmente esta posicionada dentro de pantalla... sin contar border
+    int x=t_estados % screen_testados_linea;
+    int y=t_estados/screen_testados_linea;
+
+    //restamos zona no visible superior
+    //if (y!=t_scanline_draw) printf ("y calculada: %d t_scanline_draw: %d\n",y,t_scanline_draw);
+    //la y calculada es t_scanline_draw (quizá 1 linea de diferencia), pero en Inves esto cambia completamente,
+    //y en algunos programas/juegos no leerá bien la posición en Inves, como es de esperar
+    if (MACHINE_IS_INVES) y=t_scanline_draw;
+
+    y -=screen_invisible_borde_superior;
+
+    x=x+screen_testados_total_borde_izquierdo;
+
 
    //x esta en t_estados. pasamos a pixeles
 
-   x=x*2;
-
-   debug_printf (VERBOSE_PARANOID,"electron is at t_estados: %d x: %d y: %d. gun is at x: %d y: %d",t_estados,x,y,gunstick_x,gunstick_y);
-
-	//aproximacion. solo detectamos coordenada y. Parece que los juegos no hacen barrido de toda la x.
-	//TODO. los juegos que leen pistola asi no funcionan
-	//if (y==gunstick_y) return 1;
-
-	//rango de y
-	int dif=y-gunstick_y;
-	if (dif<0) dif=-dif;
+    x=x*2;
 
 
-	if (dif<gunstick_range_y) {
+    //debug_printf (VERBOSE_PARANOID,"electron is at t_estados: %6d x: %3d y: %3d . gun is at x: %3d y: %3d",
+    //    t_estados,x,y,lightgun_x,lightgun_y);
 
-		debug_printf (VERBOSE_DEBUG,"gunstick y (%d) is in range of electron (%d)",gunstick_y,y);
-
-		//Proteccion para que no se salga de putpixel_cache
-   		//dimensiones putpixel_cache
-	        int ancho,alto;
-
-	        ancho=screen_get_emulated_display_width_no_zoom();
-        	alto=screen_get_emulated_display_height_no_zoom();
-
-        	if (x<ancho && y<alto) {
-
-			//Ver si hay algo en blanco cerca de donde se ha disparado
-                                              int indice_cache;
-						//x=gunstick_x;
-
-			int rango_y;
-			y=gunstick_y-gunstick_range_y/2;
-
-			//Restar offset
-			y=y-gunstick_y_offset;
-
-			if (y<0) y=0;
-			for (rango_y=gunstick_range_y;rango_y>0;rango_y--,y++) {
+    //printf ("electron is at t_estados: %6d x: %3d y: %3d . gun is at x: %3d y: %3d\n",
+    //    t_estados,x,y,lightgun_x,lightgun_y);
 
 
-				x=gunstick_x-gunstick_range_x/2;
-				if (x<0) x=0;
-
-                                indice_cache=(get_total_ancho_rainbow()*y)+x;
-
-				int rango_x;
-				z80_byte color;
-				for (rango_x=gunstick_range_x;rango_x>0;rango_x--) {
-
-                                	color=putpixel_cache[indice_cache];
-
-                                        //color blanco con o sin brillo
-					//si no es color valido
-					if (color>15) return 0;
-
-					int maskbrillo=7;
-					if (gunstick_solo_brillo) maskbrillo=15;
-
-                                        if ( (color&maskbrillo)==maskbrillo) {
-						debug_printf (VERBOSE_DEBUG,"White zone detected on lightgun. gunstick x: %d y: %d, color=%d",gunstick_x,gunstick_y,color);
-						return 1;
-					}
-					indice_cache++;
-
-					//printf ("rango_x: %d rango_y: %d x: %d y: %d\n",rango_x,rango_y,x,y);
-
-				}
-			}
-		}
-
-	}
-
-  return 0;
+    int electron_offset=y*(screen_testados_linea*2)+x;
 
 
+    if (!lightgun_vertical_threshold) {
 
-  //}
+        //Nuevo calculo para saber si esta en rango. Mediante offset total
+        //Contamos rango en pixeles (de ahí los *2)
+
+        int lightgun_offset=lightgun_y*(screen_testados_linea*2)+lightgun_x;
+
+        return lightgun_view_electron_check_offset(electron_offset,lightgun_offset);
+    }
+
+    else {
+        int umbral_vertical=lightgun_vertical_threshold;
+        int pistola_y=lightgun_y-umbral_vertical/2;
+        for (;umbral_vertical>0;umbral_vertical--,pistola_y++) {
+            int lightgun_offset=pistola_y*(screen_testados_linea*2)+lightgun_x;
+            int coincide=lightgun_view_electron_check_offset(electron_offset,lightgun_offset);
+            if (coincide) return coincide;
+        }
+        return 0;
+    }
+
+
 
 }
 
 
 void joystick_print_types(void)
 {
-	int i;
+    int i;
 
-	for (i=0;i<=JOYSTICK_TOTAL;i++) {
-		printf ("%s",joystick_texto[i]);
-		if (i!=JOYSTICK_TOTAL) printf (", ");
-	}
+    for (i=0;i<=JOYSTICK_TOTAL;i++) {
+        printf ("%s",joystick_texto[i]);
+        if (i!=JOYSTICK_TOTAL) printf (", ");
+    }
+}
+
+//dibujar la mirilla
+void lightgun_draw_scope(void)
+{
+    if (lightgun_emulation_enabled.v==0) return;
+
+    if (lightgun_scope.v==0) return;
+
+    if (rainbow_enabled.v==0) return;
+
+    if (menu_abierto) return;
+
+    int ancho_rainbow=get_total_ancho_rainbow();
+    int alto_rainbow=get_total_alto_rainbow();
+    int offset_x=ZESARUX_ASCII_LOGO_ANCHO/2;
+    int offset_y=ZESARUX_ASCII_LOGO_ALTO/2;
+
+    char **bitmap=bitmap_button_ext_desktop_mirilla_lightgun;
+
+    if (mouse_left) bitmap=bitmap_button_ext_desktop_mirilla_lightgun_disparada;
+
+    //margen en los laterales para poder poner la mirilla centrada
+    if (lightgun_x>=offset_x && lightgun_y>=offset_y &&
+        lightgun_x<=ancho_rainbow-ZESARUX_ASCII_LOGO_ANCHO+offset_x && lightgun_y<=alto_rainbow-ZESARUX_ASCII_LOGO_ALTO+offset_y) {
+
+        screen_put_asciibitmap_generic(bitmap,rainbow_buffer,lightgun_x-offset_x,lightgun_y-offset_y,
+            ZESARUX_ASCII_LOGO_ANCHO,ZESARUX_ASCII_LOGO_ALTO, get_total_ancho_rainbow(),get_total_alto_rainbow(),screen_generic_putpixel_indexcolour,1,0,0);
+
+    }
 }

@@ -22,11 +22,28 @@
 #ifndef ZXVISION_TOPBAR_H
 #define ZXVISION_TOPBAR_H
 
+#include "zxvision.h"
+
+#define TOPMENU_TOTAL_MENUS 12
+
 extern void topbar_timer_event(void);
 extern void topbar_text_overlay(void);
 extern int menu_topbarmenu_pressed_bar;
 extern void menu_topbarmenu(void);
 extern int if_menu_topbarmenu_pressed_bar(void);
 extern int if_menu_topbarmenu_enabled_and_pressed_bar(void);
+extern void reset_topbar_overlay_we_are_on_topbar(void);
+
+extern int zxvision_topmenu_was_open_by_left_mouse_button;
+extern int get_pos_y_mouse_topbar(void);
+extern void topbar_make_topbar_visible(void);
+extern void if_zxvision_topbar_menu_will_not_have_title(menu_item *m);
+extern int zxvision_topbar_menu_will_not_have_title;
+extern void topbar_set_topmenus_visibles(int indice,int valor);
+extern void topbar_switch_topmenus_visibles(int indice);
+extern int topbar_get_topmenus_visibles(int indice);
+extern int menu_topbarmenu_crear_indice_posiciones(void);
+extern int topbar_show_short_menu_names;
+extern void topbar_guess_show_short_menu_names_variable(void);
 
 #endif

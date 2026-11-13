@@ -19,6 +19,12 @@
 
 */
 
+//Para clipboard en windows
+#ifdef MINGW
+    #include <windows.h>
+    #include <mmsystem.h>
+#endif
+
 #include <string.h>
 #include <stdio.h>
 
@@ -28,7 +34,11 @@
 	#include <SDL/SDL.h>
 #endif
 
-
+//Para drag-drop en windows
+#ifdef MINGW
+    #include <SDL/SDL_syswm.h>
+    #include <shellapi.h>
+#endif
 
 #include "scrsdl.h"
 #include "common_sdl.h"
@@ -53,6 +63,9 @@
 #include "sms.h"
 #include "svi.h"
 #include "pcw.h"
+#include "baseconf.h"
+#include "scorpion.h"
+#include "atmturbo.h"
 
 
 
@@ -68,6 +81,28 @@ SDL_Surface *sdl_screen;
 //la ventana se redimensiona
 int scrsdl_debe_redimensionar=0;
 
+int scrsdl_ancho_ventana=0;
+int scrsdl_alto_ventana=0;
+
+int scrsdl_ancho_no_fullscreen=0;
+int scrsdl_alto_no_fullscreen=0;
+
+SDL_Surface *render_surface;
+
+//Tamaño y offset de zona fullscreen
+SDL_Rect dst_fullscreen;
+
+
+void scrsdl_update_window_title(void)
+{
+    SDL_WM_SetCaption(get_window_title(), "ZEsarUX");
+}
+
+//Para drag-drop en windows
+#ifdef MINGW
+HWND hwnd;
+#endif
+
 
 
 
@@ -78,10 +113,6 @@ int scrsdl_crea_ventana(void)
 
     flags=SDL_SWSURFACE | SDL_RESIZABLE;
 
-    if (ventana_fullscreen) {
-        flags |=SDL_FULLSCREEN;
-    }
-
     int ancho=screen_get_window_size_width_zoom_border_en();
 
     ancho +=screen_get_ext_desktop_width_zoom();
@@ -90,17 +121,89 @@ int scrsdl_crea_ventana(void)
 
     alto +=screen_get_ext_desktop_height_zoom();
 
+    scrsdl_ancho_no_fullscreen=ancho;
+    scrsdl_alto_no_fullscreen=alto;
+
+    if (ventana_fullscreen) {
+        flags |=SDL_FULLSCREEN;
+        flags &= ~SDL_RESIZABLE;
+	    SDL_Rect **modes;
+        modes = SDL_ListModes(NULL, SDL_FULLSCREEN);
+
+        int monitor_w=0;
+	    int monitor_h=0;
+
+        if (modes != (SDL_Rect **)0 && modes != (SDL_Rect **)-1) {
+            monitor_w = modes[0]->w;
+            monitor_h = modes[0]->h;
+
+	        if (monitor_w && monitor_h) {
+
+                //Fullscreen se basa en definir el modo de video de SDL que ocupe toda la pantalla,
+                //aunque nuestros pixeles los metemos en un surface de tamaño normal (mismo tamaño que en ventana)
+                //Luego a la hora de renderizar (ver función scrsdl_refresca_pantalla_solo_driver) escalamos mediante SDL al tamaño de pantalla completa, conservando proporciones
+                //y centrando imagen.
+                //Si solo definieramos full screen y dejasemos renderizar a SDL a pantalla completa, no respeta proporciones y llena la pantalla entera (en ancho y alto)
+                //deformando la imagen
+
+                ancho=monitor_w;
+                alto=monitor_h;
+
+                if (scr_sdl_8bits_color.v) {
+                    render_surface = SDL_CreateRGBSurface(SDL_SWSURFACE, scrsdl_ancho_no_fullscreen, scrsdl_alto_no_fullscreen, 8, 0,0,0,0);
+                }
+
+                else {
+                    render_surface = SDL_CreateRGBSurface(SDL_SWSURFACE, scrsdl_ancho_no_fullscreen, scrsdl_alto_no_fullscreen, 32, 0,0,0,0);
+                }
+
+	        }
+	    }
+
+        if (!monitor_w || !monitor_h) {
+            ventana_fullscreen=0;
+            flags &= ~SDL_FULLSCREEN;
+            debug_printf(VERBOSE_ERR,"Can not set fullscreen mode");
+        }
+    }
+
+    int ancho_ventana=ancho;
+    int alto_ventana=alto;
+
+
+    if (scr_sdl_force_size.v) {
+        ancho_ventana=scr_sdl_force_size_width;
+        alto_ventana=scr_sdl_force_size_height;
+    }
+
+    //En FiwixOS este flag es necesario, tendrá que ver con el uso que hace SDL de la vgalib
+    if (scr_sdl_hwsurface.v) {
+        flags=SDL_HWSURFACE;
+    }
+
     debug_printf (VERBOSE_DEBUG,"Creating window %d X %d",ancho,alto );
 
-    sdl_screen = SDL_SetVideoMode(ancho,alto,32, flags);
+    scrsdl_ancho_ventana=ancho;
+    scrsdl_alto_ventana=alto;
+
+
+    if (scr_sdl_8bits_color.v) {
+        sdl_screen = SDL_SetVideoMode(ancho_ventana,alto_ventana,8, flags);
+    }
+
+    else {
+        sdl_screen = SDL_SetVideoMode(ancho_ventana,alto_ventana,32, flags);
+    }
+
+
     if ( sdl_screen == NULL ) {
         return 1;
     }
 
     scr_reallocate_layers_menu(ancho,alto);
 
-    //establecer titulo ventana
-    SDL_WM_SetCaption("ZEsarUX " EMULATOR_VERSION , "ZEsarUX");
+
+    scrsdl_update_window_title();
 
     if (mouse_pointer_shown.v==0) SDL_ShowCursor(0);
 
@@ -112,22 +215,95 @@ int scrsdl_crea_ventana(void)
 
     scr_set_pending_redraw_desktop_windows();
 
+
+    //Para Drag-drop en windows
+#ifdef MINGW
+
+SDL_SysWMinfo info;
+SDL_VERSION(&info.version);
+
+if (SDL_GetWMInfo(&info)) {
+    hwnd = info.window;
+
+    //activar drag drop
+    DragAcceptFiles(hwnd, TRUE);
+
+    //interceptar mensajes win32:
+    SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
+}
+
+
+#endif
+
+
     return 0;
 
 }
 
-void scrsdl_putpixel_final_rgb(int x,int y,unsigned int color_rgb)
+//Puntero a la funcion final
+void (*scrsdl_putpixel_final_rgb)(int x,int y,unsigned int color_rgb);
+
+void scrsdl_putpixel_final_rgb_32(int x,int y,unsigned int color_rgb)
 {
-    Uint8 *p = (Uint8 *)sdl_screen->pixels + y * sdl_screen->pitch + x * 4;
+    Uint8 *p;
+
+    if (ventana_fullscreen) {
+    	p = (Uint8 *)render_surface->pixels + y * render_surface->pitch + x * 4;
+    }
 
 
-    //escribir de golpe los 32 bits.
+    else {
+        p = (Uint8 *)sdl_screen->pixels + y * sdl_screen->pitch + x * 4;
+    }
+
+    //controlar limites x,y
+    if (scr_sdl_force_size.v) {
+        int ancho=scr_sdl_force_size_width;
+        int alto=scr_sdl_force_size_height;
+        if (x>=ancho || y>=alto) return;
+    }
+
+
+    if (screen_rgb_8bit) {
+        //Usamos color rgb 8 bits: 3 bits Red, 3 bits Green, 2 bits Blue : RRRGGGBB
+        //Nos quedamos con los bits mas significativos de cada componente
+        color_rgb &=0xE0E0C0; //11100000 11100000 11000000
+    }
 
     //agregar alpha
     color_rgb |=0xFF000000;
-    //y escribir
 
+    //escribir de golpe los 32 bits
     *(Uint32 *)p = color_rgb;
+}
+
+void scrsdl_putpixel_final_rgb_8(int x,int y,unsigned int color_rgb)
+{
+
+    Uint8 *p;
+
+    if (ventana_fullscreen) {
+    	p = (Uint8 *)render_surface->pixels + y * render_surface->pitch + x;
+    }
+    else {
+        p = (Uint8 *)sdl_screen->pixels + y * sdl_screen->pitch + x;
+    }
+
+    //controlar limites x,y
+    if (scr_sdl_force_size.v) {
+        int ancho=scr_sdl_force_size_width;
+        int alto=scr_sdl_force_size_height;
+        if (x>=ancho || y>=alto) return;
+    }
+
+
+    //Usamos color rgb 8 bits: 3 bits Red, 3 bits Green, 2 bits Blue : RRRGGGBB
+    unsigned char r,g,b;
+    r=(color_rgb>>16) & 0xE0; //Mascara 11100000
+    g=(color_rgb>>11) & 0x1C; //Mascara 00011100
+    b=(color_rgb>> 6) & 0x03; //Mascara 00000011
+
+    *p = (r|g|b);
 }
 
 
@@ -194,37 +370,65 @@ void scrsdl_putchar_menu(int x,int y, z80_byte caracter,int tinta,int papel)
 
 }
 
-/*
-void old_scrsdl_putchar_footer(int x,int y, z80_byte caracter,int tinta,int papel) {
 
-
-    int yorigen;
-
-    yorigen=screen_get_emulated_display_height_no_zoom_bottomborder_en()/8;
-
-    //scr_putchar_menu(x,yorigen+y,caracter,tinta,papel);
-    y +=yorigen;
-    z80_bit inverse;
-
-    inverse.v=0;
-
-    //128 y 129 corresponden a franja de menu y a letra enye minuscula
-    if (caracter<32 || caracter>MAX_CHARSET_GRAPHIC) caracter='?';
-
-    //scr_putchar_menu_comun_zoom(caracter,x,y,inverse,tinta,papel,1);
-    scr_putchar_footer_comun_zoom(caracter,x,y,inverse,tinta,papel);
-}
-*/
 
 void scrsdl_putchar_footer(int x,int y, z80_byte caracter,int tinta,int papel)
 {
     scr_putchar_footer_comun_zoom(caracter,x,y,tinta,papel);
 }
 
+
+
+#ifdef MINGW
+//Portapapeles pero de windows
+char *scrsdl_windows_get_text_clipboard(int *p_longitud)
+{
+
+
+    if (!OpenClipboard(NULL)) {
+        debug_printf(VERBOSE_ERR,"Can't open clipboard");
+        *p_longitud=0;
+        return NULL;
+    }
+
+    HANDLE h = GetClipboardData(CF_TEXT);
+    if (!h) {
+        debug_printf(VERBOSE_ERR,"No ASCII text on clipboard");
+        CloseClipboard();
+        *p_longitud=0;
+        return NULL;
+    }
+
+    char *text = (char*)GlobalLock(h);
+    if (!text) {
+        CloseClipboard();
+        *p_longitud=0;
+        return NULL;
+    }
+
+    //printf("Portapapeles: %s\n", text);
+
+
+    int longitud_texto=strlen(text)+1;
+
+    char *memoria_texto=util_malloc(longitud_texto,"Can not allocate memory for getting text from clipboard");
+    strcpy(memoria_texto,text);
+    *p_longitud=longitud_texto;
+
+    GlobalUnlock(h);
+    CloseClipboard();
+
+    return memoria_texto;
+
+
+}
+#endif
+
+
 void scrsdl_set_fullscreen(void)
 {
 
-    ventana_fullscreen=1;
+    change_variable_ventana_fullscreen(1);
     scrsdl_crea_ventana();
 
 }
@@ -233,7 +437,7 @@ void scrsdl_set_fullscreen(void)
 void scrsdl_reset_fullscreen(void)
 {
 
-    ventana_fullscreen=0;
+    change_variable_ventana_fullscreen(0);
     scrsdl_crea_ventana();
 
 }
@@ -255,18 +459,79 @@ void scrsdl_refresca_border(void)
 
 void scrsdl_refresca_pantalla_solo_driver(void)
 {
-    int ancho=screen_get_window_size_width_zoom_border_en();
-    ancho +=screen_get_ext_desktop_width_zoom();
-
-    int alto=screen_get_window_size_height_zoom_border_en();
-    alto +=screen_get_ext_desktop_height_zoom();
-
-    SDL_UpdateRect(sdl_screen, 0, 0, ancho, alto );
 
 
-    /* UnLock the screen for direct access to the pixels */
-    if ( SDL_MUSTLOCK(sdl_screen) ) {
+    if (scrsdl_ancho_ventana && scrsdl_alto_ventana) {
+
+	    if (ventana_fullscreen) {
+
+            SDL_Rect src;
+
+
+            int ancho_origen= scrsdl_ancho_no_fullscreen;
+            int alto_origen=scrsdl_alto_no_fullscreen;
+
+            src.x = 0;
+            src.y = 0;
+            src.w = ancho_origen;
+            src.h = alto_origen;
+
+            //Aspecto multiplicado por 1000 para no tener que usar floats
+            //float aspect=((float)scrsdl_ancho_no_fullscreen)/((float)scrsdl_alto_no_fullscreen);
+            int aspect=(scrsdl_ancho_no_fullscreen*1000)/scrsdl_alto_no_fullscreen;
+
+            int alto_escalado_destino;
+            int ancho_escalado_destino;
+
+            //printf("Aspect: %d\n",aspect);
+
+            //float mas_grande_x=((float)sdl_screen->w)/((float)ancho_origen);
+            //float mas_grande_y=((float)sdl_screen->h)/((float)alto_origen);
+
+            //Esto solo es una relación de aspecto, da igual que esté multiplicado por 1000 para no usar floats
+            //Nota: no hay riesgo de exceder el limite de un entero de 32 bits pues seria con resoluciones de 2 millones de pixeles
+            int mas_grande_x=(1000*sdl_screen->w)/ancho_origen;
+            int mas_grande_y=(1000*sdl_screen->h)/alto_origen;
+
+            //printf("Aumento en X %d en Y %d\n",mas_grande_x,mas_grande_y);
+
+            int offset_x=0;
+            int offset_y=0;
+
+            if (mas_grande_x>mas_grande_y) {
+                alto_escalado_destino=sdl_screen->h;
+                ancho_escalado_destino=((sdl_screen->h)*aspect)/1000;
+                offset_x=((sdl_screen->w)-ancho_escalado_destino)/2;
+            }
+            else {
+                ancho_escalado_destino=sdl_screen->w;
+                alto_escalado_destino=((sdl_screen->w)*1000)/aspect;
+                offset_y=((sdl_screen->h)-alto_escalado_destino)/2;
+            }
+
+
+            dst_fullscreen.x = offset_x;
+            dst_fullscreen.y = offset_y;
+            dst_fullscreen.w = ancho_escalado_destino;
+            dst_fullscreen.h = alto_escalado_destino;
+
+            //printf("Escalando desde %d X %d hasta %d X %d. monitor total: %d X %d\n",ancho_origen,alto_origen,ancho_escalado_destino,alto_escalado_destino,sdl_screen->w,sdl_screen->h);
+
+            SDL_SoftStretch(render_surface, &src, sdl_screen, &dst_fullscreen);
+
+            SDL_UpdateRect(sdl_screen, 0, 0, scrsdl_ancho_ventana, scrsdl_alto_ventana);
+
+		}
+	    else {
+
+            SDL_UpdateRect(sdl_screen, 0, 0, scrsdl_ancho_ventana, scrsdl_alto_ventana );
+		}
+
+
+        /* UnLock the screen for direct access to the pixels */
+        /*if ( SDL_MUSTLOCK(sdl_screen) ) {
             SDL_UnlockSurface(sdl_screen);
+        }*/
     }
 
 }
@@ -278,17 +543,18 @@ void scrsdl_refresca_pantalla(void)
 
     /* Lock the screen for direct access to the pixels */
     //Aunque en mis pruebas esta funcion dice que la pantalla no necesita hacer lock
-    if ( SDL_MUSTLOCK(sdl_screen) ) {
+    /*if ( SDL_MUSTLOCK(sdl_screen) ) {
     //printf ("locking screen\n");
         if ( SDL_LockSurface(sdl_screen) < 0 ) {
                 cpu_panic ("scr sdl can't lock screen");
         }
     }
+        */
 
     if (sem_screen_refresh_reallocate_layers) {
-            //printf ("--Screen layers are being reallocated. return\n");
-            //debug_exec_show_backtrace();
-            return;
+        //printf ("--Screen layers are being reallocated. return\n");
+        //debug_exec_show_backtrace();
+        return;
     }
 
     sem_screen_refresh_reallocate_layers=1;
@@ -296,24 +562,33 @@ void scrsdl_refresca_pantalla(void)
     scr_driver_redraw_desktop_windows();
 
     if (MACHINE_IS_ZX8081) {
-
-
-            //scr_refresca_pantalla_rainbow_comun();
-            scrsdl_refresca_pantalla_zx81();
+        scrsdl_refresca_pantalla_zx81();
     }
 
     else if (MACHINE_IS_PRISM) {
-            screen_prism_refresca_pantalla();
+        screen_prism_refresca_pantalla();
     }
 
     else if (MACHINE_IS_TBBLUE) {
-            screen_tbblue_refresca_pantalla();
+        screen_tbblue_refresca_pantalla();
     }
 
 
     else if (MACHINE_IS_SPECTRUM) {
 
         if (MACHINE_IS_TSCONF)	screen_tsconf_refresca_pantalla();
+
+        else if (MACHINE_IS_BASECONF)	{
+            baseconf_refresca_pantalla();
+        }
+
+        else if (MACHINE_IS_SCORPION_GMX)	{
+            scorpiongmx_refresca_pantalla();
+        }
+
+        else if (MACHINE_IS_ATM_TURBO)	{
+            atmturbo_refresca_pantalla();
+        }
 
 
         else { //Spectrum no TSConf
@@ -336,7 +611,7 @@ void scrsdl_refresca_pantalla(void)
 
                 else {
                 //modo rainbow - real video
-                        scr_refresca_pantalla_rainbow_comun();
+                        scr_refresca_pantalla_rainbow_comun_spectrum();
                 }
         }
     }
@@ -347,27 +622,27 @@ void scrsdl_refresca_pantalla(void)
 
 
     else if (MACHINE_IS_ACE) {
-            scr_refresca_pantalla_y_border_ace();
+        scr_refresca_pantalla_y_border_ace();
     }
 
     else if (MACHINE_IS_CPC) {
-            scr_refresca_pantalla_y_border_cpc();
+        scr_refresca_pantalla_y_border_cpc();
     }
 
     else if (MACHINE_IS_PCW) {
-            scr_refresca_pantalla_y_border_pcw();
+        scr_refresca_pantalla_y_border_pcw();
     }
 
     else if (MACHINE_IS_SAM) {
-            scr_refresca_pantalla_y_border_sam();
+        scr_refresca_pantalla_y_border_sam();
     }
 
     else if (MACHINE_IS_QL) {
-            scr_refresca_pantalla_y_border_ql();
+        scr_refresca_pantalla_y_border_ql();
     }
 
     else if (MACHINE_IS_MK14) {
-            scr_refresca_pantalla_y_border_mk14();
+        scr_refresca_pantalla_y_border_mk14();
     }
 
     else if (MACHINE_IS_MSX) {
@@ -391,7 +666,6 @@ void scrsdl_refresca_pantalla(void)
     }
 
 
-    //printf ("%d\n",spectrum_colortable[1]);
 
     screen_render_menu_overlay_if_active();
 
@@ -418,7 +692,6 @@ void scrsdl_end(void)
 
     scrsdl_inicializado.v=0;
     commonsdl_end();
-    //printf ("After close sdl driver\n");
 }
 
 z80_byte scrsdl_lee_puerto(z80_byte puerto_h,z80_byte puerto_l)
@@ -1387,6 +1660,29 @@ void scrsdl_actualiza_tablas_teclado(void)
             }
 		}
 
+        //Drag-drop en windows
+#ifdef MINGW
+        if (event.type == SDL_SYSWMEVENT) {
+
+            if (event.syswm.msg->msg == WM_DROPFILES) {
+
+                HDROP hDrop = (HDROP)event.syswm.msg->wParam;
+
+                UINT count = DragQueryFile(hDrop, 0xFFFFFFFF, NULL, 0);
+
+                //bucle para todos los archivos arrastrados
+                for (UINT i = 0; i < count; i++) {
+                    char file[MAX_PATH];
+                    DragQueryFile(hDrop, i, file, MAX_PATH);
+                    //printf("Archivo: %s\n", file);
+                    util_drag_drop_file(file);
+                }
+
+                DragFinish(hDrop);
+            }
+        }
+#endif
+
 
 		if (event.type==SDL_ACTIVEEVENT) {
 			//printf("SDL_ACTIVEEVENT. type=%d gain=%d state=%d\n",event.active.type,event.active.gain,event.active.state);
@@ -1453,10 +1749,37 @@ void scrsdl_actualiza_tablas_teclado(void)
 
 		//mouse motion
 		if (event.type==SDL_MOUSEMOTION) {
-            mouse_x=event.motion.x;
-            mouse_y=event.motion.y;
 
+            //En pantalla completa tenemos que ajustar la posicion real del raton
+            if (ventana_fullscreen) {
+                //printf("antes %d,%d\n",event.motion.x,event.motion.y);
 
+                mouse_x=event.motion.x-dst_fullscreen.x;
+                mouse_x=(mouse_x*scrsdl_ancho_no_fullscreen);
+
+                if (dst_fullscreen.w!=0) {
+                    mouse_x /=dst_fullscreen.w;
+                }
+
+                mouse_y=event.motion.y-dst_fullscreen.y;
+                mouse_y=(mouse_y*scrsdl_alto_no_fullscreen);
+
+                if (dst_fullscreen.h!=0) {
+                    mouse_y /=dst_fullscreen.h;
+                }
+
+                //printf("despues %d,%d\n",mouse_x,mouse_y);
+            }
+
+            else {
+                mouse_x=event.motion.x;
+                mouse_y=event.motion.y;
+            }
+
+            lightgun_x=mouse_x;
+            lightgun_y=mouse_y;
+            lightgun_x=lightgun_x/zoom_x;
+            lightgun_y=lightgun_y/zoom_y;
 
             kempston_mouse_x=mouse_x/zoom_x;
             kempston_mouse_y=255-mouse_y/zoom_y;
@@ -1472,7 +1795,6 @@ void scrsdl_actualiza_tablas_teclado(void)
 			debug_printf (VERBOSE_PARANOID,"Mouse Button Press. x=%d y=%d", event.button.x, event.button.y);
 
             if ( event.button.button == SDL_BUTTON_LEFT ) {
-				//mouse_left=1;
 				util_set_reset_mouse(UTIL_MOUSE_LEFT_BUTTON,1);
 			}
             if ( event.button.button == SDL_BUTTON_RIGHT ) {
@@ -1480,12 +1802,9 @@ void scrsdl_actualiza_tablas_teclado(void)
 				util_set_reset_mouse(UTIL_MOUSE_RIGHT_BUTTON,1);
             }
 
-            gunstick_x=event.button.x;
-            gunstick_y=event.button.y;
-            gunstick_x=gunstick_x/zoom_x;
-            gunstick_y=gunstick_y/zoom_y;
 
-            debug_printf (VERBOSE_PARANOID,"Mouse Button press. x=%d y=%d. gunstick: x: %d y: %d", event.button.x, event.button.y,gunstick_x,gunstick_y);
+
+            debug_printf (VERBOSE_PARANOID,"Mouse Button press. x=%d y=%d", event.button.x, event.button.y);
 
 		}
 
@@ -1532,7 +1851,7 @@ void scrsdl_actualiza_tablas_teclado(void)
 		if (event.type==SDL_QUIT) {
             debug_printf (VERBOSE_INFO,"Received window close event");
             //Hacemos que aparezca el menu con opcion de salir del emulador
-            menu_abierto=1;
+            menu_set_menu_abierto(1);
             menu_button_exit_emulator.v=1;
 		}
 
@@ -1560,7 +1879,7 @@ int scrsdl_get_menu_width(void)
 
         max +=screen_get_ext_desktop_width_no_zoom();
 
-        max=max/menu_char_width/menu_gui_zoom;
+        max=max/menu_char_width/menu_gui_zoom/screen_reduce_menu_ancho;
 
 
         if (max>OVERLAY_SCREEN_MAX_WIDTH) max=OVERLAY_SCREEN_MAX_WIDTH;
@@ -1577,7 +1896,7 @@ int scrsdl_get_menu_height(void)
 
         max +=screen_get_ext_desktop_height_no_zoom();
 
-        max=max/menu_char_height/menu_gui_zoom;
+        max=max/menu_char_height/menu_gui_zoom/screen_reduce_menu_alto;
 
         if (max>OVERLAY_SCREEN_MAX_HEIGTH) max=OVERLAY_SCREEN_MAX_HEIGTH;
 
@@ -1585,12 +1904,7 @@ int scrsdl_get_menu_height(void)
         return max;
 }
 
-/*
-int scrsdl_driver_can_ext_desktop (void)
-{
-        return 1;
-}
-*/
+
 
 
 int realjoystick_sdl_total_joysticks=0;
@@ -1614,60 +1928,59 @@ int realjoystick_sdl_init(void)
 {
 
 
-        debug_printf(VERBOSE_DEBUG,"Initializing real joystick. Using SDL support");
+    debug_printf(VERBOSE_DEBUG,"Initializing real joystick. Using SDL support");
 
-        SDL_InitSubSystem(SDL_INIT_JOYSTICK);
+    SDL_InitSubSystem(SDL_INIT_JOYSTICK);
 
 
-        realjoystick_sdl_total_joysticks=SDL_NumJoysticks();
+    realjoystick_sdl_total_joysticks=SDL_NumJoysticks();
 
-        debug_printf(VERBOSE_DEBUG,"Total joysticks: %d",realjoystick_sdl_total_joysticks);
+    debug_printf(VERBOSE_DEBUG,"Total joysticks: %d",realjoystick_sdl_total_joysticks);
 
-        if (realjoystick_sdl_total_joysticks<1) {
-                return 1; //error
+    if (realjoystick_sdl_total_joysticks<1) {
+            return 1; //error
+    }
+
+    else {
+
+        sdl_joy=SDL_JoystickOpen(realjoystick_index);
+        if (sdl_joy) {
+                debug_printf(VERBOSE_DEBUG,"Opened Joystick 0");
+
+                sdl_num_axes=SDL_JoystickNumAxes(sdl_joy);
+                sdl_num_hats=SDL_JoystickNumHats(sdl_joy);
+                sdl_num_buttons=SDL_JoystickNumButtons(sdl_joy);
+
+                debug_printf(VERBOSE_DEBUG,"Name: %s", SDL_JoystickName(realjoystick_index));
+                debug_printf(VERBOSE_DEBUG,"Number of Axes: %d", sdl_num_axes);
+                debug_printf(VERBOSE_DEBUG,"Number of Hats: %d", sdl_num_hats);
+                debug_printf(VERBOSE_DEBUG,"Number of Buttons: %d", sdl_num_buttons);
+                //printf("Number of Balls: %d\n", SDL_JoystickNumBalls(sdl_joy));
+                //printf("Number of Hats: %d\n",SDL_JoystickNumHats(sdl_joy));
+
+
+                //Por si acaso el nombre lo truncamos
+                menu_tape_settings_trunc_name((char *)SDL_JoystickName(realjoystick_index),realjoystick_joy_name,REALJOYSTICK_MAX_NAME);
+
+                realjoystick_total_axes=sdl_num_axes;
+                realjoystick_total_buttons=sdl_num_buttons;
+
+                strcpy(realjoystick_driver_name,"SDL");
+
+
         }
 
         else {
-
-
-                sdl_joy=SDL_JoystickOpen(realjoystick_index);
-                if (sdl_joy) {
-                        debug_printf(VERBOSE_DEBUG,"Opened Joystick 0");
-
-                        sdl_num_axes=SDL_JoystickNumAxes(sdl_joy);
-                        sdl_num_hats=SDL_JoystickNumHats(sdl_joy);
-                        sdl_num_buttons=SDL_JoystickNumButtons(sdl_joy);
-
-                        debug_printf(VERBOSE_DEBUG,"Name: %s", SDL_JoystickName(realjoystick_index));
-                        debug_printf(VERBOSE_DEBUG,"Number of Axes: %d", sdl_num_axes);
-                        debug_printf(VERBOSE_DEBUG,"Number of Hats: %d", sdl_num_hats);
-                        debug_printf(VERBOSE_DEBUG,"Number of Buttons: %d", sdl_num_buttons);
-                        //printf("Number of Balls: %d\n", SDL_JoystickNumBalls(sdl_joy));
-                        //printf("Number of Hats: %d\n",SDL_JoystickNumHats(sdl_joy));
-
-
-                        //Por si acaso el nombre lo truncamos
-                        menu_tape_settings_trunc_name((char *)SDL_JoystickName(realjoystick_index),realjoystick_joy_name,REALJOYSTICK_MAX_NAME);
-
-                        realjoystick_total_axes=sdl_num_axes;
-                        realjoystick_total_buttons=sdl_num_buttons;
-
-                        strcpy(realjoystick_driver_name,"SDL");
-
-
-                }
-
-                else {
-                        return 1; //error
-                }
+                return 1; //error
         }
+    }
 
 
-        //Inicializar estados a 0
-        int i;
-        for (i=0;i<SDL_JOY_MAX_BOTONS;i++) sdl_states_joy_buttons[i]=0;
-        for (i=0;i<SDL_JOY_MAX_AXES;i++) sdl_states_joy_axes[i]=0;
-        for (i=0;i<SDL_JOY_MAX_HATS;i++) sdl_states_joy_hats[i]=0;
+    //Inicializar estados a 0
+    int i;
+    for (i=0;i<SDL_JOY_MAX_BOTONS;i++) sdl_states_joy_buttons[i]=0;
+    for (i=0;i<SDL_JOY_MAX_AXES;i++) sdl_states_joy_axes[i]=0;
+    for (i=0;i<SDL_JOY_MAX_HATS;i++) sdl_states_joy_hats[i]=0;
 
 
 	return 0; //OK
@@ -1803,11 +2116,13 @@ A partir de entonces se verá continuo hasta que se pulse otro axis. Y vuelta a 
 */
 
 
-
+                // No se que sentido tiene esto. Esta sobreescribiendo siempre valor, aunque no se pulse axis. Y eso sobreescribe valor anterior de boton pulsado por ejemplo
+                /*
                 if (realjoystick_ultimo_axis==i) {
                         //printf ("guardar para test joystick axis boton %d valor %d\n",i,valoraxis);
                         menu_info_joystick_last_raw_value=valoraxis;
                 }
+                */
 
                 if (valoraxis!=sdl_states_joy_axes[i]) {
                         //printf ("Enviar cambio estado axis %d : %d\n",i,valorfinalaxis);
@@ -1889,43 +2204,57 @@ int scrsdl_init (void) {
     screen_este_driver_permite_ext_desktop=1;
 
 
-        //Inicializaciones necesarias
-        scr_putpixel=scrsdl_putpixel;
-        scr_putpixel_final=scrsdl_putpixel_final;
-        scr_putpixel_final_rgb=scrsdl_putpixel_final_rgb;
+    //Inicializaciones necesarias
+    scr_putpixel=scrsdl_putpixel;
+    scr_putpixel_final=scrsdl_putpixel_final;
 
-        scr_get_menu_width=scrsdl_get_menu_width;
-        scr_get_menu_height=scrsdl_get_menu_height;
+    if (scr_sdl_8bits_color.v) {
+        scrsdl_putpixel_final_rgb=scrsdl_putpixel_final_rgb_8;
+    }
+    else {
+        scrsdl_putpixel_final_rgb=scrsdl_putpixel_final_rgb_32;
+    }
+    scr_putpixel_final_rgb=scrsdl_putpixel_final_rgb;
+
+    scr_get_menu_width=scrsdl_get_menu_width;
+    scr_get_menu_height=scrsdl_get_menu_height;
 	//scr_driver_can_ext_desktop=scrsdl_driver_can_ext_desktop;
 
 
-        scr_putchar_zx8081=scrsdl_putchar_zx8081;
-        scr_debug_registers=scrsdl_debug_registers;
-        scr_messages_debug=scrsdl_messages_debug;
-        scr_putchar_menu=scrsdl_putchar_menu;
-        scr_putchar_footer=scrsdl_putchar_footer;
-        scr_set_fullscreen=scrsdl_set_fullscreen;
-        scr_reset_fullscreen=scrsdl_reset_fullscreen;
-	scr_z88_cpc_load_keymap=scrsdl_z88_cpc_load_keymap;
-	scr_detectedchar_print=scrsdl_detectedchar_print;
-        scr_tiene_colores=1;
-        screen_refresh_menu=1;
+    scr_putchar_zx8081=scrsdl_putchar_zx8081;
+    scr_debug_registers=scrsdl_debug_registers;
+    scr_messages_debug=scrsdl_messages_debug;
+    scr_putchar_menu=scrsdl_putchar_menu;
+    scr_putchar_footer=scrsdl_putchar_footer;
+    scr_set_fullscreen=scrsdl_set_fullscreen;
+    scr_reset_fullscreen=scrsdl_reset_fullscreen;
+    scr_z88_cpc_load_keymap=scrsdl_z88_cpc_load_keymap;
+    scr_detectedchar_print=scrsdl_detectedchar_print;
+    scr_update_window_title=scrsdl_update_window_title;
+
+#ifdef MINGW
+    scr_get_text_clipboard=scrsdl_windows_get_text_clipboard;
+#else
+    scr_get_text_clipboard=NULL;
+#endif
+    scr_tiene_colores=1;
+    screen_refresh_menu=1;
 
 
-        if (!realjoystick_is_linux_native() ) {
+    if (!realjoystick_is_linux_native() ) {
 
 
-	        realjoystick_init=realjoystick_sdl_init;
-	        realjoystick_main=realjoystick_sdl_main;
+        realjoystick_init=realjoystick_sdl_init;
+        realjoystick_main=realjoystick_sdl_main;
 
-                realjoystick_initialize_joystick();
-        }
+        realjoystick_initialize_joystick();
+    }
 
 
 
-    	if (commonsdl_init() != 0 ) {
+    if (commonsdl_init() != 0 ) {
 		debug_printf (VERBOSE_ERR,"scrsdl_init: Error initializing driver");
-                return 1;
+        return 1;
 	}
 
 	scrsdl_inicializado.v=1;
@@ -1937,15 +2266,15 @@ int scrsdl_init (void) {
 
 
 
-        //Otra inicializacion necesaria
-        //Esto debe estar al final, para que funcione correctamente desde menu, cuando se selecciona un driver, y no va, que pueda volver al anterior
-        scr_set_driver_name("sdl");
+    //Otra inicializacion necesaria
+    //Esto debe estar al final, para que funcione correctamente desde menu, cuando se selecciona un driver, y no va, que pueda volver al anterior
+    scr_set_driver_name("sdl");
 
 
 	scr_z88_cpc_load_keymap();
 
-        //printf ("Ending initializing SDL driver\n");
+    //printf ("Ending initializing SDL driver\n");
 
-        return 0;
+    return 0;
 
 }

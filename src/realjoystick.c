@@ -43,11 +43,14 @@
 #include "joystick.h"
 #include "zxvision.h"
 #include "utils.h"
+#include "utils_math.h"
 #include "screen.h"
 #include "compileoptions.h"
 #include "snap_ram.h"
 #include "zeng.h"
 #include "operaciones.h"
+#include "menu_items_settings.h"
+
 
 
 
@@ -101,6 +104,7 @@ int realjoystick_hit=0;
 
 int realjoystick_total_buttons=0;
 int realjoystick_total_axes=0;
+int realjoystick_total_dpad=0;
 char realjoystick_joy_name[REALJOYSTICK_MAX_NAME+1]=""; //+1 por si acaso no me acuerdo del 0 final...
 char realjoystick_driver_name[REALJOYSTICK_MAX_DRIVER_NAME+1]="";
 
@@ -121,12 +125,15 @@ z80_bit no_native_linux_realjoystick={0};
 //etc...
 realjoystick_events_keys_function realjoystick_events_array[MAX_EVENTS_JOYSTICK];
 
+//asignacion de botones de joystick a acciones, mismas acciones que se pueden lanzar con una tecla F o con un icono del ZX Desktop
+realjoystick_button_action realjoystick_actions_array[MAX_ACTIONS_JOYSTICK];
+
 //asignacion de botones de joystick a letras de teclado
 //la posicion dentro del array no indica nada
 realjoystick_events_keys_function realjoystick_keys_array[MAX_KEYS_JOYSTICK];
 
 char *realjoystick_event_names[]={
-    "Up",
+    "Up", //1
     "Down",
     "Left",
     "Right",
@@ -135,22 +142,19 @@ char *realjoystick_event_names[]={
     "Fire3",
     "Fire4",
     "EscMenu",
-    "ExitEmulator",
+    "ExitEmulator", //10
     "Enter",
     "MenuTab",
     "Smartload",
-	"Quicksave",
 	"Osdkeyboard",
 	"Osdtextkb",
 	"NumSelect",
 	"NumAction",
 	"JoySelect",
-	"Aux1",
+	"Aux1", //20
 	"Aux2",
 	"Aux3",
-	"Aux4",
-    "Rewind",
-    "FForward"
+	"Aux4", //23
 };
 
 void realjoystick_print_event_keys(void)
@@ -227,6 +231,8 @@ void realjoystick_clear_events_array(void)
 
 }
 
+
+
 void realjoystick_init_events_keys_tables(void)
 {
 	//eventos
@@ -234,6 +240,9 @@ void realjoystick_init_events_keys_tables(void)
 
 	//y teclas
 	realjoystick_clear_keys_array();
+
+    //y acciones
+    realjoystick_clear_actions_array();
 }
 
 
@@ -433,7 +442,7 @@ int realjoystick_find_event_or_key(int indice_inicial,realjoystick_events_keys_f
 				if (type==REALJOYSTICK_INPUT_EVENT_BUTTON && tabla[i].button_type==0) return i;
 
 
-				if (type==REALJOYSTICK_INPUT_EVENT_AXIS) {
+				if (type==REALJOYSTICK_INPUT_EVENT_AXIS || type==REALJOYSTICK_INPUT_EVENT_DPAD) {
 
 					//ver si coindice el axis
 					if (tabla[i].button_type==+1) {
@@ -559,13 +568,14 @@ void realjoystick_send_f_function(int accion)
 
       menu_button_f_function.v=1;
       menu_button_f_function_action=accion;
-      menu_abierto=1;
+      menu_set_menu_abierto(1);
 
 }
 
+
 //si value=0, es reset
 //si value != no, es set
-void realjoystick_set_reset_action(int index,int value)
+void realjoystick_set_reset_event(int index,int value)
 {
 
 	switch (index) {
@@ -693,42 +703,23 @@ void realjoystick_set_reset_action(int index,int value)
 
 		case REALJOYSTICK_EVENT_QUICKLOAD:
 			if (value) {
-				menu_abierto=1;
+				menu_set_menu_abierto(1);
 				menu_button_smartload.v=1;
 			}
 		break;
 
-		case REALJOYSTICK_EVENT_REWIND:
-			if (value) {
-                realjoystick_send_f_function(F_FUNCION_REWIND);
-			}
-		break;
 
-		case REALJOYSTICK_EVENT_FFORWARD:
-			if (value) {
-				realjoystick_send_f_function(F_FUNCION_FFW);
-			}
-		break;
-
-
-		case REALJOYSTICK_EVENT_QUICKSAVE:
-			if (value) {
-				//printf ("boton quicksave\n");
-				realjoystick_send_f_function(F_FUNCION_QUICKSAVE);
-		      	//Activar funcion f en menu. Primera funcion que llamo desde joystick de la misma manera que cuando se pulsa tecla F de funcion
-			}
-		break;
 
 		case REALJOYSTICK_EVENT_OSDKEYBOARD:
             if (value) {
-                menu_abierto=1;
+                menu_set_menu_abierto(1);
                 menu_button_osdkeyboard.v=1;
             }
         break;
 
 		case REALJOYSTICK_EVENT_OSD_TEXT_KEYBOARD:
             if (value) {
-                menu_abierto=1;
+                menu_set_menu_abierto(1);
                 menu_button_osd_adv_keyboard_openmenu.v=1;
             }
         break;
@@ -783,7 +774,7 @@ int realjoystick_redefine_event_key_no_wait(realjoystick_events_keys_function *t
 				button_type=0;
                         }
 
-                        if (type==REALJOYSTICK_INPUT_EVENT_AXIS) {
+                        if (type==REALJOYSTICK_INPUT_EVENT_AXIS || type==REALJOYSTICK_INPUT_EVENT_DPAD) {
                                 //if (value<0) tabla[indice].button_type=-1;
                                 //else tabla[indice].button_type=+1;
                                 if (value<0) button_type=-1;
@@ -815,105 +806,7 @@ int realjoystick_redefine_event_key_no_wait(realjoystick_events_keys_function *t
 
 
 
-//redefinir evento
-//Devuelve 1 si ok
-//0 si salimos con tecla
 
-/*
-int realjoystick_redefine_event_key(realjoystick_events_keys_function *tabla,int indice,int maximo)
-{
-
-	menu_espera_no_tecla();
-
-	realjoystick_hit=0;
-
-	//leemos boton
-	int button,type,value;
-
-	debug_printf (VERBOSE_DEBUG,"Redefine action: %d",indice);
-
-	//printf ("Redefine action: %d\n",indice);
-
-	simulador_joystick_forzado=1;
-
-	menu_espera_tecla_o_joystick();
-
-
-
-	simulador_joystick_forzado=1;
-
-	//si no se ha pulsado joystick, pues se habra pulsado tecla
-	if (!realjoystick_hit ) {
-		debug_printf (VERBOSE_DEBUG,"Pressed key, not joystick");
-		//printf ("Pressed key, not joystick\n");
-		return 0;
-	}
-
-
-	debug_printf (VERBOSE_DEBUG,"Pressed joystick");
-
-
-			button=menu_info_joystick_last_button;
-
-			type=menu_info_joystick_last_type;
-			value=menu_info_joystick_last_value;
-
-	//if (1) {
-	//if (realjoystick_read_event(&button,&type,&value) ==1 ) {
-		debug_printf (VERBOSE_DEBUG,"redefine for button: %d type: %d value: %d",button,type,value);
-		//printf ("redefine for button: %d type: %d value: %d\n",button,type,value);
-                //eventos de init no hacerles caso, de momento
-		if ( (type&REALJOYSTICK_INPUT_EVENT_INIT)!=REALJOYSTICK_INPUT_EVENT_INIT) {
-			debug_printf (VERBOSE_DEBUG,"redefine for button: %d type: %d value: %d",button,type,value);
-
-			int button_type=0;
-
-
-                        if (type==REALJOYSTICK_INPUT_EVENT_BUTTON) {
-                                //tabla[indice].button_type=0;
-				button_type=0;
-                        }
-
-                        if (type==REALJOYSTICK_INPUT_EVENT_AXIS) {
-                                //if (value<0) tabla[indice].button_type=-1;
-                                //else tabla[indice].button_type=+1;
-                                if (value<0) button_type=-1;
-                                else button_type=+1;
-                        }
-
-			//Antes de asignarlo, ver que no exista uno antes
-			//desasignamos primero el actual
-			tabla[indice].asignado.v=0;
-
-			int existe_evento=realjoystick_find_if_already_defined_button(tabla,maximo,button,button_type);
-
-			if (existe_evento!=-1) {
-				debug_printf (VERBOSE_ERR,"Button already mapped");
-				return 0;
-			}
-
-			tabla[indice].asignado.v=1;
-			tabla[indice].button=button;
-			tabla[indice].button_type=button_type;
-
-			}
-
-
-    //}
-
-	return 1;
-}
-*/
-
-//redefinir evento
-//Devuelve 1 si ok
-//0 si salimos con ESC
-/*
-int realjoystick_redefine_event(int indice)
-{
-        return realjoystick_redefine_event_key(realjoystick_events_array,indice,MAX_EVENTS_JOYSTICK);
-}
-*/
 
 //redefinir evento
 //Devuelve 1 si ok
@@ -979,19 +872,19 @@ void realjoystick_copy_event_button_key(int indice_evento,int indice_tecla,z80_b
 //Devuelve 0 si ok
 int realjoystick_set_type(char *tipo) {
 
-				debug_printf (VERBOSE_INFO,"Setting joystick type %s",tipo);
+    debug_printf (VERBOSE_INFO,"Setting joystick type %s",tipo);
 
-                                int i;
-                                for (i=0;i<=JOYSTICK_TOTAL;i++) {
-                                        if (!strcasecmp(tipo,joystick_texto[i])) break;
-                                }
-                                if (i>JOYSTICK_TOTAL) {
-                                        debug_printf (VERBOSE_ERR,"Invalid joystick type %s",tipo);
-					return 1;
-                                }
+    int i;
+    for (i=0;i<=JOYSTICK_TOTAL;i++) {
+        if (!strcasecmp(tipo,joystick_texto[i])) break;
+    }
+    if (i>JOYSTICK_TOTAL) {
+        debug_printf (VERBOSE_ERR,"Invalid joystick type %s",tipo);
+        return 1;
+    }
 
 
-                                joystick_emulation=i;
+    joystick_emulation=i;
 	return 0;
 }
 
@@ -1000,26 +893,26 @@ int realjoystick_set_type(char *tipo) {
 int realjoystick_set_button_event(char *text_button, char *text_event)
 {
 
-				debug_printf (VERBOSE_INFO,"Setting button %s to event %s",text_button,text_event);
+    debug_printf (VERBOSE_INFO,"Setting button %s to event %s",text_button,text_event);
 
 //--joystickevent but evt    Set a joystick button or axis to an event (changes joystick to event table)
 
-				//obtener boton
-				int button,button_type;
-				realjoystick_get_button_string(text_button,&button,&button_type);
+    //obtener boton
+    int button,button_type;
+    realjoystick_get_button_string(text_button,&button,&button_type);
 
-				//obtener evento
-				int evento=realjoystick_get_event_string(text_event);
-				if (evento==-1) {
-					debug_printf (VERBOSE_ERR,"Unknown event %s",text_event);
-					return 1;
-				}
+    //obtener evento
+    int evento=realjoystick_get_event_string(text_event);
+    if (evento==-1) {
+        debug_printf (VERBOSE_ERR,"Unknown event %s",text_event);
+        return 1;
+    }
 
 
-				//Y definir el evento
-				realjoystick_events_array[evento].asignado.v=1;
-				realjoystick_events_array[evento].button=button;
-				realjoystick_events_array[evento].button_type=button_type;
+    //Y definir el evento
+    realjoystick_events_array[evento].asignado.v=1;
+    realjoystick_events_array[evento].button=button;
+    realjoystick_events_array[evento].button_type=button_type;
 
 	return 0;
 }
@@ -1029,30 +922,30 @@ int realjoystick_set_button_event(char *text_button, char *text_event)
 //Devuelve 0 si ok
 int realjoystick_set_button_key(char *text_button,char *text_key)
 {
-				debug_printf (VERBOSE_INFO,"Setting button %s to key %s",text_button,text_key);
+    debug_printf (VERBOSE_INFO,"Setting button %s to key %s",text_button,text_key);
 
 //"--joystickkeybt but key    Define a key pressed when a joystick button pressed (changes joystick to key table)\n"
 
-                                //ver si maximo definido
-                                if (joystickkey_definidas==MAX_KEYS_JOYSTICK) {
-                                        debug_printf (VERBOSE_ERR,"Maximum defined joystick to keys defined (%d)",joystickkey_definidas);
-                                        return 1;
-                                }
+    //ver si maximo definido
+    if (joystickkey_definidas==MAX_KEYS_JOYSTICK) {
+            debug_printf (VERBOSE_ERR,"Maximum defined joystick to keys defined (%d)",joystickkey_definidas);
+            return 1;
+    }
 
-                                //obtener boton
-                                int button,button_type;
-                                realjoystick_get_button_string(text_button,&button,&button_type);
+    //obtener boton
+    int button,button_type;
+    realjoystick_get_button_string(text_button,&button,&button_type);
 
-                                z80_byte caracter=parse_string_to_number(text_key);
+    z80_byte caracter=parse_string_to_number(text_key);
 
 
-                                //realjoystick_copy_event_button_key(evento,joystickkey_definidas,caracter);
-                                realjoystick_keys_array[joystickkey_definidas].asignado.v=1;
-                                realjoystick_keys_array[joystickkey_definidas].button=button;
-                                realjoystick_keys_array[joystickkey_definidas].button_type=button_type;
-                                realjoystick_keys_array[joystickkey_definidas].caracter=caracter;
+    //realjoystick_copy_event_button_key(evento,joystickkey_definidas,caracter);
+    realjoystick_keys_array[joystickkey_definidas].asignado.v=1;
+    realjoystick_keys_array[joystickkey_definidas].button=button;
+    realjoystick_keys_array[joystickkey_definidas].button_type=button_type;
+    realjoystick_keys_array[joystickkey_definidas].caracter=caracter;
 
-                                joystickkey_definidas++;
+    joystickkey_definidas++;
 
 
  return 0;
@@ -1062,36 +955,201 @@ int realjoystick_set_button_key(char *text_button,char *text_key)
 //Devuelve 0 si ok
 int realjoystick_set_event_key(char *text_event,char *text_key)
 {
-				debug_printf (VERBOSE_INFO,"Setting event %s to key %s",text_event,text_key);
+    debug_printf (VERBOSE_INFO,"Setting event %s to key %s",text_event,text_key);
 
-//    "--joystickkeyev evt key    Define a key pressed when a joystick event is generated (changes joystick to key table)\n"
-
-
-
-                                //ver si maximo definido
-                                if (joystickkey_definidas==MAX_KEYS_JOYSTICK) {
-                                        debug_printf (VERBOSE_ERR,"Maximum defined joystick to keys defined (%d)",joystickkey_definidas);
-                                        return 1;
-                                }
+    //    "--joystickkeyev evt key    Define a key pressed when a joystick event is generated (changes joystick to key table)\n"
 
 
-                                //obtener evento
 
-                                int evento=realjoystick_get_event_string(text_event);
-                                if (evento==-1) {
-                                        debug_printf (VERBOSE_ERR,"Unknown event %s",text_event);
-                                        return 1;
-                                }
+    //ver si maximo definido
+    if (joystickkey_definidas==MAX_KEYS_JOYSTICK) {
+            debug_printf (VERBOSE_ERR,"Maximum defined joystick to keys defined (%d)",joystickkey_definidas);
+            return 1;
+    }
 
-                                //Y obtener tecla
 
-                                z80_byte caracter=parse_string_to_number(text_key);
+    //obtener evento
 
-                                realjoystick_copy_event_button_key(evento,joystickkey_definidas,caracter);
+    int evento=realjoystick_get_event_string(text_event);
+    if (evento==-1) {
+            debug_printf (VERBOSE_ERR,"Unknown event %s",text_event);
+            return 1;
+    }
 
-                                joystickkey_definidas++;
+    //Y obtener tecla
+
+    z80_byte caracter=parse_string_to_number(text_key);
+
+    realjoystick_copy_event_button_key(evento,joystickkey_definidas,caracter);
+
+    joystickkey_definidas++;
 	return 0;
 }
+
+void realjoystick_clear_actions_array(void)
+{
+
+	debug_printf (VERBOSE_INFO,"Clearing joystick to actions table");
+
+    int i;
+    for (i=0;i<MAX_ACTIONS_JOYSTICK;i++) {
+        realjoystick_actions_array[i].asignado.v=0;
+        realjoystick_actions_array[i].ultimo_valor=0;
+        realjoystick_actions_array[i].parametros[0]=0;
+        realjoystick_actions_array[i].index_accion=0;
+    }
+
+
+}
+
+int realjoystick_find_next_free_action(void)
+{
+
+
+    int i;
+    for (i=0;i<MAX_ACTIONS_JOYSTICK;i++) {
+        if (realjoystick_actions_array[i].asignado.v==0) return i;
+    }
+
+    return -1;
+
+}
+
+
+int realjoystick_find_if_already_defined_button_action(int button,int type)
+{
+	int i;
+    for (i=0;i<MAX_ACTIONS_JOYSTICK;i++) {
+        if (realjoystick_actions_array[i].asignado.v) {
+            if (realjoystick_actions_array[i].button==button && realjoystick_actions_array[i].button_type==type) return i;
+        }
+    }
+	return -1;
+}
+
+void realjoystick_add_button_action(char *text_button,char *text_action,char *parameters)
+{
+    //Validar primero que la accion sea valida
+    int indice_accion=get_defined_direct_functions(text_action);
+    if (indice_accion<0) {
+        debug_printf(VERBOSE_ERR,"Invalid action %s",text_action);
+        return;
+    }
+
+
+    //obtener boton
+    int button,button_type;
+    realjoystick_get_button_string(text_button,&button,&button_type);
+
+
+
+    //Encontrar siguiente posicion libre
+    int indice=realjoystick_find_next_free_action();
+    if (indice<0) {
+        debug_printf(VERBOSE_ERR,"Joystick actions list full. Maximum %d",MAX_ACTIONS_JOYSTICK);
+        return;
+    }
+
+    //printf("indice %d indice_accion accion %d boton %d tipo %d\n",indice,indice_accion,button,button_type);
+
+    //Validar que no exista ya
+    if (realjoystick_find_if_already_defined_button_action(button,button_type)>=0) {
+        debug_printf(VERBOSE_ERR,"Button %s already mapped",text_button);
+        return;
+    }
+
+    //Y definir la accion
+    realjoystick_actions_array[indice].asignado.v=1;
+    realjoystick_actions_array[indice].button=button;
+    realjoystick_actions_array[indice].button_type=button_type;
+    realjoystick_actions_array[indice].index_accion=indice_accion;
+    strcpy(realjoystick_actions_array[indice].parametros,parameters);
+
+}
+
+
+//Retorna indice o -1 si no encontrado
+int realjoystick_find_action(int indice_inicial,int button,int type,int value)
+{
+    int i;
+    for (i=indice_inicial;i<MAX_ACTIONS_JOYSTICK;i++) {
+        if (realjoystick_actions_array[i].asignado.v) {
+            if (realjoystick_actions_array[i].button==button) {
+
+                //boton normal. no axis
+                if (type==REALJOYSTICK_INPUT_EVENT_BUTTON && realjoystick_actions_array[i].button_type==0) return i;
+
+
+                if (type==REALJOYSTICK_INPUT_EVENT_AXIS || type==REALJOYSTICK_INPUT_EVENT_DPAD) {
+
+                    //ver si coindice el axis
+                    if (realjoystick_actions_array[i].button_type==+1) {
+                        if (value>0) return i;
+                    }
+
+                    if (realjoystick_actions_array[i].button_type==-1) {
+                        if (value<0) return i;
+                    }
+
+                    //si es 0, representara poner 0 en eje izquierdo y derecho por ejemplo
+
+                    if
+                    (
+                        (realjoystick_actions_array[i].button_type==+1 || realjoystick_actions_array[i].button_type==-1)
+                        && value==0
+                    )
+                    return i;
+
+                }
+            }
+
+        }
+    }
+
+	return -1;
+
+}
+
+
+void realjoystick_set_reset_action_send_action(int indice)
+{
+    //printf ("pulsada tecl de funcion\n");
+
+    //menu_button_f_function.v=1;
+    menu_event_joystick_action.v=1;
+    menu_event_joystick_action_indice=indice;
+    menu_set_menu_abierto(1);
+
+}
+
+
+void realjoystick_set_reset_action(int index,int value)
+{
+
+    //printf("set action index %d value %d\n",index,value);
+
+
+
+
+    if (value) {
+        //evitar repeticiones de acciones al mantener pulsado el botón/axis
+        if (realjoystick_actions_array[index].ultimo_valor==0) {
+            //printf("ENVIAR ACCION\n");
+            realjoystick_set_reset_action_send_action(index);
+        }
+        else {
+            //printf("NO enviar accion porque se ha repetido: index %d ultimo_valor %d\n",index,realjoystick_actions_array[index].ultimo_valor);
+        }
+    }
+
+
+    realjoystick_actions_array[index].ultimo_valor=value;
+
+
+
+}
+
+
 
 
 
@@ -1223,167 +1281,182 @@ void realjoystick_common_set_event(int button,int type,int value,int value_axis)
 {
 
 
-		//eventos de init no hacerles caso, de momento
-		if ( (type&REALJOYSTICK_INPUT_EVENT_INIT)!=REALJOYSTICK_INPUT_EVENT_INIT) {
+    //eventos de init no hacerles caso, de momento
+    if ( (type&REALJOYSTICK_INPUT_EVENT_INIT)!=REALJOYSTICK_INPUT_EVENT_INIT) {
 
 
+        menu_info_joystick_last_button=button;
+
+        menu_info_joystick_last_type=type;
+        menu_info_joystick_last_value=value;
+
+        menu_info_joystick_last_index=-1; //de momento suponemos ningun evento
+
+        if (realjoystick_steering_enabled.v && button==realjoystick_steering_button && type==REALJOYSTICK_INPUT_EVENT_AXIS)  {
 
 
-			menu_info_joystick_last_button=button;
-
-			menu_info_joystick_last_type=type;
-			menu_info_joystick_last_value=value;
-
-			menu_info_joystick_last_index=-1; //de momento suponemos ningun evento
-
-            if (realjoystick_steering_enabled.v && button==realjoystick_steering_button && type==REALJOYSTICK_INPUT_EVENT_AXIS)  {
+            //Asumimos que valores que envia el joystick van entre -32768 y +32768
 
 
-                //Asumimos que valores que envia el joystick van entre -32768 y +32768
+            int multiplicador=realjoystick_steering_max_value-realjoystick_steering_min_value+1;
 
+            int valor_volante=value_axis;
 
-                int multiplicador=realjoystick_steering_max_value-realjoystick_steering_min_value+1;
+            if (realjoystick_steering_two_addresses.v) {
+                //Derecha primera direccion
+                //Izquierda segunda direccion
+                valor_volante=(util_get_absolute(valor_volante)*multiplicador)/32768;
+                if (valor_volante>realjoystick_steering_max_value) valor_volante=realjoystick_steering_max_value;
+                if (valor_volante<realjoystick_steering_min_value) valor_volante=realjoystick_steering_min_value;
 
-                int valor_volante=value_axis;
-
-                if (realjoystick_steering_two_addresses.v) {
-                    //Derecha primera direccion
-                    //Izquierda segunda direccion
-                    valor_volante=(util_abs(valor_volante)*multiplicador)/32768;
-                    if (valor_volante>realjoystick_steering_max_value) valor_volante=realjoystick_steering_max_value;
-                    if (valor_volante<realjoystick_steering_min_value) valor_volante=realjoystick_steering_min_value;
-
-                    if (value_axis>=0) {
-                        poke_byte_no_time(realjoystick_steering_address,valor_volante);
-                        poke_byte_no_time(realjoystick_steering_address+1,0);
-                        //printf("Lectura Volante Der: %d Valor escrito: %d\n",value_axis,valor_volante);
-                    }
-                    else {
-                        poke_byte_no_time(realjoystick_steering_address,0);
-                        poke_byte_no_time(realjoystick_steering_address+1,-valor_volante);
-                        //printf("Lectura Volante Izq: %d Valor escrito: %d\n",value_axis,-valor_volante);
-                    }
-                }
-
-
-                else {
-
-
-                    if (realjoystick_steering_center_value!=0) {
-                        //Hacemos el 0 el valor mas a la izquierda
-                        valor_volante +=32768;
-                    }
-
-                    if (realjoystick_steering_center_value!=0 && valor_volante==32768) {
-                        //Para Nightmare rally, porque si no, el centro de volante daria valor 3 y no 4 como espera
-                        valor_volante=realjoystick_steering_center_value;
-                    }
-                    else {
-
-                        valor_volante=(valor_volante*multiplicador)/65536;
-
-                        if (valor_volante>realjoystick_steering_max_value) valor_volante=realjoystick_steering_max_value;
-                        if (valor_volante<realjoystick_steering_min_value) valor_volante=realjoystick_steering_min_value;
-
-                        if (realjoystick_steering_inverted.v) valor_volante=-valor_volante;
-                    }
-
-
-                    //printf("Lectura Volante: %d Valor escrito: %d\n",value_axis,valor_volante);
-
+                if (value_axis>=0) {
                     poke_byte_no_time(realjoystick_steering_address,valor_volante);
-
-
-                    if (realjoystick_steering_16bit.v) {
-                        if (valor_volante<0) poke_byte_no_time(realjoystick_steering_address+1,255);
-                        else poke_byte_no_time(realjoystick_steering_address+1,0);
-                    }
-
+                    poke_byte_no_time(realjoystick_steering_address+1,0);
+                    //printf("Lectura Volante Der: %d Valor escrito: %d\n",value_axis,valor_volante);
+                }
+                else {
+                    poke_byte_no_time(realjoystick_steering_address,0);
+                    poke_byte_no_time(realjoystick_steering_address+1,-valor_volante);
+                    //printf("Lectura Volante Izq: %d Valor escrito: %d\n",value_axis,-valor_volante);
                 }
             }
 
 
-			//buscamos el evento. En axis busca tanto la direccion como la opuesta
-			int index=-1;
-			do  {
-
-				index=realjoystick_find_event(index+1,button,type,value);
-				//menu_info_joystick_last_index=index;
-				//printf ("last index: %d\n",menu_info_joystick_last_index);
-				if (index>=0) {
-					debug_printf (VERBOSE_DEBUG,"Event found on index: %d",index);
-
-					menu_info_joystick_last_index=index;
-
-					//ver tipo boton normal
-
-					if (type==REALJOYSTICK_INPUT_EVENT_BUTTON) {
-						realjoystick_set_reset_action(index,value);
-					}
+            else {
 
 
-					//ver tipo axis
-					if (type==REALJOYSTICK_INPUT_EVENT_AXIS) {
-						switch (index) {
-							case REALJOYSTICK_EVENT_UP:
-								//reset abajo
-								joystick_release_down(1);
-								realjoystick_set_reset_action(index,value);
-							break;
+                if (realjoystick_steering_center_value!=0) {
+                    //Hacemos el 0 el valor mas a la izquierda
+                    valor_volante +=32768;
+                }
 
-							case REALJOYSTICK_EVENT_DOWN:
-									//reset arriba
-									joystick_release_up(1);
-									realjoystick_set_reset_action(index,value);
-							break;
+                if (realjoystick_steering_center_value!=0 && valor_volante==32768) {
+                    //Para Nightmare rally, porque si no, el centro de volante daria valor 3 y no 4 como espera
+                    valor_volante=realjoystick_steering_center_value;
+                }
+                else {
 
-							case REALJOYSTICK_EVENT_LEFT:
-									//reset derecha
-									joystick_release_right(1);
-									realjoystick_set_reset_action(index,value);
-							break;
+                    valor_volante=(valor_volante*multiplicador)/65536;
 
-							case REALJOYSTICK_EVENT_RIGHT:
-									//reset izquierda
-									joystick_release_left(1);
-									realjoystick_set_reset_action(index,value);
-							break;
+                    if (valor_volante>realjoystick_steering_max_value) valor_volante=realjoystick_steering_max_value;
+                    if (valor_volante<realjoystick_steering_min_value) valor_volante=realjoystick_steering_min_value;
+
+                    if (realjoystick_steering_inverted.v) valor_volante=-valor_volante;
+                }
 
 
+                //printf("Lectura Volante: %d Valor escrito: %d\n",value_axis,valor_volante);
 
-							default:
-								//acciones que no son de axis
-								realjoystick_set_reset_action(index,value);
-							break;
-						}
-					}
-
-					//gestionar si es 0, poner 0 en izquierda y derecha por ejemplo (solo para acciones de left/right/up/down)
-
-					//si es >0, hacer que la accion de -1 se resetee (solo para acciones de left/right/up/down)
-					//si es <0, hacer que la accion de +1 se resetee (solo para acciones de left/right/up/down)
-				}
-			} while (index>=0);
-
-			//despues de evento, buscar boton a tecla
-			//buscamos el evento
-			index=-1;
-			do {
-                        index=realjoystick_find_key(index+1,button,type,value);
-                        if (index>=0) {
-                                debug_printf (VERBOSE_DEBUG,"Event found on index: %d. key=%c value:%d",index,realjoystick_keys_array[index].caracter,value);
-
-                                //ver tipo boton normal o axis
-
-                                if (type==REALJOYSTICK_INPUT_EVENT_BUTTON || type==REALJOYSTICK_INPUT_EVENT_AXIS) {
-                                        realjoystick_set_reset_key(index,value);
-                                }
-			}
-			} while (index>=0);
+                poke_byte_no_time(realjoystick_steering_address,valor_volante);
 
 
+                if (realjoystick_steering_16bit.v) {
+                    if (valor_volante<0) poke_byte_no_time(realjoystick_steering_address+1,255);
+                    else poke_byte_no_time(realjoystick_steering_address+1,0);
+                }
 
-		}
+            }
+        }
+
+
+        //buscamos el evento. En axis busca tanto la direccion como la opuesta
+        int index=-1;
+        do  {
+
+            index=realjoystick_find_event(index+1,button,type,value);
+            //menu_info_joystick_last_index=index;
+            //printf ("last index: %d\n",menu_info_joystick_last_index);
+            if (index>=0) {
+                debug_printf (VERBOSE_DEBUG,"Event found on index: %d",index);
+
+                menu_info_joystick_last_index=index;
+
+                //ver tipo boton normal
+
+                if (type==REALJOYSTICK_INPUT_EVENT_BUTTON) {
+                    realjoystick_set_reset_event(index,value);
+                }
+
+
+                //ver tipo axis
+                if (type==REALJOYSTICK_INPUT_EVENT_AXIS || type==REALJOYSTICK_INPUT_EVENT_DPAD) {
+                    switch (index) {
+                        case REALJOYSTICK_EVENT_UP:
+                            //reset abajo
+                            joystick_release_down(1);
+                            realjoystick_set_reset_event(index,value);
+                        break;
+
+                        case REALJOYSTICK_EVENT_DOWN:
+                                //reset arriba
+                                joystick_release_up(1);
+                                realjoystick_set_reset_event(index,value);
+                        break;
+
+                        case REALJOYSTICK_EVENT_LEFT:
+                                //reset derecha
+                                joystick_release_right(1);
+                                realjoystick_set_reset_event(index,value);
+                        break;
+
+                        case REALJOYSTICK_EVENT_RIGHT:
+                                //reset izquierda
+                                joystick_release_left(1);
+                                realjoystick_set_reset_event(index,value);
+                        break;
+
+
+
+                        default:
+                            //acciones que no son de axis
+                            realjoystick_set_reset_event(index,value);
+                        break;
+                    }
+                }
+
+                //gestionar si es 0, poner 0 en izquierda y derecha por ejemplo (solo para acciones de left/right/up/down)
+
+                //si es >0, hacer que la accion de -1 se resetee (solo para acciones de left/right/up/down)
+                //si es <0, hacer que la accion de +1 se resetee (solo para acciones de left/right/up/down)
+            }
+        } while (index>=0);
+
+        //despues de evento, buscar boton a tecla
+        //buscamos el evento
+        index=-1;
+        do {
+            index=realjoystick_find_key(index+1,button,type,value);
+            if (index>=0) {
+                debug_printf (VERBOSE_DEBUG,"Event found on index: %d. key=%c value:%d",index,realjoystick_keys_array[index].caracter,value);
+
+                //ver tipo boton normal o axis
+
+                if (type==REALJOYSTICK_INPUT_EVENT_BUTTON || type==REALJOYSTICK_INPUT_EVENT_AXIS || type==REALJOYSTICK_INPUT_EVENT_DPAD) {
+                        realjoystick_set_reset_key(index,value);
+                }
+		    }
+        } while (index>=0);
+
+        //despues de boton a tecla, buscar boton a accion
+        //No se puede repetir boton, pero lo que si se tiene es que los axis podran repetirse al recibir valor 0
+        index=-1;
+        do {
+
+            index=realjoystick_find_action(index+1,button,type,value);
+            if (index>=0) {
+                debug_printf (VERBOSE_DEBUG,"Action found on index: %d. value:%d",index,value);
+
+                //ver tipo boton normal o axis
+
+                if (type==REALJOYSTICK_INPUT_EVENT_BUTTON || type==REALJOYSTICK_INPUT_EVENT_AXIS || type==REALJOYSTICK_INPUT_EVENT_DPAD) {
+                        realjoystick_set_reset_action(index,value);
+                }
+            }
+        } while (index>=0);
+
+
+
+    }
 
 
 

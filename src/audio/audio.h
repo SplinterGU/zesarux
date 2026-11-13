@@ -65,6 +65,9 @@ extern void audio_menu_tone_generator_play_note(char *nota,int duracion);
 #define AMPLITUD_BEEPER_GRABACION_ZX8081 25
 #define AMPLITUD_TAPE 2
 
+#define AMPLITUD_TAPE_MIC_AMPLIFIED 16
+#define AMPLITUD_BEEPER_MIC_AMPLIFIED 34
+
 extern int amplitud_speaker_actual_zx8081;
 extern int amplitud_speaker_actual_msx;
 extern int amplitud_speaker_actual_svi;
@@ -99,6 +102,8 @@ extern void audiodriver_start_record_input(void);
 extern int audio_is_recording_input;
 extern char audio_last_record_input_sample;
 
+extern void audio_menu_tone_generator_play_freq(int frecuencia,int duracion);
+extern z80_bit audio_menu_tone_generator_active;
 
 extern int audiorecord_input_return_fifo_total_size(void);
 extern int audiorecord_input_fifo_return_size(void);
@@ -182,10 +187,6 @@ extern void set_value_beeper_on_array(char value);
 
 extern int audiovolume;
 
-extern z80_bit output_beep_filter_on_rom_save;
-
-extern z80_bit output_beep_filter_alter_volume;
-extern char output_beep_filter_volume;
 
 extern int audio_adjust_volume(int valor_enviar);
 
@@ -227,7 +228,17 @@ extern int audio_midi_raw_mode;
 extern int audio_midi_output_note_on(unsigned char channel, unsigned char note);
 extern int audio_midi_set_instrument(unsigned char instrument);
 extern void audio_midi_output_raw(z80_byte value);
+extern z80_byte get_last_audio_midi_output_raw_value(void);
 extern void audio_midi_output_reset(void);
+
+struct s_status_midi_out {
+    int note_on;
+    unsigned char note;
+};
+
+extern struct s_status_midi_out status_midi_out_channels[];
+
+extern char *get_note_name_by_mid_number(int index);
 
 extern char *midi_instrument_list[];
 extern int si_audio_silenced(void);
@@ -285,6 +296,12 @@ extern z80_bit beeper_enabled;
 
 extern z80_bit audio_resample_1bit;
 
+extern z80_bit audio_nagra_effect;
+extern void audio_apply_nagra_effect(void);
+extern void audio_apply_nagra_effect_next(void);
+extern void audio_apply_nagra_effect_beeper(void);
+extern void audio_apply_nagra_effect_mono(void);
+
 extern void audiodac_mix(void);
 
 extern int audio_using_sdl2;
@@ -330,6 +347,7 @@ extern void audio_get_audiobuffer_stats(audiobuffer_stats *audiostats);
 extern int audio_tone_generator;
 extern char audio_tone_generator_last;
 extern char audio_tone_generator_get(void);
+extern void audio_menu_tone_generator_stop(void);
 
 extern char audio_change_top_speed_sound(char sonido);
 
@@ -339,6 +357,10 @@ extern void audio_send_stereo_sample(char valor_sonido_izquierdo,char valor_soni
 //extern z80_bit audio_driver_accepts_stereo;
 
 extern void audiodac_send_sample_value(z80_byte value);
+
+extern const char *audio_get_chip_name(void);
+
+extern const char *audio_get_chip_info_string_ay;
 
 extern void midi_output_frame_event(void);
 extern int audio_midi_output_init(void);

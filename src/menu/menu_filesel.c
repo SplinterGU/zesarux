@@ -58,26 +58,26 @@
 #include "settings.h"
 
 #if defined(__APPLE__)
-	#include <sys/syslimits.h>
+    #include <sys/syslimits.h>
 
-	#include <sys/resource.h>
+    #include <sys/resource.h>
 
 #endif
 
 
 #ifdef COMPILE_STDOUT
-	#include "scrstdout.h"
+    #include "scrstdout.h"
 //macro llama a funcion real
-	#define scrstdout_menu_print_speech_macro scrstdout_menu_print_speech
+    #define scrstdout_menu_print_speech_macro scrstdout_menu_print_speech
 //funcion llama
 #else
 //funcion no llama a nada
-	#define scrstdout_menu_print_speech_macro(x)
+    #define scrstdout_menu_print_speech_macro(x)
 #endif
 
 //Elemento que identifica a un archivo en funcion de seleccion
 struct s_filesel_item{
-	char d_name[PATH_MAX];
+    char d_name[PATH_MAX];
 
     //siguiente item
     struct s_filesel_item *next;
@@ -107,6 +107,10 @@ char filesel_nombre_archivo_seleccionado[PATH_MAX];
 //Si mostrar en filesel utilidades de archivos
 z80_bit menu_filesel_show_utils={0};
 
+//Al mostrar en filesel utilidades de archivos, solo las que no realizan modificaciones: ni delete, move, etc, pero sí View por ejemplo
+//Esto se usa en View Expanded (storage-tape por ejemplo)
+z80_bit menu_filesel_show_only_read_only_utils={0};
+
 //Decir que en el menu drives aparecera (si es que esta montado) imagen mmc, aunque no estemos con file utils activo
 z80_bit menu_filesel_drives_allow_fatfs={0};
 
@@ -115,6 +119,9 @@ z80_bit menu_filesel_show_previews={1};
 
 //Si reducir previews a la mitad
 z80_bit menu_filesel_show_previews_reduce={0};
+
+//Si mostrar previews en el fondo del ZX Desktop
+z80_bit menu_filesel_show_previews_on_zxdesktop={0};
 
 //Si no caben todos los archivos en pantalla y por tanto se muestra "*" a la derecha
 int filesel_no_cabe_todo;
@@ -157,7 +164,7 @@ z80_bit menu_filesel_utils_allow_folder_delete={0};
 
 int menu_recent_files_opcion_seleccionada=0;
 
-
+int menu_filesel_overlay_force_render=0;
 
 
 
@@ -167,6 +174,7 @@ void menu_filesel_overlay_show_current_dir(zxvision_window *ventana,int rotar);
 
 filesel_item *menu_get_filesel_item(int index);
 int menu_filesel_file_can_be_expanded(char *archivo);
+void menu_filesel_overlay(void);
 
 //devuelve 1 si el directorio cumple el filtro
 //realmente lo que hacemos aqui es ocultar/mostrar carpetas que empiezan con .
@@ -187,7 +195,7 @@ int menu_file_filter_dir(const char *name,char *filtros[])
                 //si filtro es "", significa todo (*)
                 //supuestamente si hay filtro "" no habrian mas filtros pasados en el array...
 
- 	       f=filtros[i];
+            f=filtros[i];
                 if (f[0]==0) return 1;
 
                 //si filtro no es *, ocultamos los que empiezan por "."
@@ -196,130 +204,144 @@ int menu_file_filter_dir(const char *name,char *filtros[])
         }
 
 
-	//y finalmente mostramos el directorio
+    //y finalmente mostramos el directorio
         return 1;
 
 }
 
 
 
+int menu_file_filter_one_file(char *filter,char *name,char *extension,char *ql_extension)
+{
+    //comparamos extension
+    //Si es de tipo ql (con _) comparacion diferente
+    if (filter[0]=='_') {
+        if (!strcasecmp(ql_extension,&filter[1])) return 1;
+    }
+    //Si empieza con ^, es palabra entera
+    else if (filter[0]=='^') {
+        if (!strcasecmp(name,&filter[1])) return 1;
+    }
+    else {
+        if (!strcasecmp(extension,filter)) return 1;
+    }
 
+    return 0;
+
+}
 
 //devuelve 1 si el archivo cumple el filtro
 int menu_file_filter(const char *name,char *filtros[])
 {
 
-	int i;
-	char extension[NAME_MAX];
-
-	/*
-	//obtener extension del nombre
-	//buscar ultimo punto
-
-	int j;
-	j=strlen(name);
-	if (j==0) extension[0]=0;
-	else {
-		for (;j>=0 && name[j]!='.';j--);
-
-		if (j>=0) strcpy(extension,&name[j+1]);
-		else extension[0]=0;
-	}
-
-	//printf ("Extension: %s\n",extension);
-
-	*/
-
-	//El archivo MENU_LAST_DIR_FILE_NAME zesarux_last_dir.txt usado para abrir archivos comprimidos, no lo mostrare nunca
-	if (!strcmp(name,MENU_LAST_DIR_FILE_NAME)) return 0;
-
-	//Archivo usado para indicar que archivo es la pantalla del juego. Usado en previews de tap, tzx etc
-	if (!strcmp(name,MENU_SCR_INFO_FILE_NAME)) return 0;
-
-	util_get_file_extension((char *) name,extension);
-
-	char *f;
-
-	//Si filtro[0]=="nofiles" no muestra ningun archivo
-	if (!strcasecmp(filtros[0],"nofiles")) return 0;
+    int i;
 
 
-	//Filtro para tipos autosnap "autosnap(o el que sea el prefijo)*.zsf"
-	if (!strcasecmp(filtros[0],"autosnap")) {
-		if (!strcasecmp(extension,"zsf")) {
-			//prefijo snapshot_autosave_interval_quicksave_name
-			char *existe;
-			existe=strstr(name,snapshot_autosave_interval_quicksave_name);
-			if (existe!=NULL) {
-				//Y tiene que ser al inicio
-				if (existe==name) return 1;
-			}
-		}
 
-		//en caso contrario, no cumple el filtro
-		return 0;
-	}
+    //El archivo MENU_LAST_DIR_FILE_NAME zesarux_last_dir.txt usado para abrir archivos comprimidos, no lo mostrare nunca
+    if (!strcmp(name,MENU_LAST_DIR_FILE_NAME)) return 0;
 
-	//Bucle por cada filtro
-	for (i=0;filtros[i];i++) {
-		//si filtro es "", significa todo (*)
-		//supuestamente si hay filtro "" no habrian mas filtros pasados en el array...
+    //Archivo usado para indicar que archivo es la pantalla del juego. Usado en previews de tap, tzx etc
+    if (!strcmp(name,MENU_SCR_INFO_FILE_NAME)) return 0;
 
-		f=filtros[i];
-		//printf ("f: %d\n",f);
-		if (f[0]==0) return 1;
+    char extension[NAME_MAX];
 
-		//si filtro no es *, ocultamos los que empiezan por "."
-		//Aparentemente esto no tiene mucho sentido, con esto ocultariamos archivo de nombre tipo ".xxxx.tap" por ejemplo
-		//Pero bueno, para volumenes que vienen de mac os x, los metadatos se guardan en archivos tipo:
-		//._0186.tap
-		if (name[0]=='.') return 0;
+    util_get_file_extension((char *) name,extension);
+
+    char ql_extension[PATH_MAX];
+    util_get_file_extension_ql((char *) name, ql_extension);
+
+    char *f;
+
+    //Si filtro[0]=="nofiles" no muestra ningun archivo
+    if (!strcasecmp(filtros[0],"nofiles")) return 0;
 
 
-		//comparamos extension
-		if (!strcasecmp(extension,f)) return 1;
-	}
+    //Filtro para tipos autosnap "autosnap(o el que sea el prefijo)*.zsf"
+    if (!strcasecmp(filtros[0],"autosnap")) {
+        if (!strcasecmp(extension,"zsf")) {
+            //prefijo snapshot_autosave_interval_quicksave_name
+            char *existe;
+            existe=strstr(name,snapshot_autosave_interval_quicksave_name);
+            if (existe!=NULL) {
+                //Y tiene que ser al inicio
+                if (existe==name) return 1;
+            }
+        }
+
+        //en caso contrario, no cumple el filtro
+        return 0;
+    }
+
+    //Bucle por cada filtro
+    for (i=0;filtros[i];i++) {
+        //si filtro es "", significa todo (*)
+        //supuestamente si hay filtro "" no habrian mas filtros pasados en el array...
+
+        f=filtros[i];
+        //printf ("f: %d\n",f);
+        if (f[0]==0) return 1;
+
+        //si filtro no es *, ocultamos los que empiezan por "."
+        //Aparentemente esto no tiene mucho sentido, con esto ocultariamos archivo de nombre tipo ".xxxx.tap" por ejemplo
+        //Pero bueno, para volumenes que vienen de mac os x, los metadatos se guardan en archivos tipo:
+        //._0186.tap
+        if (name[0]=='.') return 0;
+
+        if (menu_file_filter_one_file(f,(char *)name,extension,ql_extension)) return 1;
+
+    }
 
     //Otros archivos que siempre cumplen el filtro
-	//Aqui agregamos todas las extensiones que en principio pueden generar muchos diferentes tipos de archivos,
-	//ya sea porque son archivos comprimidos (p.ej. zip) o porque son archivos que se pueden expandir (p.j. tap)
-	//Hay algunos que se pueden expandir y directamente los excluyo (como .P o .O) por ser su uso muy limitado
-	//(solo generan .baszx80 y .baszx81 en este caso)
+    //Aqui agregamos todas las extensiones que en principio pueden generar muchos diferentes tipos de archivos,
+    //ya sea porque son archivos comprimidos (p.ej. zip) o porque son archivos que se pueden expandir (p.j. tap)
+    //Hay algunos que se pueden expandir y directamente los excluyo (como .P o .O) por ser su uso muy limitado
+    //(solo generan .baszx80 y .baszx81 en este caso)
 
     //Solo agregar esos otros si estamos en "todos los archivos" o los filtros iniciales
     //si hay filtro de una sola extensión en particular, no mostrarlos
     if (filesel_filtros!=filesel_filtros_iniciales && filesel_filtros!=filtros_todos_archivos) return 0;
 
-	if (!strcasecmp(extension,"zip")) return 1;
+    if (!strcasecmp(extension,"zip")) return 1;
 
-	if (!strcasecmp(extension,"gz")) return 1;
+    if (!strcasecmp(extension,"gz")) return 1;
 
-	if (!strcasecmp(extension,"tar")) return 1;
+    if (!strcasecmp(extension,"tar")) return 1;
 
-	if (!strcasecmp(extension,"rar")) return 1;
+    if (!strcasecmp(extension,"rar")) return 1;
 
-	if (!strcasecmp(extension,"mdv")) return 1;
+    if (!strcasecmp(extension,"mdv")) return 1;
 
-	if (!strcasecmp(extension,"hdf")) return 1;
+    if (!strcasecmp(extension,"img") && MACHINE_IS_QL) return 1;
 
-	if (!strcasecmp(extension,"dsk")) return 1;
+    if (!strcasecmp(extension,"win")) return 1;
 
-	if (!strcasecmp(extension,"tap")) return 1;
+    if (!strcasecmp(extension,"hdf")) return 1;
 
-	if (!strcasecmp(extension,"tzx")) return 1;
+    if (!strcasecmp(extension,"dsk")) return 1;
 
-	if (!strcasecmp(extension,"pzx")) return 1;
+    if (!strcasecmp(extension,"tap")) return 1;
 
-	if (!strcasecmp(extension,"trd")) return 1;
+    if (!strcasecmp(extension,"tzx")) return 1;
 
-	if (!strcasecmp(extension,"scl")) return 1;
+    if (!strcasecmp(extension,"pzx")) return 1;
 
-	if (!strcasecmp(extension,"epr")) return 1;
-	if (!strcasecmp(extension,"eprom")) return 1;
-	if (!strcasecmp(extension,"flash")) return 1;
+    if (!strcasecmp(extension,"trd")) return 1;
+
+    if (!strcasecmp(extension,"scl")) return 1;
+
+    if (!strcasecmp(extension,"epr")) return 1;
+    if (!strcasecmp(extension,"eprom")) return 1;
+    if (!strcasecmp(extension,"flash")) return 1;
+
+    //Queremos que los .txt y README siempre salgan pues pueden dar info de los archivos de cinta incluidos
+    if (!strcasecmp(extension,"txt")) return 1;
+    if (!strcasecmp(name,"README")) return 1;
 
 
-	return 0;
+
+
+    return 0;
 
 }
 
@@ -327,42 +349,42 @@ int menu_filesel_filter_func(const struct dirent *d)
 {
 
 
-	int tipo_archivo=get_file_type((char *)d->d_name);
+    int tipo_archivo=get_file_type((char *)d->d_name);
 
 
-	//si es directorio, ver si empieza con . y segun el filtro activo
-	//Y si setting no mostrar directorios, no mostrar
-	if (tipo_archivo == 2) {
-		if (menu_filesel_hide_dirs.v) return 0;
-		if (menu_file_filter_dir(d->d_name,filesel_filtros)==1) return 1;
-		return 0;
-	}
+    //si es directorio, ver si empieza con . y segun el filtro activo
+    //Y si setting no mostrar directorios, no mostrar
+    if (tipo_archivo == 2) {
+        if (menu_filesel_hide_dirs.v) return 0;
+        if (menu_file_filter_dir(d->d_name,filesel_filtros)==1) return 1;
+        return 0;
+    }
 
-	//Si no es archivo ni link, no ok
+    //Si no es archivo ni link, no ok
 
-	if (tipo_archivo  == 0) {
-
-
-		debug_printf (VERBOSE_DEBUG,"Item is not a directory, file or link");
-
-		return 0;
-	}
-
-	//es un archivo. ver el nombre
-
-	if (menu_file_filter(d->d_name,filesel_filtros)==1) return 1;
+    if (tipo_archivo  == 0) {
 
 
-	return 0;
+        debug_printf (VERBOSE_DEBUG,"Item is not a directory, file or link");
+
+        return 0;
+    }
+
+    //es un archivo. ver el nombre
+
+    if (menu_file_filter(d->d_name,filesel_filtros)==1) return 1;
+
+
+    return 0;
 }
 
 int menu_filesel_alphasort(const struct dirent **d1, const struct dirent **d2)
 {
 
-	//printf ("menu_filesel_alphasort %s %s\n",(*d1)->d_name,(*d2)->d_name );
+    //printf ("menu_filesel_alphasort %s %s\n",(*d1)->d_name,(*d2)->d_name );
 
-	//compara nombre
-	return (strcasecmp((*d1)->d_name,(*d2)->d_name));
+    //compara nombre
+    return (strcasecmp((*d1)->d_name,(*d2)->d_name));
 }
 
 //Copia nombre y tipo de archivo de estructura de fatfs a dirent
@@ -397,7 +419,7 @@ int menu_filesel_readdir_mmc_image(const char *directorio, struct dirent ***name
 {
 
 
-	#define MAX_ARCHIVOS_SCANDIR_MINGW 20000
+    #define MAX_ARCHIVOS_SCANDIR_MINGW 20000
         int archivos=0;
 
         //Puntero a cada archivo leido
@@ -535,12 +557,12 @@ int menu_filesel_readdir_mmc_image(const char *directorio, struct dirent ***name
 
     }
 
-	//lanzar qsort
-	int (*funcion_compar)(const void *, const void *);
+    //lanzar qsort
+    int (*funcion_compar)(const void *, const void *);
 
-	funcion_compar=( int (*)(const void *, const void *)  )compar;
+    funcion_compar=( int (*)(const void *, const void *)  )compar;
 
-	qsort(memoria_punteros,archivos,sizeof( struct dirent *), funcion_compar);
+    qsort(memoria_punteros,archivos,sizeof( struct dirent *), funcion_compar);
 
     return archivos;
 
@@ -579,13 +601,13 @@ primer_filesel_item=NULL;
 
     struct dirent **namelist;
 
-	struct dirent *nombreactual;
+    struct dirent *nombreactual;
 
     int n;
 //printf ("usando scandir\n");
 
-	filesel_item *item;
-	filesel_item *itemanterior;
+    filesel_item *item;
+    filesel_item *itemanterior;
 
     // Si unidad actual es la mmc montada
     //if (fatfs_disk_zero_memory!=NULL)
@@ -597,61 +619,68 @@ primer_filesel_item=NULL;
     else {
 
 #ifndef MINGW
-	n = scandir(".", &namelist, menu_filesel_filter_func, menu_filesel_alphasort);
+
+    #ifdef OTHER_UNIX
+    n = scandir_mingw(".", &namelist, menu_filesel_filter_func, menu_filesel_alphasort);
+    #else
+    //Linux, Mac...
+    n = scandir(".", &namelist, menu_filesel_filter_func, menu_filesel_alphasort);
+    #endif
 #else
-	//alternativa scandir, creada por mi
-	n = scandir_mingw(".", &namelist, menu_filesel_filter_func, menu_filesel_alphasort);
+    //Windows
+    //alternativa scandir, creada por mi
+    n = scandir_mingw(".", &namelist, menu_filesel_filter_func, menu_filesel_alphasort);
 #endif
 
     }
 
     if (n < 0) {
-		debug_printf (VERBOSE_ERR,"Error reading directory contents: %s",strerror(errno));
-		return 1;
-	}
+        debug_printf (VERBOSE_ERR,"Error reading directory contents: %s",strerror(errno));
+        return 1;
+    }
 
     else {
         int i;
 
-	//printf("total elementos directorio: %d\n",n);
+    //printf("total elementos directorio: %d\n",n);
 
         for (i=0;i<n;i++) {
-		nombreactual=namelist[i];
+        nombreactual=namelist[i];
             //printf("%s\n", nombreactual->d_name);
             //printf("%d\n", nombreactual->d_type);
 
 
-		item=malloc(sizeof(filesel_item));
-		if (item==NULL) cpu_panic("Error allocating file item");
+        item=malloc(sizeof(filesel_item));
+        if (item==NULL) cpu_panic("Error allocating file item");
 
-		strcpy(item->d_name,nombreactual->d_name);
-
-
-		item->next=NULL;
-
-		//primer item
-		if (primer_filesel_item==NULL) {
-			primer_filesel_item=item;
-		}
-
-		//siguientes items
-		else {
-			itemanterior->next=item;
-		}
-
-		itemanterior=item;
-		free(namelist[i]);
+        strcpy(item->d_name,nombreactual->d_name);
 
 
-		filesel_total_items++;
+        item->next=NULL;
+
+        //primer item
+        if (primer_filesel_item==NULL) {
+            primer_filesel_item=item;
         }
 
-		free(namelist);
+        //siguientes items
+        else {
+            itemanterior->next=item;
+        }
+
+        itemanterior=item;
+        free(namelist[i]);
+
+
+        filesel_total_items++;
+        }
+
+        free(namelist);
 
     }
 
-	return 0;
-	//free(namelist);
+    return 0;
+    //free(namelist);
 
 }
 
@@ -661,26 +690,34 @@ primer_filesel_item=NULL;
 int menu_avisa_si_extension_no_habitual(char *filtros[],char *archivo)
 {
 
-	int i;
+    int i;
 
-	//Si es filtro "autosnap" es en teoria zsf
-	if (!strcmp(filtros[0],"autosnap")) {
-		if (!util_compare_file_extension(archivo,"zsf")) return 1;
-	}
-
-
-	for (i=0;filtros[i];i++) {
-		if (!util_compare_file_extension(archivo,filtros[i])) return 1;
-
-		//si filtro es "", significa todo (*)
-		if (!strcmp(filtros[i],"")) return 1;
-
-	}
+    //Si es filtro "autosnap" es en teoria zsf
+    if (!strcmp(filtros[0],"autosnap")) {
+        if (!util_compare_file_extension(archivo,"zsf")) return 1;
+    }
 
 
+    char extension[NAME_MAX];
 
-	//no es extension habitual. Avisar
-	return menu_confirm_yesno_texto("Unusual file extension","Do you want to use this file?");
+    util_get_file_extension((char *) archivo,extension);
+
+    char ql_extension[PATH_MAX];
+    util_get_file_extension_ql((char *) archivo, ql_extension);
+
+
+    for (i=0;filtros[i];i++) {
+
+        if (menu_file_filter_one_file(filtros[i],archivo,extension,ql_extension)) return 1;
+
+        //si filtro es "", significa todo (*)
+        if (!strcmp(filtros[i],"")) return 1;
+
+    }
+
+
+    //no es extension habitual. Avisar
+    return menu_confirm_yesno_texto("Unusual file extension","Do you want to use this file?");
 }
 
 
@@ -1063,7 +1100,7 @@ void zxvision_menu_filesel_print_filters(zxvision_window *ventana,char *filtros[
         }
 
 //Si texto filtros pasa del tope, rellenar con "..."
-		int max_visible=(ventana->visible_width)-2;
+        int max_visible=(ventana->visible_width)-2;
 
         if (p>max_visible && max_visible>=3) {
                 p=max_visible;
@@ -1079,10 +1116,10 @@ void zxvision_menu_filesel_print_filters(zxvision_window *ventana,char *filtros[
         //borramos primero con espacios
 
 
-	int posicion_filtros=ZXVISION_POS_FILTER;
+    int posicion_filtros=ZXVISION_POS_FILTER;
 
 
-	zxvision_print_string_defaults_fillspc(ventana,1,posicion_filtros,"");
+    zxvision_print_string_defaults_fillspc(ventana,1,posicion_filtros,"");
 
 
         //y luego escribimos
@@ -1094,16 +1131,16 @@ void zxvision_menu_filesel_print_filters(zxvision_window *ventana,char *filtros[
 
 
 
-	int tinta=ESTILO_GUI_TINTA_NORMAL;
-	int papel=ESTILO_GUI_PAPEL_NORMAL;
+    int tinta=ESTILO_GUI_TINTA_NORMAL;
+    int papel=ESTILO_GUI_PAPEL_NORMAL;
 
-	if (inverso) {
-		tinta=ESTILO_GUI_TINTA_SELECCIONADO;
-		papel=ESTILO_GUI_PAPEL_SELECCIONADO;
-	}
+    if (inverso) {
+        tinta=ESTILO_GUI_TINTA_SELECCIONADO;
+        papel=ESTILO_GUI_PAPEL_SELECCIONADO;
+    }
 
 
-	zxvision_print_string(ventana,1,posicion_filtros,tinta,papel,0,buffer_filtros);
+    zxvision_print_string(ventana,1,posicion_filtros,tinta,papel,0,buffer_filtros);
 }
 
 //Dice el archivo seleccionado por el cursor
@@ -1156,8 +1193,8 @@ void zxvision_menu_filesel_print_legend(zxvision_window *ventana)
     antes_menu_writing_inverse_color.v=menu_writing_inverse_color.v;
     menu_writing_inverse_color.v=1;
 
-	int posicion_leyenda=ZXVISION_POS_LEYENDA;
-	int posicion_filtros=ZXVISION_POS_FILTER;
+    int posicion_leyenda=ZXVISION_POS_LEYENDA;
+    int posicion_filtros=ZXVISION_POS_FILTER;
 
     //Obtener tipo de archivo al que apunta para saber si es archivo o directorio, para ocultar textos leyenda
     int es_directorio=0;
@@ -1183,15 +1220,28 @@ void zxvision_menu_filesel_print_legend(zxvision_window *ventana)
         char buffer_line_actions_long[OVERLAY_SCREEN_MAX_WIDTH+1];
         char buffer_linea[OVERLAY_SCREEN_MAX_WIDTH+1];
 
+        if (menu_filesel_show_only_read_only_utils.v) {
+            //                         01234  567890  12345  678901  2345678901
+            sprintf(buffer_line_actions_short,"%s~^Inf",
+                    (es_directorio ? "" : "~^View ~^Filemem ~^Lnk ")
+            );
 
-        //                         01234  567890  12345  678901  2345678901
-        sprintf(buffer_line_actions_short,"%sM~^Kdr ~^Inf",
-                (es_directorio ? "" : "~^View ~^Trunc C~^Onv ~^Filemem ")
-        );
+            sprintf(buffer_line_actions_long,"%s~^Info",
+                    (es_directorio ? "" : "~^View ~^Filemem ~^Link ")
+            );
+        }
 
-        sprintf(buffer_line_actions_long,"%sMa~^Kedir ~^Info",
-                (es_directorio ? "" : "~^View ~^Truncate C~^Onvert ~^Filemem ")
-        );
+        else {
+
+            //                         01234  567890  12345  678901  2345678901
+            sprintf(buffer_line_actions_short,"%sM~^Kdr ~^Inf",
+                    (es_directorio ? "" : "~^View ~^Trunc C~^Onv ~^Filemem ~^Lnk ")
+            );
+
+            sprintf(buffer_line_actions_long,"%sMa~^Kedir ~^Info",
+                    (es_directorio ? "" : "~^View ~^Truncate C~^Onvert ~^Filemem ~^Link ")
+            );
+        }
 
         menu_get_legend_short_long(buffer_linea,ancho_visible,buffer_line_actions_short,buffer_line_actions_long);
         zxvision_print_string_defaults_fillspc(ventana,1,posicion_filtros-1,buffer_linea);
@@ -1201,7 +1251,12 @@ void zxvision_menu_filesel_print_legend(zxvision_window *ventana)
 
         char buffer_sync[32];
         if (menu_mmc_image_montada) {
-            strcpy(buffer_sync,"~^Umount ~^Sync ");
+            if (menu_filesel_show_only_read_only_utils.v) {
+                strcpy(buffer_sync,"~^Umount ");
+            }
+            else {
+                strcpy(buffer_sync,"~^Umount ~^Sync ");
+            }
         }
         else {
             if (es_directorio) buffer_sync[0]=0;
@@ -1215,8 +1270,17 @@ void zxvision_menu_filesel_print_legend(zxvision_window *ventana)
             buffer_sync);
         */
 
-        sprintf(buffer_line_actions_short,"%sD~^El Re~^N ~^Paste ~^Copy ~^Move",buffer_sync);
-        sprintf(buffer_line_actions_long,"%sD~^Elete Re~^Name ~^Paste ~^Copy ~^Move",buffer_sync);
+        if (menu_filesel_show_only_read_only_utils.v) {
+            sprintf(buffer_line_actions_short,"%s",buffer_sync);
+            sprintf(buffer_line_actions_long,"%s",buffer_sync);
+        }
+
+        else {
+
+            sprintf(buffer_line_actions_short,"%sD~^El Re~^N ~^Paste ~^Copy ~^Move",buffer_sync);
+            sprintf(buffer_line_actions_long,"%sD~^Elete Re~^Name ~^Paste ~^Copy ~^Move",buffer_sync);
+
+        }
 
         menu_get_legend_short_long(buffer_linea,ancho_visible,buffer_line_actions_short,buffer_line_actions_long);
         zxvision_print_string_defaults_fillspc(ventana,1,posicion_filtros,buffer_linea);
@@ -1224,7 +1288,7 @@ void zxvision_menu_filesel_print_legend(zxvision_window *ventana)
     }
 
     //mas que suficiente para albergar la linea inferior, incluso cuando incluye el texto de SPC: Expand
-	char leyenda_inferior[200];
+    char leyenda_inferior[200];
 
 
     //Si se puede expandir
@@ -1240,12 +1304,12 @@ void zxvision_menu_filesel_print_legend(zxvision_window *ventana)
     }
 
 
-	//Drive también mostrado en Linux y Mac
+    //Drive también mostrado en Linux y Mac
     //01234567890123456789012345678901
     // TAB: Section R: Recent D: Drive
-	sprintf (leyenda_inferior,"~^T~^A~^B:Section ~^Recent ~^Drives%s",buffer_expand);
+    sprintf (leyenda_inferior,"~^T~^A~^B:Section ~^Recent ~^Drives%s",buffer_expand);
 
-	zxvision_print_string_defaults_fillspc(ventana,1,posicion_leyenda,leyenda_inferior);
+    zxvision_print_string_defaults_fillspc(ventana,1,posicion_leyenda,leyenda_inferior);
 
     //Restaurar comportamiento mostrar atajos
     menu_writing_inverse_color.v=antes_menu_writing_inverse_color.v;
@@ -1255,36 +1319,36 @@ void zxvision_menu_filesel_print_legend(zxvision_window *ventana)
 
 filesel_item *menu_get_filesel_item(int index)
 {
-	filesel_item *p;
+    filesel_item *p;
 
-	p=primer_filesel_item;
+    p=primer_filesel_item;
 
-	int i;
+    int i;
 
-	for(i=0;i<index;i++) {
-		p=p->next;
-	}
+    for(i=0;i<index;i++) {
+        p=p->next;
+    }
 
-	return p;
+    return p;
 
 }
 
 //Dice si archivo es de tipo comprimido/empaquetado. filename tiene que ser sin directorio
 int menu_util_file_is_compressed(char *filename)
 {
-		//Si seleccion es archivo comprimido
-							if (
-							    //strstr(item_seleccionado->d_name,".zip")!=NULL ||
-							    !util_compare_file_extension(filename,"zip") ||
+        //Si seleccion es archivo comprimido
+                            if (
+                                //strstr(item_seleccionado->d_name,".zip")!=NULL ||
+                                !util_compare_file_extension(filename,"zip") ||
                                                             !util_compare_file_extension(filename,"gz")  ||
                                                             !util_compare_file_extension(filename,"tar") ||
                                                             !util_compare_file_extension(filename,"rar")
 
 
-							) {
-								return 1;
-							}
-	else return 0;
+                            ) {
+                                return 1;
+                            }
+    else return 0;
 }
 
 //obtiene linea a escribir con nombre de archivo + carpeta
@@ -1308,7 +1372,7 @@ void menu_filesel_print_file_get(char *buffer, char *s,unsigned int max_length_s
         max_length_shown+=diferencia_longitud;
     }
 
-	unsigned int i;
+    unsigned int i;
 
     for (i=0;i<max_length_shown && (s[i])!=0;i++) {
         buffer[i]=s[i];
@@ -1331,14 +1395,14 @@ void menu_filesel_print_file_get(char *buffer, char *s,unsigned int max_length_s
     }
 
     //y si es un directorio (sin nombre nulo ni espacio), escribir "<dir>
-	//nota: se envia nombre " " (un espacio) cuando se lista el directorio y sobran lineas en blanco al final
+    //nota: se envia nombre " " (un espacio) cuando se lista el directorio y sobran lineas en blanco al final
 
-	int test_dir=1;
+    int test_dir=1;
 
-	if (s[0]==0) test_dir=0;
-	if (s[0]==' ' && s[1]==0) test_dir=0;
+    if (s[0]==0) test_dir=0;
+    if (s[0]==' ' && s[1]==0) test_dir=0;
 
-	if (test_dir) {
+    if (test_dir) {
         if (get_file_type(s) == 2 && i>=5) {
             buffer[i-1]='>';
             buffer[i-2]='r';
@@ -1375,7 +1439,7 @@ void menu_filesel_print_file_get(char *buffer, char *s,unsigned int max_length_s
                 buffer[i-4]='e';
                 buffer[i-5]='<';
         }*/
-	}
+    }
 
 
 }
@@ -1395,7 +1459,7 @@ void zxvision_menu_filesel_print_file(zxvision_window *ventana,char *s,unsigned 
         menu_filesel_print_file_get(buffer, s, max_length_shown);
 
 
-	//zxvision_print_string_defaults_fillspc(ventana,1,y+ZXVISION_FILESEL_INITIAL_MARGIN,buffer);
+    //zxvision_print_string_defaults_fillspc(ventana,1,y+ZXVISION_FILESEL_INITIAL_MARGIN,buffer);
 
     zxvision_print_string_fillspc(ventana,1,y+ZXVISION_FILESEL_INITIAL_MARGIN,
         ESTILO_GUI_TINTA_CAMPO_SELECCIONABLE,ESTILO_GUI_PAPEL_CAMPO_SELECCIONABLE,0,buffer);
@@ -1407,12 +1471,12 @@ void zxvision_menu_filesel_print_file(zxvision_window *ventana,char *s,unsigned 
 void menu_filesel_switch_filters(void)
 {
 
-	//si filtro inicial, ponemos el *.*
-	if (filesel_filtros==filesel_filtros_iniciales)
-		filesel_filtros=filtros_todos_archivos;
+    //si filtro inicial, ponemos el *.*
+    if (filesel_filtros==filesel_filtros_iniciales)
+        filesel_filtros=filtros_todos_archivos;
 
-	//si filtro *.* , ponemos el filtro inicial
-	else filesel_filtros=filesel_filtros_iniciales;
+    //si filtro *.* , ponemos el filtro inicial
+    else filesel_filtros=filesel_filtros_iniciales;
 
 }*/
 
@@ -1470,6 +1534,12 @@ void menu_filesel_select_filters(void)
             if (filesel_filtros_iniciales[i][0]==0) {
                 menu_add_item_menu_format(array_menu_common,MENU_OPCION_NORMAL,menu_filesel_select_filters_independientes,NULL,"*.*");
             }
+            else if (filesel_filtros_iniciales[i][0]=='^') {
+                menu_add_item_menu_format(array_menu_common,MENU_OPCION_NORMAL,menu_filesel_select_filters_independientes,NULL,"%s",filesel_filtros_iniciales[i]);
+            }
+            else if (filesel_filtros_iniciales[i][0]=='_') {
+                menu_add_item_menu_format(array_menu_common,MENU_OPCION_NORMAL,menu_filesel_select_filters_independientes,NULL,"*%s",filesel_filtros_iniciales[i]);
+            }
             else {
                 menu_add_item_menu_format(array_menu_common,MENU_OPCION_NORMAL,menu_filesel_select_filters_independientes,NULL,"*.%s",filesel_filtros_iniciales[i]);
             }
@@ -1507,8 +1577,8 @@ void menu_filesel_select_filters(void)
 
 /*char menu_minus_letra(char letra)
 {
-	if (letra>='A' && letra<='Z') letra=letra+('a'-'A');
-	return letra;
+    if (letra>='A' && letra<='Z') letra=letra+('a'-'A');
+    return letra;
 }*/
 
 
@@ -1524,9 +1594,9 @@ void zxvision_menu_filesel_localiza_letra(zxvision_window *ventana,char letra)
                 if (letra_minuscula(p->d_name[0])>=letra_minuscula(letra)) {
                         filesel_linea_seleccionada=0;
                         filesel_archivo_seleccionado=i;
-			zxvision_set_cursor_line(ventana,i);
-			zxvision_set_offset_y_or_maximum(ventana,i);
-			//printf ("linea seleccionada en localizacion: %d\n",i);
+            zxvision_set_cursor_line(ventana,i);
+            zxvision_set_offset_y_or_maximum(ventana,i);
+            //printf ("linea seleccionada en localizacion: %d\n",i);
                         return;
                 }
 
@@ -1551,8 +1621,8 @@ void zxvision_menu_filesel_localiza_archivo(zxvision_window *ventana,char *nombr
                 if (strcasecmp(nombrebuscar,p->d_name)<=0) {
                         filesel_linea_seleccionada=0;
                         filesel_archivo_seleccionado=i;
-						zxvision_set_cursor_line(ventana,i);
-						zxvision_set_offset_y_or_maximum(ventana,i);
+                        zxvision_set_cursor_line(ventana,i);
+                        zxvision_set_offset_y_or_maximum(ventana,i);
                         debug_printf (VERBOSE_DEBUG,"Found at position %d",i);
                         return;
                 }
@@ -1566,8 +1636,8 @@ void zxvision_menu_filesel_localiza_archivo(zxvision_window *ventana,char *nombr
 
 int si_menu_filesel_no_mas_alla_ultimo_item(int linea)
 {
-	if (filesel_archivo_seleccionado+linea<filesel_total_items-1) return 1;
-	return 0;
+    if (filesel_archivo_seleccionado+linea<filesel_total_items-1) return 1;
+    return 0;
 }
 
 void file_utils_mount_mmc_image_prueba_escribir(void)
@@ -1816,86 +1886,86 @@ int file_utils_mount_mmc_image(char *fullpath)
 void file_utils_file_convert(char *fullpath)
 {
 
-	//Obtener directorio y archivo
-	char archivo[PATH_MAX];
-	char directorio[PATH_MAX];
+    //Obtener directorio y archivo
+    char archivo[PATH_MAX];
+    char directorio[PATH_MAX];
 
-	util_get_file_no_directory(fullpath,archivo);
-	util_get_dir(fullpath,directorio);
+    util_get_file_no_directory(fullpath,archivo);
+    util_get_dir(fullpath,directorio);
 
-	//Archivo de destino
-	char archivo_destino[PATH_MAX];
+    //Archivo de destino
+    char archivo_destino[PATH_MAX];
 
 
 
-	//printf ("convert\n");
+    //printf ("convert\n");
 
-	if (!util_compare_file_extension(archivo,"tap")) {
-		char *opciones[]={
-			"TAP to TZX",
+    if (!util_compare_file_extension(archivo,"tap")) {
+        char *opciones[]={
+            "TAP to TZX",
             "TAP to TZX Turbo (4000 bauds)",
             "TAP to PZX",
-			"TAP to RWA",
-			"TAP to WAV",
+            "TAP to RWA",
+            "TAP to WAV",
             "TAP to SCR",
-			NULL};
+            NULL};
 
-		int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
 
-		switch (opcion) {
-			case 0:
-				sprintf(archivo_destino,"%s/%s.tzx",directorio,archivo);
-				util_extract_tap(fullpath,NULL,archivo_destino,0);
-			break;
+        switch (opcion) {
+            case 0:
+                sprintf(archivo_destino,"%s/%s.tzx",directorio,archivo);
+                util_extract_tap(fullpath,NULL,archivo_destino,0,0);
+            break;
 
-			case 1:
-				sprintf(archivo_destino,"%s/%s.tzx",directorio,archivo);
-				util_extract_tap(fullpath,NULL,archivo_destino,1);
-			break;
+            case 1:
+                sprintf(archivo_destino,"%s/%s.tzx",directorio,archivo);
+                util_extract_tap(fullpath,NULL,archivo_destino,1,0);
+            break;
 
-			case 2:
-				sprintf(archivo_destino,"%s/%s.pzx",directorio,archivo);
-				util_extract_tap(fullpath,NULL,archivo_destino,0);
-			break;
+            case 2:
+                sprintf(archivo_destino,"%s/%s.pzx",directorio,archivo);
+                util_extract_tap(fullpath,NULL,archivo_destino,0,0);
+            break;
 
-			case 3:
-				sprintf(archivo_destino,"%s/%s.rwa",directorio,archivo);
-				convert_tap_to_rwa(fullpath,archivo_destino);
-			break;
+            case 3:
+                sprintf(archivo_destino,"%s/%s.rwa",directorio,archivo);
+                convert_tap_to_rwa(fullpath,archivo_destino);
+            break;
 
-			case 4:
-				sprintf(archivo_destino,"%s/%s.wav",directorio,archivo);
-				convert_any_to_wav(fullpath,archivo_destino);
-			break;
+            case 4:
+                sprintf(archivo_destino,"%s/%s.wav",directorio,archivo);
+                convert_any_to_wav(fullpath,archivo_destino);
+            break;
 
-			case 5:
-				sprintf(archivo_destino,"%s/%s.scr",directorio,archivo);
-				util_convert_any_to_scr(fullpath,archivo_destino);
-			break;
+            case 5:
+                sprintf(archivo_destino,"%s/%s.scr",directorio,archivo);
+                util_convert_any_to_scr(fullpath,archivo_destino);
+            break;
 
-		}
-	}
+        }
+    }
 
         else if (!util_compare_file_extension(archivo,"tzx")) {
                 char *opciones[]={
-						"TZX to TAP",
+                        "TZX to TAP",
                         "TZX to RWA",
-			"TZX to WAV",
+            "TZX to WAV",
                         NULL};
 
                 int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.tap",directorio,archivo);
-								util_extract_tzx(fullpath,NULL,archivo_destino);
+                                util_extract_tzx(fullpath,NULL,archivo_destino,0);
                         break;
 
                         case 1:
@@ -1920,7 +1990,7 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
         else if (!util_compare_file_extension(archivo,"smp")) {
                 char *opciones[]={
                         "SMP to RWA",
-			            "SMP to WAV",
+                        "SMP to WAV",
                         "SMP to TAP",
                         "SMP to P",
                         "SMP to P81",
@@ -1928,10 +1998,10 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
                         NULL};
 
                 int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.rwa",directorio,archivo);
@@ -1990,10 +2060,10 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
                         NULL};
 
                 int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.rwa",directorio,archivo);
@@ -2046,10 +2116,10 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
                         NULL};
 
                 int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.wav",directorio,archivo);
@@ -2094,14 +2164,14 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
         else if (!util_compare_file_extension(archivo,"o")) {
                 char *opciones[]={
                         "O to RWA",
-			"O to WAV",
+            "O to WAV",
                         NULL};
 
                 int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.rwa",directorio,archivo);
@@ -2116,19 +2186,19 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
                 }
         }
 
-        else if (!util_compare_file_extension(archivo,"p") ) {
+        else if (!util_compare_file_extension(archivo,"p") || !util_compare_file_extension(archivo,"81")) {
                 char *opciones[]={
                         "P to P81",
                         "P to RWA",
-			"P to WAV",
-			"P to SCR",
+            "P to WAV",
+            "P to SCR",
                         NULL};
 
                 int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.p81",directorio,archivo);
@@ -2147,7 +2217,7 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
 
                         case 3:
                                 sprintf(archivo_destino,"%s/%s.scr",directorio,archivo);
-								util_convert_p_to_scr(fullpath,archivo_destino,NULL);
+                                util_convert_p_to_scr(fullpath,archivo_destino,NULL);
                         break;
 
 
@@ -2158,15 +2228,15 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
                 char *opciones[]={
                         "P81 to P",
                         "P81 to RWA",
-			"P81 to WAV",
-			"P81 to SCR",
+            "P81 to WAV",
+            "P81 to SCR",
                         NULL};
 
                 int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.p",directorio,archivo);
@@ -2185,7 +2255,7 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
 
                         case 3:
                                 sprintf(archivo_destino,"%s/%s.scr",directorio,archivo);
-								util_convert_p_to_scr(fullpath,archivo_destino,NULL);
+                                util_convert_p_to_scr(fullpath,archivo_destino,NULL);
                         break;
 
 
@@ -2194,20 +2264,20 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
 
         else if (!util_compare_file_extension(archivo,"pzx")) {
                 char *opciones[]={
-					"PZX to TAP",
+                    "PZX to TAP",
                         "PZX to RWA",
-						"PZX to WAV",
+                        "PZX to WAV",
                         NULL};
 
         int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.tap",directorio,archivo);
-								util_extract_pzx(fullpath,NULL,archivo_destino);
+                                util_extract_pzx(fullpath,NULL,archivo_destino,0);
                         break;
 
                         case 1:
@@ -2224,46 +2294,46 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
         }
 
 
-		else if (!util_compare_file_extension(archivo,"scr")) {
+        else if (!util_compare_file_extension(archivo,"scr")) {
                 char *opciones[]={
-					"SCR to TAP",
+                    "SCR to TAP",
                     "SCR to TXT",
                         NULL};
 
         int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.tap",directorio,archivo);
-								convert_scr_to_tap(fullpath,archivo_destino);
+                                convert_scr_to_tap(fullpath,archivo_destino);
                         break;
 
                         case 1:
                                 sprintf(archivo_destino,"%s/%s.txt",directorio,archivo);
-								convert_scr_to_txt(fullpath,archivo_destino);
+                                convert_scr_to_txt(fullpath,archivo_destino);
                         break;
 
 
                 }
         }
 
-		else if (!util_compare_file_extension(archivo,"sna")) {
+        else if (!util_compare_file_extension(archivo,"sna")) {
                 char *opciones[]={
-					"SNA to SCR",
+                    "SNA to SCR",
                         NULL};
 
         int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.scr",directorio,archivo);
-								util_convert_sna_to_scr(fullpath,archivo_destino);
+                                util_convert_sna_to_scr(fullpath,archivo_destino);
                         break;
 
 
@@ -2271,66 +2341,66 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
         }
 
 
-		else if (!util_compare_file_extension(archivo,"sp")) {
+        else if (!util_compare_file_extension(archivo,"sp")) {
                 char *opciones[]={
-					"SP to SCR",
+                    "SP to SCR",
                         NULL};
 
         int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.scr",directorio,archivo);
-								util_convert_sp_to_scr(fullpath,archivo_destino);
+                                util_convert_sp_to_scr(fullpath,archivo_destino);
                         break;
 
 
                 }
         }
 
-		else if (!util_compare_file_extension(archivo,"z80")) {
+        else if (!util_compare_file_extension(archivo,"z80")) {
                 char *opciones[]={
-					"Z80 to SCR",
+                    "Z80 to SCR",
                         NULL};
 
         int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.scr",directorio,archivo);
-								util_convert_z80_to_scr(fullpath,archivo_destino);
+                                util_convert_z80_to_scr(fullpath,archivo_destino);
                         break;
 
 
                 }
         }
 
-		else if (!util_compare_file_extension(archivo,"rzx")) {
+        else if (!util_compare_file_extension(archivo,"rzx")) {
                 char *opciones[]={
-					"RZX to SCR",
+                    "RZX to SCR",
                     "RZX to Z80",
                         NULL};
 
         int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.scr",directorio,archivo);
-								util_convert_any_to_scr(fullpath,archivo_destino);
+                                util_convert_any_to_scr(fullpath,archivo_destino);
                         break;
 
                         case 1:
                                 sprintf(archivo_destino,"%s/%s.z80",directorio,archivo);
-								util_convert_rzx_to_z80(fullpath,archivo_destino);
+                                util_convert_rzx_to_z80(fullpath,archivo_destino);
                         break;
 
 
@@ -2338,20 +2408,20 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
         }
 
 
-		else if (!util_compare_file_extension(archivo,"zsf")) {
+        else if (!util_compare_file_extension(archivo,"zsf")) {
                 char *opciones[]={
-					"ZSF to SCR",
+                    "ZSF to SCR",
                         NULL};
 
         int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.scr",directorio,archivo);
-								util_convert_zsf_to_scr(fullpath,archivo_destino);
+                                util_convert_zsf_to_scr(fullpath,archivo_destino);
                         break;
 
 
@@ -2364,10 +2434,10 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
                         NULL};
 
                 int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.mdr",directorio,archivo);
@@ -2383,10 +2453,10 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
                         NULL};
 
                 int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.rmd",directorio,archivo);
@@ -2399,14 +2469,14 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
         else if (!util_compare_file_extension(archivo,"hdf")) {
                 char *opciones[]={
                         "HDF to IDE",
-			"HDF to MMC",
+            "HDF to MMC",
                         NULL};
 
                 int opcion=menu_ask_list_texto("File converter","Select conversion",opciones);
-		if (opcion<0) {
-			//Salido con ESC
-			return;
-		}
+        if (opcion<0) {
+            //Salido con ESC
+            return;
+        }
                 switch (opcion) {
                         case 0:
                                 sprintf(archivo_destino,"%s/%s.ide",directorio,archivo);
@@ -2421,21 +2491,21 @@ extern int convert_p_to_rwa_tmpdir(char *origen, char *destino);
                 }
         }
 
-	else {
-		menu_error_message("No conversion valid for this file type");
-		return;
-	}
+    else {
+        menu_error_message("No conversion valid for this file type");
+        return;
+    }
 
-	//Si no hay error
-	if (!if_pending_error_message) {
-		//char buffer_mensaje_ok[PATH_MAX+1024];
-		//sprintf (buffer_mensaje_ok,"File converted to %s",archivo_destino);
+    //Si no hay error
+    if (!if_pending_error_message) {
+        //char buffer_mensaje_ok[PATH_MAX+1024];
+        //sprintf (buffer_mensaje_ok,"File converted to %s",archivo_destino);
 
-		//menu_generic_message_splash("File converter",buffer_mensaje_ok);
-		//menu_warn_message(buffer_mensaje_ok);
+        //menu_generic_message_splash("File converter",buffer_mensaje_ok);
+        //menu_warn_message(buffer_mensaje_ok);
 
-		menu_generic_message_format("File converter","OK. File converted to %s",archivo_destino);
-	}
+        menu_generic_message_format("File converter","OK. File converted to %s",archivo_destino);
+    }
 
 }
 
@@ -2614,7 +2684,7 @@ void menu_filesel_copy_recursive_start(char *archivo,char *nombre_final,int simu
         }
 
         else {
-            menu_generic_message("Copy folder","OK. Folder copied");
+            zxvision_generic_message("Copy folder","OK. Folder copied");
         }
 
 
@@ -2629,7 +2699,7 @@ void menu_filesel_copy_recursive_start(char *archivo,char *nombre_final,int simu
     //No se si hay alguien que compile sin soporte de threads, pero al menos, avisarle y mostrarle un ok cuando finalice
     menu_warn_message("Copying folder may take a while. Press Enter and wait please");
     menu_filesel_copy_recursive_withflag(archivo,nombre_final,simular);
-    menu_generic_message("Copy folder","OK. Folder copied");
+    zxvision_generic_message("Copy folder","OK. Folder copied");
 
 }
 
@@ -2643,79 +2713,79 @@ void menu_filesel_copy_recursive_start(char *archivo,char *nombre_final,int simu
 //si 2, copy
 void file_utils_move_rename_copy_file_post(char *archivo,int rename_move)
 {
-	char nombre_sin_dir[PATH_MAX];
-	char directorio[PATH_MAX];
-	char nombre_final[PATH_MAX];
+    char nombre_sin_dir[PATH_MAX];
+    char directorio[PATH_MAX];
+    char nombre_final[PATH_MAX];
 
-	util_get_dir(archivo,directorio);
-	util_get_file_no_directory(archivo,nombre_sin_dir);
-
-
-
-	int ejecutar_accion=1;
-
-	//Rename
-	if (rename_move==1) {
-		menu_ventana_scanf("New name",nombre_sin_dir,PATH_MAX);
-		sprintf(nombre_final,"%s/%s",directorio,nombre_sin_dir);
-	}
-
-	//Copy or move
-	else if (rename_move==2 || rename_move==0) {
-		//Move or copy
-		char *filtros[2];
-
-       	 	filtros[0]="nofiles";
-        	filtros[1]=0;
+    util_get_dir(archivo,directorio);
+    util_get_file_no_directory(archivo,nombre_sin_dir);
 
 
-        	//guardamos directorio actual
-        	char directorio_actual[PATH_MAX];
-        	zvfs_getcwd(directorio_actual,PATH_MAX);
 
-        	int ret;
+    int ejecutar_accion=1;
+
+    //Rename
+    if (rename_move==1) {
+        menu_ventana_scanf("New name",nombre_sin_dir,PATH_MAX);
+        sprintf(nombre_final,"%s/%s",directorio,nombre_sin_dir);
+    }
+
+    //Copy or move
+    else if (rename_move==2 || rename_move==0) {
+        //Move or copy
+        char *filtros[2];
+
+                filtros[0]="nofiles";
+            filtros[1]=0;
 
 
-        	char nada[PATH_MAX];
+            //guardamos directorio actual
+            char directorio_actual[PATH_MAX];
+            zvfs_getcwd(directorio_actual,PATH_MAX);
+
+            int ret;
 
 
-        	//Ocultar utilidades
-        	menu_filesel_show_utils.v=0;
+            char nada[PATH_MAX];
+
+
+            //Ocultar utilidades
+            menu_filesel_show_utils.v=0;
             //Decir que el menu de drives debe incluir 0:/, aunque file utils no este activo
             menu_filesel_drives_allow_fatfs.v=1;
 
-        	ret=menu_filesel("Set target dir & press ESC",filtros,nada);
-        	//Volver a mostrar utilidades
-        	menu_filesel_show_utils.v=1;
+            ret=menu_filesel("Set target dir & press ESC",filtros,nada);
+            //Volver a mostrar utilidades
+            menu_filesel_show_utils.v=1;
 
             menu_filesel_drives_allow_fatfs.v=0;
 
 
-        	//Si sale con ESC
-        	if (ret==0) {
+            //Si sale con ESC
+            if (ret==0) {
 
-        		//Move
+                //Move
                 if (rename_move==0) debug_printf (VERBOSE_DEBUG,"Move file %s to directory %s",archivo,menu_filesel_last_directory_seen);
 
                 //Copy
                 if (rename_move==2) debug_printf (VERBOSE_DEBUG,"Copy file %s to directory %s",archivo,menu_filesel_last_directory_seen);
                 sprintf(nombre_final,"%s/%s",menu_filesel_last_directory_seen,nombre_sin_dir);
 
-        	}
-        	else {
-        		//TODO: hacer de manera facil que menu_filesel no deje seleccionar archivos con enter y solo deje salir con ESC
-        		menu_warn_message("You must select the directory exiting with ESC key. Aborting!");
-        		ejecutar_accion=0;
-        	}
+            }
+            else {
+                //TODO: hacer de manera facil que menu_filesel no deje seleccionar archivos con enter y solo deje salir con ESC
+                menu_warn_message("You must select the directory exiting with ESC key. Aborting!");
+                ejecutar_accion=0;
+            }
 
 
-        	//volvemos a directorio inicial
-        	zvfs_chdir(directorio_actual);
-	}
+            //volvemos a directorio inicial
+            zvfs_chdir(directorio_actual);
+    }
 
-	if (ejecutar_accion) {
-		debug_printf (VERBOSE_INFO,"Original name: %s dir: %s new name %s final name %s"
-				,archivo,directorio,nombre_sin_dir,nombre_final);
+    if (ejecutar_accion) {
+        debug_printf (VERBOSE_INFO,"Original name: %s dir: %s new name %s final name %s"
+                ,archivo,directorio,nombre_sin_dir,nombre_final);
 
         //releer con speech
         //parece que a veces no lee el titulo de la ventana y es importante
@@ -2724,7 +2794,7 @@ void file_utils_move_rename_copy_file_post(char *archivo,int rename_move)
         menu_speech_reset_tecla_pulsada();
         //printf("menu_speech_reset_tecla_pulsada filesel linea 2580\n");
 
-		if (menu_confirm_yesno_texto("Confirm operation","Sure?")==0) {
+        if (menu_confirm_yesno_texto("Confirm operation","Sure?")==0) {
             return;
         }
 
@@ -2742,13 +2812,13 @@ void file_utils_move_rename_copy_file_post(char *archivo,int rename_move)
             }
         }
 
-		//Si existe archivo destino
-		if (si_existe_archivo(nombre_final)) {
-			if (menu_confirm_yesno_texto("Item exists","Overwrite?")==0) return;
-		}
+        //Si existe archivo destino
+        if (si_existe_archivo(nombre_final)) {
+            if (menu_confirm_yesno_texto("Item exists","Overwrite?")==0) return;
+        }
 
         //Copy
-		if (rename_move==2) {
+        if (rename_move==2) {
             int tipo_archivo=get_file_type(archivo);
             if (tipo_archivo==2) {
                 if (menu_confirm_yesno_texto("Source is folder","Copy recursive?")==0) return;
@@ -2759,22 +2829,22 @@ void file_utils_move_rename_copy_file_post(char *archivo,int rename_move)
                 //Copiar con ventana de progreso
                 menu_filesel_copy_recursive_start(archivo,nombre_final,0);
 
-                //menu_generic_message("Copy folder","OK. Folder copied");
+                //zxvision_generic_message("Copy folder","OK. Folder copied");
             }
             else {
                 util_copy_file(archivo,nombre_final);
-                menu_generic_message("Copy file","OK. File copied");
+                zxvision_generic_message("Copy file","OK. File copied");
 
             }
 
         }
-		//Rename
-		else if (rename_move==1) {
+        //Rename
+        else if (rename_move==1) {
             zvfs_rename(archivo,nombre_final);
-            menu_generic_message("Rename file","OK. File renamed");
+            zxvision_generic_message("Rename file","OK. File renamed");
         }
         //Move
-		else {
+        else {
             //No permitir move si el origen es carpeta y origen y destino son diferentes dispositivos
             int tipo_archivo=get_file_type(archivo);
             if (tipo_archivo==2) {
@@ -2788,7 +2858,7 @@ void file_utils_move_rename_copy_file_post(char *archivo,int rename_move)
                 }
 
                 zvfs_rename(archivo,nombre_final);
-                menu_generic_message("Move folder","OK. Folder moved");
+                zxvision_generic_message("Move folder","OK. Folder moved");
 
             }
 
@@ -2796,7 +2866,7 @@ void file_utils_move_rename_copy_file_post(char *archivo,int rename_move)
                 //En el caso de archivos, para que podamos hacer move entre local y mmc, hacemos como un copy pero luego borramos origen
                 util_copy_file(archivo,nombre_final);
                 zvfs_delete(archivo);
-                menu_generic_message("Move file","OK. File moved");
+                zxvision_generic_message("Move file","OK. File moved");
             }
 
 
@@ -2805,7 +2875,7 @@ void file_utils_move_rename_copy_file_post(char *archivo,int rename_move)
 
 
 
-	}
+    }
 }
 
 
@@ -2856,7 +2926,7 @@ void file_utils_delete(char *nombre)
 
         menu_filesel_delete_recursive(nombre,0);
 
-        menu_generic_message("Delete","OK. Folder has been deleted");
+        zxvision_generic_message("Delete","OK. Folder has been deleted");
 
     }
     else {
@@ -2867,7 +2937,7 @@ void file_utils_delete(char *nombre)
             menu_error_message("Error deleting item");
         }
         else {
-            menu_generic_message("Delete","OK. File deleted");
+            zxvision_generic_message("Delete","OK. File deleted");
         }
 
 
@@ -2878,34 +2948,34 @@ void file_utils_delete(char *nombre)
 void file_utils_paste_clipboard(void)
 {
 
-	if (menu_clipboard_pointer==NULL) {
-		debug_printf(VERBOSE_ERR,"Clipboard is empty, you can fill it from a text window and press key c");
-		return;
-	}
+    if (menu_clipboard_pointer==NULL) {
+        debug_printf(VERBOSE_ERR,"Clipboard is empty, you can fill it from a text window and press key c");
+        return;
+    }
 
-	char directorio_actual[PATH_MAX];
+    char directorio_actual[PATH_MAX];
     zvfs_getcwd(directorio_actual,PATH_MAX);
 
-	char nombre_sin_dir[PATH_MAX];
-	char nombre_final[PATH_MAX];
+    char nombre_sin_dir[PATH_MAX];
+    char nombre_final[PATH_MAX];
 
 
-	nombre_sin_dir[0]=0;
-	menu_ventana_scanf("Filename?",nombre_sin_dir,PATH_MAX);
-	sprintf(nombre_final,"%s/%s",directorio_actual,nombre_sin_dir);
+    nombre_sin_dir[0]=0;
+    menu_ventana_scanf("Filename?",nombre_sin_dir,PATH_MAX);
+    sprintf(nombre_final,"%s/%s",directorio_actual,nombre_sin_dir);
 
 
-	//Ver si archivo existe y preguntar
-	if (si_existe_archivo(nombre_final)) {
+    //Ver si archivo existe y preguntar
+    if (si_existe_archivo(nombre_final)) {
 
-		if (menu_confirm_yesno_texto("File exists","Overwrite?")==0) return;
+        if (menu_confirm_yesno_texto("File exists","Overwrite?")==0) return;
 
     }
 
 
-	menu_paste_clipboard_to_file(nombre_final);
+    menu_paste_clipboard_to_file(nombre_final);
 
-	menu_generic_message_splash("Clipboard","File saved with ZEsarUX clipboard contents");
+    menu_generic_message_splash("Clipboard","File saved with ZEsarUX clipboard contents");
 
 
 }
@@ -2914,12 +2984,12 @@ void file_utils_paste_clipboard(void)
 
 void zxvision_menu_filesel_cursor_arriba(zxvision_window *ventana)
 {
-	//ver que no sea primer archivo
+    //ver que no sea primer archivo
     if (filesel_archivo_seleccionado+filesel_linea_seleccionada!=0) {
-	 zxvision_dec_cursor_line(ventana);
+     zxvision_dec_cursor_line(ventana);
                                                 //ver si es principio de pantalla
                                                 if (filesel_linea_seleccionada==0) {
-							zxvision_send_scroll_up(ventana);
+                            zxvision_send_scroll_up(ventana);
                                                         filesel_archivo_seleccionado--;
                                                 }
                                                 else {
@@ -2927,45 +2997,45 @@ void zxvision_menu_filesel_cursor_arriba(zxvision_window *ventana)
                                                 }
                                         }
 
-	//Por si el cursor no esta visible en pantalla (al haberse hecho scroll con raton)
-	if (zxvision_adjust_cursor_top(ventana)) {
-		zxvision_send_scroll_up(ventana);
-		filesel_linea_seleccionada=0;
-		filesel_archivo_seleccionado=ventana->cursor_line;
-	}
+    //Por si el cursor no esta visible en pantalla (al haberse hecho scroll con raton)
+    if (zxvision_adjust_cursor_top(ventana)) {
+        zxvision_send_scroll_up(ventana);
+        filesel_linea_seleccionada=0;
+        filesel_archivo_seleccionado=ventana->cursor_line;
+    }
 }
 
 int zxvision_get_filesel_alto_dir(zxvision_window *ventana)
 {
-	return ventana->visible_height - ventana->upper_margin - ventana->lower_margin - 2;
+    return ventana->visible_height - ventana->upper_margin - ventana->lower_margin - 2;
 }
 
 int zxvision_get_filesel_pos_filters(zxvision_window *ventana)
 {
-	return ventana->visible_height - 3;
+    return ventana->visible_height - 3;
 }
 
 
 void zxvision_menu_filesel_cursor_abajo(zxvision_window *ventana)
 {
-	//ver que no sea ultimo archivo
-	if (si_menu_filesel_no_mas_alla_ultimo_item(filesel_linea_seleccionada)) {
-		zxvision_inc_cursor_line(ventana);
+    //ver que no sea ultimo archivo
+    if (si_menu_filesel_no_mas_alla_ultimo_item(filesel_linea_seleccionada)) {
+        zxvision_inc_cursor_line(ventana);
                                                 //ver si es final de pantalla
                                                 if (filesel_linea_seleccionada==zxvision_get_filesel_alto_dir(ventana)-1) {
                                                         filesel_archivo_seleccionado++;
-							zxvision_send_scroll_down(ventana);
+                            zxvision_send_scroll_down(ventana);
                                                 }
                                                 else {
                                                         filesel_linea_seleccionada++;
                                                 }
                                         }
-	//Por si el cursor no esta visible en pantalla (al haberse hecho scroll con raton)
-	if (zxvision_adjust_cursor_bottom(ventana)) {
-		zxvision_send_scroll_down(ventana);
-		filesel_linea_seleccionada=zxvision_get_filesel_alto_dir(ventana)-1;
-		filesel_archivo_seleccionado=ventana->cursor_line-filesel_linea_seleccionada;
-	}
+    //Por si el cursor no esta visible en pantalla (al haberse hecho scroll con raton)
+    if (zxvision_adjust_cursor_bottom(ventana)) {
+        zxvision_send_scroll_down(ventana);
+        filesel_linea_seleccionada=zxvision_get_filesel_alto_dir(ventana)-1;
+        filesel_archivo_seleccionado=ventana->cursor_line-filesel_linea_seleccionada;
+    }
 
 }
 
@@ -2974,7 +3044,7 @@ void zxvision_menu_filesel_cursor_abajo(zxvision_window *ventana)
 void menu_filesel_free_mem(void)
 {
 
-	filesel_item *aux;
+    filesel_item *aux;
         filesel_item *nextfree;
 
 
@@ -2982,9 +3052,9 @@ void menu_filesel_free_mem(void)
 
         //do {
 
-	//puede que no haya ningun archivo, por tanto esto es NULL
-	//sucede con las carpetas /home en macos por ejemplo
-	while (aux!=NULL) {
+    //puede que no haya ningun archivo, por tanto esto es NULL
+    //sucede con las carpetas /home en macos por ejemplo
+    while (aux!=NULL) {
 
                 //printf ("Liberando %p : %s\n",aux,aux->d_name);
                 nextfree=aux->next;
@@ -2994,7 +3064,7 @@ void menu_filesel_free_mem(void)
         };
         //} while (aux!=NULL);
 
-	//printf ("fin liberar filesel\n");
+    //printf ("fin liberar filesel\n");
 
 
 }
@@ -3005,14 +3075,14 @@ int menu_filesel_mkdir(char *directory)
 #ifndef MINGW
      int tmpdirret=mkdir(directory,S_IRWXU);
 #else
-	int tmpdirret=mkdir(directory);
+    int tmpdirret=mkdir(directory);
 #endif
 
      if (tmpdirret!=0 && errno!=EEXIST) {
                   debug_printf (VERBOSE_ERR,"Error creating %s directory : %s",directory,strerror(errno) );
      }
 
-	return tmpdirret;
+    return tmpdirret;
 
 }
 
@@ -3030,33 +3100,33 @@ void menu_filesel_file_no_ext(char *origen, char *destino)
 
 
 
-	int j;
+    int j;
 
         j=strlen(origen);
 
-	//buscamos desde el punto final
+    //buscamos desde el punto final
 
         for (;j>=0 && origen[j]!='.';j--);
 
-	if (j==-1) {
-		//no hay punto
-		j=strlen(origen);
-	}
+    if (j==-1) {
+        //no hay punto
+        j=strlen(origen);
+    }
 
-	//printf ("posicion final: %d\n",j);
+    //printf ("posicion final: %d\n",j);
 
 
-	//y copiamos
-	for (;j>0;j--) {
-		*destino=*origen;
-		origen++;
-		destino++;
-	}
+    //y copiamos
+    for (;j>0;j--) {
+        *destino=*origen;
+        origen++;
+        destino++;
+    }
 
-	//Y final de cadena
-	*destino = 0;
+    //Y final de cadena
+    *destino = 0;
 
-	//printf ("archivo sin extension: %s\n",copiadestino);
+    //printf ("archivo sin extension: %s\n",copiadestino);
 
 }
 
@@ -3070,11 +3140,11 @@ int menu_filesel_is_compressed(char *archivo)
 {
   int compressed_type=0;
 
-	//if ( strstr(archivo,".zip")!=NULL || strstr(archivo,".ZIP")!=NULL) {
-	if ( !util_compare_file_extension(archivo,"zip") ) {
-		debug_printf (VERBOSE_DEBUG,"Is a zip file");
-		compressed_type=COMPRESSED_ZIP;
-	}
+    //if ( strstr(archivo,".zip")!=NULL || strstr(archivo,".ZIP")!=NULL) {
+    if ( !util_compare_file_extension(archivo,"zip") ) {
+        debug_printf (VERBOSE_DEBUG,"Is a zip file");
+        compressed_type=COMPRESSED_ZIP;
+    }
 
         else if ( !util_compare_file_extension(archivo,"gz") ) {
                 debug_printf (VERBOSE_DEBUG,"Is a gz file");
@@ -3091,7 +3161,7 @@ int menu_filesel_is_compressed(char *archivo)
                 compressed_type=COMPRESSED_RAR;
         }
 
-	return compressed_type;
+    return compressed_type;
 }
 
 void menu_filesel_uncompress_get_tmpdir(char *archivo,char *tmpdir)
@@ -3119,27 +3189,27 @@ int menu_filesel_uncompress (char *archivo,char *tmpdir)
 
  char uncompress_program[PATH_MAX];
 
-		char archivo_no_ext[PATH_MAX];
+        char archivo_no_ext[PATH_MAX];
 
 switch (compressed_type) {
 
-	case COMPRESSED_ZIP:
-		//sprintf (uncompress_program,"/usr/bin/unzip");
- 		//-n no sobreescribir
-		//sprintf (uncompress_command,"unzip -n \"%s\" -d %s",archivo,tmpdir);
+    case COMPRESSED_ZIP:
+        //sprintf (uncompress_program,"/usr/bin/unzip");
+         //-n no sobreescribir
+        //sprintf (uncompress_command,"unzip -n \"%s\" -d %s",archivo,tmpdir);
 
-		/*sprintf (uncompress_program,"%s",external_tool_unzip);
- 		//-n no sobreescribir
-		sprintf (uncompress_command,"%s -n \"%s\" -d %s",external_tool_unzip,archivo,tmpdir);*/
+        /*sprintf (uncompress_program,"%s",external_tool_unzip);
+         //-n no sobreescribir
+        sprintf (uncompress_command,"%s -n \"%s\" -d %s",external_tool_unzip,archivo,tmpdir);*/
 
 
-		//printf ("Using internal zip decompressor\n");
-		util_extract_zip(archivo,tmpdir);
-		return 0;
-	break;
+        //printf ("Using internal zip decompressor\n");
+        util_extract_zip(archivo,tmpdir);
+        return 0;
+    break;
 
         case COMPRESSED_GZ:
-		menu_filesel_file_no_ext(archivo,archivo_no_ext);
+        menu_filesel_file_no_ext(archivo,archivo_no_ext);
                 //sprintf (uncompress_program,"/bin/gunzip");
                 //sprintf (uncompress_command,"gunzip -c \"%s\" > \"%s/%s\" ",archivo,tmpdir,archivo_no_ext);
                 sprintf (uncompress_program,"%s",external_tool_gunzip);
@@ -3150,23 +3220,23 @@ switch (compressed_type) {
                 //sprintf (uncompress_program,"/bin/tar");
                 //sprintf (uncompress_command,"tar -xvf \"%s\" -C %s",archivo,tmpdir);
                 sprintf (uncompress_program,"%s",external_tool_tar);
-                sprintf (uncompress_command,"%s -xvf \"%s\" -C %s",external_tool_tar,archivo,tmpdir);
+                sprintf (uncompress_command,"%s -xvf \"%s\" -C \"%s\"",external_tool_tar,archivo,tmpdir);
         break;
 
         case COMPRESSED_RAR:
                 //sprintf (uncompress_program,"/usr/bin/unrar");
                 //sprintf (uncompress_command,"unrar x -o+ \"%s\" %s",archivo,tmpdir);
                 sprintf (uncompress_program,"%s",external_tool_unrar);
-                sprintf (uncompress_command,"%s x -o+ \"%s\" %s",external_tool_unrar,archivo,tmpdir);
+                sprintf (uncompress_command,"%s x -o+ \"%s\" \"%s\"",external_tool_unrar,archivo,tmpdir);
         break;
 
 
 
 
-	default:
-		debug_printf(VERBOSE_ERR,"Unknown compressed file");
-		return 1;
-	break;
+    default:
+        debug_printf(VERBOSE_ERR,"Unknown compressed file");
+        return 1;
+    break;
 
 }
 
@@ -3174,21 +3244,21 @@ switch (compressed_type) {
  struct stat buf_stat;
 
 
- 	if (stat(uncompress_program, &buf_stat)!=0) {
-		debug_printf(VERBOSE_ERR,"Unable to find uncompress program: %s",uncompress_program);
-		return 1;
+     if (stat(uncompress_program, &buf_stat)!=0) {
+        debug_printf(VERBOSE_ERR,"Unable to find uncompress program: %s",uncompress_program);
+        return 1;
 
-	}
+    }
 
-	debug_printf (VERBOSE_DEBUG,"Running %s",uncompress_command);
+    debug_printf (VERBOSE_DEBUG,"Running %s",uncompress_command);
 
-	if (system (uncompress_command)==-1) {
-		debug_printf (VERBOSE_DEBUG,"Error running command %s",uncompress_command);
-		return 1;
- 	}
+    if (system (uncompress_command)==-1) {
+        debug_printf (VERBOSE_DEBUG,"Error running command %s",uncompress_command);
+        return 1;
+     }
 
 
-	return 0;
+    return 0;
 
 }
 
@@ -3197,7 +3267,7 @@ int menu_filesel_file_can_be_expanded(char *archivo)
     char *extensiones_validas[]={
         "hdf","tap","tzx","cdt","pzx",
         "trd","dsk","epr","eprom",
-        "flash","p","p81","o","mdv","scl","ddh","mdr","rmd","rzx",
+        "flash","p","81","p81","o","scl","ddh","mdr","rmd","rzx","win",
         NULL
     };
 
@@ -3209,24 +3279,48 @@ int menu_filesel_file_can_be_expanded(char *archivo)
         }
     }
 
+    //IMG también puede ser una imagen de disco genérica, por tanto solo identificarla como expandible en QL
+    if (!util_compare_file_extension(archivo,"img") && MACHINE_IS_QL) return 1;
+
+    if (!util_compare_file_extension(archivo,"mdv")) return 1;
+
     //Ver si comprimido
     if (menu_filesel_is_compressed(archivo)) return 1;
+
+
+    char extension[NAME_MAX];
+
+    util_get_file_extension(archivo,extension);
+
+    //Archivo hobeta
+    if (extension[0]=='$') return 1;
 
     return 0;
 }
 
 //Expandir archivos (no descomprimir, sino expandir por ejemplo un tap o un hdf)
 //Devuelve 0 si ok
-int menu_filesel_expand(char *archivo,char *tmpdir)
+//sufijo_carpeta si no es NULL, agrega ese sufijo al nombre de carpeta temporal
+int menu_filesel_expand(char *archivo,char *tmpdir,char *sufijo_carpeta)
 {
+
+    char extension[NAME_MAX];
+    util_get_file_extension(archivo,extension);
 
     if (!menu_filesel_file_can_be_expanded(archivo)) {
         //printf("File can not be expanded\n");
         return 1;
     }
 
-	sprintf (tmpdir,"%s/%s",get_tmpdir_base(),archivo);
-	menu_filesel_mkdir(tmpdir);
+    if (sufijo_carpeta!=NULL) {
+        sprintf (tmpdir,"%s/%s%s",get_tmpdir_base(),archivo,sufijo_carpeta);
+    }
+
+    else {
+        sprintf (tmpdir,"%s/%s",get_tmpdir_base(),archivo);
+    }
+
+    menu_filesel_mkdir(tmpdir);
 
         //TODO: hdf no se puede expandir si el archivo esta en una imagen mmc
         if (!util_compare_file_extension(archivo,"hdf") ) {
@@ -3236,22 +3330,22 @@ int menu_filesel_expand(char *archivo,char *tmpdir)
 
         else if (!util_compare_file_extension(archivo,"tap") ) {
                 debug_printf (VERBOSE_DEBUG,"Is a tap file");
-        	return util_extract_tap(archivo,tmpdir,NULL,0);
+            return util_extract_tap(archivo,tmpdir,NULL,0,0);
         }
 
         else if (!util_compare_file_extension(archivo,"ddh") ) {
                 debug_printf (VERBOSE_DEBUG,"Is a ddh file");
-        	return util_extract_ddh(archivo,tmpdir);
+            return util_extract_ddh(archivo,tmpdir);
         }
 
         else if (!util_compare_file_extension(archivo,"mdr") ) {
                 debug_printf (VERBOSE_DEBUG,"Is a mdr file");
-        	return util_extract_mdr(archivo,tmpdir);
+            return util_extract_mdr(archivo,tmpdir);
         }
 
         else if (!util_compare_file_extension(archivo,"rmd") ) {
                 debug_printf (VERBOSE_DEBUG,"Is a rmd file");
-        	return util_extract_rmd(archivo,tmpdir);
+            return util_extract_rmd(archivo,tmpdir);
         }
 
         else if (
@@ -3259,13 +3353,18 @@ int menu_filesel_expand(char *archivo,char *tmpdir)
             !util_compare_file_extension(archivo,"cdt")
             ) {
                 debug_printf (VERBOSE_DEBUG,"Is a tzx file");
-                return util_extract_tzx(archivo,tmpdir,NULL);
+                return util_extract_tzx(archivo,tmpdir,NULL,0);
         }
 
 
         else if (!util_compare_file_extension(archivo,"pzx") ) {
                 debug_printf (VERBOSE_DEBUG,"Is a pzx file");
-                return util_extract_pzx(archivo,tmpdir,NULL);
+                return util_extract_pzx(archivo,tmpdir,NULL,0);
+        }
+
+        else if (extension[0]=='$') {
+                debug_printf (VERBOSE_DEBUG,"Is a trd file");
+                return util_extract_hobeta(archivo,tmpdir);
         }
 
         else if (!util_compare_file_extension(archivo,"trd") ) {
@@ -3285,22 +3384,22 @@ int menu_filesel_expand(char *archivo,char *tmpdir)
 
         //TODO: epr, eprom, flash no se puede expandir si el archivo esta en una imagen mmc
         else if (
-			!util_compare_file_extension(archivo,"epr")  ||
-			!util_compare_file_extension(archivo,"eprom")  ||
-			!util_compare_file_extension(archivo,"flash")
-		) {
+            !util_compare_file_extension(archivo,"epr")  ||
+            !util_compare_file_extension(archivo,"eprom")  ||
+            !util_compare_file_extension(archivo,"flash")
+        ) {
                 debug_printf (VERBOSE_DEBUG,"Is a Z88 card file");
                 return util_extract_z88_card(archivo,tmpdir);
         }
 
-        else if (!util_compare_file_extension(archivo,"p") || !util_compare_file_extension(archivo,"p81")) {
+        else if (!util_compare_file_extension(archivo,"p") || !util_compare_file_extension(archivo,"81") || !util_compare_file_extension(archivo,"p81")) {
                 debug_printf (VERBOSE_DEBUG,"Is a P file");
-        	return util_extract_p(archivo,tmpdir);
+            return util_extract_p(archivo,tmpdir);
         }
 
         else if (!util_compare_file_extension(archivo,"o") ) {
                 debug_printf (VERBOSE_DEBUG,"Is a O file");
-        	return util_extract_o(archivo,tmpdir);
+            return util_extract_o(archivo,tmpdir);
         }
 
         //TODO: mdv no se puede expandir si el archivo esta en una imagen mmc
@@ -3309,17 +3408,27 @@ int menu_filesel_expand(char *archivo,char *tmpdir)
                 return util_extract_mdv(archivo,tmpdir);
         }
 
-        else if ( !util_compare_file_extension(archivo,"scl") ) {
-                debug_printf (VERBOSE_DEBUG,"Is a scl file");
-                return util_extract_scl(archivo,tmpdir);
+        else if ( !util_compare_file_extension(archivo,"img") ) {
+                debug_printf (VERBOSE_DEBUG,"Is a img file");
+                return util_extract_img(archivo,tmpdir);
         }
 
-		else if (menu_filesel_is_compressed(archivo)) {
-			debug_printf (VERBOSE_DEBUG,"Expanding Compressed file");
-			return menu_filesel_uncompress(archivo,tmpdir);
-		}
+        else if ( !util_compare_file_extension(archivo,"win") ) {
+                debug_printf (VERBOSE_DEBUG,"Is a win file");
+                return util_extract_win(archivo,tmpdir);
+        }
 
-		//else debug_printf(VERBOSE_DEBUG,"Don't know how to expand that file");
+        else if ( !util_compare_file_extension(archivo,"scl") ) {
+                debug_printf (VERBOSE_DEBUG,"Is a scl file");
+                return util_extract_scl(archivo,tmpdir,NULL);
+        }
+
+        else if (menu_filesel_is_compressed(archivo)) {
+            debug_printf (VERBOSE_DEBUG,"Expanding Compressed file");
+            return menu_filesel_uncompress(archivo,tmpdir);
+        }
+
+        //else debug_printf(VERBOSE_DEBUG,"Don't know how to expand that file");
 
 
         return 1;
@@ -3331,16 +3440,16 @@ int menu_filesel_expand(char *archivo,char *tmpdir)
 //escribir archivo que indique directorio anterior
 void menu_filesel_write_file_last_dir(char *directorio_anterior)
 {
-	debug_printf (VERBOSE_DEBUG,"Writing temp file " MENU_LAST_DIR_FILE_NAME " to tell last directory before uncompress (%s)",directorio_anterior);
+    debug_printf (VERBOSE_DEBUG,"Writing temp file " MENU_LAST_DIR_FILE_NAME " to tell last directory before uncompress (%s)",directorio_anterior);
 
 
     FILE *ptr_lastdir;
     ptr_lastdir=fopen(MENU_LAST_DIR_FILE_NAME,"wb");
 
-	if (ptr_lastdir!=NULL) {
-	        fwrite(directorio_anterior,1,strlen(directorio_anterior),ptr_lastdir);
-        	fclose(ptr_lastdir);
-	}
+    if (ptr_lastdir!=NULL) {
+            fwrite(directorio_anterior,1,strlen(directorio_anterior),ptr_lastdir);
+            fclose(ptr_lastdir);
+    }
 }
 
 //leer contenido de archivo que indique directorio anterior
@@ -3351,8 +3460,8 @@ int menu_filesel_read_file_last_dir(char *directorio_anterior)
         FILE *ptr_lastdir;
         ptr_lastdir=fopen(MENU_LAST_DIR_FILE_NAME,"rb");
 
-	if (ptr_lastdir==NULL) {
-		debug_printf (VERBOSE_DEBUG,"Error opening " MENU_LAST_DIR_FILE_NAME);
+    if (ptr_lastdir==NULL) {
+        debug_printf (VERBOSE_DEBUG,"Error opening " MENU_LAST_DIR_FILE_NAME);
                 return 1;
         }
 
@@ -3360,23 +3469,23 @@ int menu_filesel_read_file_last_dir(char *directorio_anterior)
         int leidos=fread(directorio_anterior,1,PATH_MAX,ptr_lastdir);
         fclose(ptr_lastdir);
 
-	if (leidos) {
-		directorio_anterior[leidos]=0;
-	}
-	else {
-		if (leidos==0) debug_printf (VERBOSE_DEBUG,"Error. Read 0 bytes from " MENU_LAST_DIR_FILE_NAME);
-		if (leidos<0) debug_printf (VERBOSE_DEBUG,"Error reading from " MENU_LAST_DIR_FILE_NAME);
-		return 1;
-	}
+    if (leidos) {
+        directorio_anterior[leidos]=0;
+    }
+    else {
+        if (leidos==0) debug_printf (VERBOSE_DEBUG,"Error. Read 0 bytes from " MENU_LAST_DIR_FILE_NAME);
+        if (leidos<0) debug_printf (VERBOSE_DEBUG,"Error reading from " MENU_LAST_DIR_FILE_NAME);
+        return 1;
+    }
 
-	return 0;
+    return 0;
 }
 
 
 void menu_textspeech_say_current_directory(void)
 {
 
-	//printf ("\nmenu_textspeech_say_current_directory\n");
+    //printf ("\nmenu_textspeech_say_current_directory\n");
 
         char current_dir[PATH_MAX];
         char buffer_texto[PATH_MAX+200];
@@ -3384,10 +3493,10 @@ void menu_textspeech_say_current_directory(void)
 
         sprintf (buffer_texto,"Current directory: %s",current_dir);
 
-	//Quiero que siempre se escuche
-	menu_speech_reset_tecla_pulsada();
+    //Quiero que siempre se escuche
+    menu_speech_reset_tecla_pulsada();
     //printf("menu_speech_reset_tecla_pulsada filesel linea 3239\n");
-	menu_textspeech_send_text(buffer_texto);
+    menu_textspeech_send_text(buffer_texto);
 }
 
 
@@ -3398,11 +3507,11 @@ int zxvision_si_mouse_zona_archivos(zxvision_window *ventana)
     int inicio_y_dir=1+FILESEL_INICIO_DIR;
 
     if (menu_mouse_y>=inicio_y_dir && menu_mouse_y<inicio_y_dir+zxvision_get_filesel_alto_dir(ventana) && menu_mouse_x<ventana->visible_width-1) {
-		//printf ("Mouse en zona de archivos\n");
-		return 1;
-	}
+        //printf ("Mouse en zona de archivos\n");
+        return 1;
+    }
 
-	return 0;
+    return 0;
 }
 
 
@@ -3421,7 +3530,7 @@ void zxvision_menu_filesel_print_text_contents(zxvision_window *ventana)
 
 
 
-	zxvision_print_string_defaults_fillspc(ventana,1,2,buffer_linea);
+    zxvision_print_string_defaults_fillspc(ventana,1,2,buffer_linea);
 }
 
 void file_utils_info_file(char *archivo)
@@ -3457,8 +3566,8 @@ void file_utils_info_file(char *archivo)
 
 
 
-	menu_generic_message_format("Info file","Full path: %s\n\n%sModified: %02d:%02d:%02d %02d/%02d/%02d",
-		archivo,buffer_tamanyo,hora,minutos,segundos,dia,mes,anyo);
+    menu_generic_message_format("Info file","Full path: %s\n\n%sModified: %02d:%02d:%02d %02d/%02d/%02d",
+        archivo,buffer_tamanyo,hora,minutos,segundos,dia,mes,anyo);
 
 }
 
@@ -3486,57 +3595,57 @@ void menu_filesel_change_to_tmp(char *tmpdir)
 //mostrar directorio cortado, en caso que no hay multitarea y no hace scroll el texto
 void zxvision_filesel_show_current_dir(zxvision_window *ventana)
 {
-	char current_dir[PATH_MAX];
-	char buffer_dir[OVERLAY_SCREEN_MAX_WIDTH+1];
-	char buffer3[OVERLAY_SCREEN_MAX_WIDTH+1+32];
+    char current_dir[PATH_MAX];
+    char buffer_dir[OVERLAY_SCREEN_MAX_WIDTH+1];
+    char buffer3[OVERLAY_SCREEN_MAX_WIDTH+1+32];
 
-	//getcwd(current_dir,PATH_MAX);
+    //getcwd(current_dir,PATH_MAX);
     zvfs_getcwd(current_dir,PATH_MAX);
 
-	menu_tape_settings_trunc_name(current_dir,buffer_dir,ventana->visible_width-14); //14 es lo que ocupa el texto "Current dir: "
-	sprintf (buffer3,"Current dir: %s",buffer_dir);
-	//menu_escribe_texto_ventana(1,0,ESTILO_GUI_TINTA_NORMAL,ESTILO_GUI_PAPEL_NORMAL,buffer3);
-	zxvision_print_string_defaults_fillspc(ventana,1,0,buffer3);
+    menu_tape_settings_trunc_name(current_dir,buffer_dir,ventana->visible_width-14); //14 es lo que ocupa el texto "Current dir: "
+    sprintf (buffer3,"Current dir: %s",buffer_dir);
+    //menu_escribe_texto_ventana(1,0,ESTILO_GUI_TINTA_NORMAL,ESTILO_GUI_PAPEL_NORMAL,buffer3);
+    zxvision_print_string_defaults_fillspc(ventana,1,0,buffer3);
 }
 
 void zxvision_menu_print_dir(int inicial,zxvision_window *ventana)
 {
 
-	//TODO: no tiene sentido usar variable "inicial"
-	inicial=0;
+    //TODO: no tiene sentido usar variable "inicial"
+    inicial=0;
 
-	//printf ("\nmenu_print_dir\n");
+    //printf ("\nmenu_print_dir\n");
     //Si directorio vacio por ejemplo, no se escribiria nunca este texto de File:. Al menos escribirlo vacio al principio
     zxvision_print_string_defaults_fillspc(ventana,1,1,"File: ");
 
-	//escribir en ventana directorio de archivos
+    //escribir en ventana directorio de archivos
 
-	//Para speech
-	char texto_opcion_activa[PATH_MAX+100]; //Dado que hay que meter aqui el nombre del archivo y un poquito mas de texto
-	//Asumimos por si acaso que no hay ninguna activa
-	texto_opcion_activa[0]=0;
+    //Para speech
+    char texto_opcion_activa[PATH_MAX+100]; //Dado que hay que meter aqui el nombre del archivo y un poquito mas de texto
+    //Asumimos por si acaso que no hay ninguna activa
+    texto_opcion_activa[0]=0;
 
 
 
-	filesel_item *p;
-	int i;
+    filesel_item *p;
+    int i;
 
-	int mostrados_en_pantalla=(ventana->visible_height)-10;
-	//trucar el maximo en pantalla. dado que somos zxvision, se pueden mostar ya todos en resolucion virtual de ventana
-	mostrados_en_pantalla=999999;
+    int mostrados_en_pantalla=(ventana->visible_height)-10;
+    //trucar el maximo en pantalla. dado que somos zxvision, se pueden mostar ya todos en resolucion virtual de ventana
+    mostrados_en_pantalla=999999;
 
-	p=menu_get_filesel_item(inicial);
+    p=menu_get_filesel_item(inicial);
 
-	//Para calcular total de archivos de ese directorio, siguiendo el filtro. Util para mostrar indicador de porcentaje '*'
-	//int total_archivos=inicial;
+    //Para calcular total de archivos de ese directorio, siguiendo el filtro. Util para mostrar indicador de porcentaje '*'
+    //int total_archivos=inicial;
 
-	filesel_total_archivos=inicial;
+    filesel_total_archivos=inicial;
 
-	for (i=0;p!=NULL;i++,filesel_total_archivos++) {
-		//printf ("file: %s\n",p->d_name);
+    for (i=0;p!=NULL;i++,filesel_total_archivos++) {
+        //printf ("file: %s\n",p->d_name);
 
-		//Solo hacer esto si es visible en pantalla
-		if (i<mostrados_en_pantalla) {
+        //Solo hacer esto si es visible en pantalla
+        if (i<mostrados_en_pantalla) {
 
             zxvision_menu_filesel_print_file(ventana,p->d_name,(ventana->total_width)-2,i);
 
@@ -3580,9 +3689,9 @@ void zxvision_menu_print_dir(int inicial,zxvision_window *ventana)
 
 
             }
-		}
+        }
 
-		p=p->next;
+        p=p->next;
 
     }
 
@@ -3602,19 +3711,19 @@ void zxvision_menu_print_dir(int inicial,zxvision_window *ventana)
     }
 
 
-	//int texto_no_cabe=0;
-	filesel_no_cabe_todo=0;
+    //int texto_no_cabe=0;
+    filesel_no_cabe_todo=0;
 
-	debug_printf (VERBOSE_DEBUG,"Total files read (applying filters): %d",filesel_total_archivos);
-	if (filesel_total_archivos>mostrados_en_pantalla) {
-		filesel_no_cabe_todo=1;
-	}
-
-
+    debug_printf (VERBOSE_DEBUG,"Total files read (applying filters): %d",filesel_total_archivos);
+    if (filesel_total_archivos>mostrados_en_pantalla) {
+        filesel_no_cabe_todo=1;
+    }
 
 
-	//Imprimir directorio actual
-	//primero borrar con espacios
+
+
+    //Imprimir directorio actual
+    //primero borrar con espacios
 
     //menu_escribe_texto_ventana(14,0,ESTILO_GUI_TINTA_NORMAL,ESTILO_GUI_PAPEL_NORMAL,"               ");
 
@@ -3625,17 +3734,17 @@ void zxvision_menu_print_dir(int inicial,zxvision_window *ventana)
     else menu_filesel_overlay_show_current_dir(ventana,0);
 
 /*
-	char current_dir[PATH_MAX];
-	char buffer_dir[OVERLAY_SCREEN_MAX_WIDTH+1];
-	char buffer3[OVERLAY_SCREEN_MAX_WIDTH+1+32];
+    char current_dir[PATH_MAX];
+    char buffer_dir[OVERLAY_SCREEN_MAX_WIDTH+1];
+    char buffer3[OVERLAY_SCREEN_MAX_WIDTH+1+32];
 
-	//getcwd(current_dir,PATH_MAX);
+    //getcwd(current_dir,PATH_MAX);
     zvfs_getcwd(current_dir,PATH_MAX);
 
-	menu_tape_settings_trunc_name(current_dir,buffer_dir,ventana->visible_width-14); //14 es lo que ocupa el texto "Current dir: "
-	sprintf (buffer3,"Current dir: %s",buffer_dir);
-	//menu_escribe_texto_ventana(1,0,ESTILO_GUI_TINTA_NORMAL,ESTILO_GUI_PAPEL_NORMAL,buffer3);
-	zxvision_print_string_defaults_fillspc(ventana,1,0,buffer3);
+    menu_tape_settings_trunc_name(current_dir,buffer_dir,ventana->visible_width-14); //14 es lo que ocupa el texto "Current dir: "
+    sprintf (buffer3,"Current dir: %s",buffer_dir);
+    //menu_escribe_texto_ventana(1,0,ESTILO_GUI_TINTA_NORMAL,ESTILO_GUI_PAPEL_NORMAL,buffer3);
+    zxvision_print_string_defaults_fillspc(ventana,1,0,buffer3);
 */
 
     if (texto_opcion_activa[0]!=0) {
@@ -3663,6 +3772,18 @@ void zxvision_menu_print_dir(int inicial,zxvision_window *ventana)
         //printf("menu_speech_tecla_pulsada en fin de print_dir: %d\n",menu_speech_tecla_pulsada);
     }
 
+    if (menu_filesel_show_previews_on_zxdesktop.v) {
+        //forzamos dibujar overlay para que procese el preview
+        //printf("filesel obtener preview\n");
+
+        menu_filesel_overlay_force_render=1;
+        menu_filesel_overlay();
+
+        //printf("filesel draw ext desktop\n");
+        menu_draw_ext_desktop();
+        //menu_refresca_pantalla();
+    }
+
 
 }
 
@@ -3671,42 +3792,42 @@ void zxvision_menu_print_dir(int inicial,zxvision_window *ventana)
 int menu_filesel_change_zone_if_clicked(zxvision_window *ventana,int *filesel_zona_pantalla,int *tecla)
 {
      if (!si_menu_mouse_en_ventana() ) return 0;
-	if (!mouse_left) return 0;
+    if (!mouse_left) return 0;
 
-	int futura_zona=-1;
+    int futura_zona=-1;
     if (menu_mouse_y==2 && menu_mouse_x<ventana->visible_width-1) {
                 //printf ("Pulsado zona File\n");
-						futura_zona=0;
+                        futura_zona=0;
     }
 
                 //Si en linea de filtros
     if (menu_mouse_y==zxvision_get_filesel_pos_filters(ventana)  && menu_mouse_x<ventana->visible_width-1) {
-								//printf ("Pulsado zona Filtros\n");
+                                //printf ("Pulsado zona Filtros\n");
                                                                 futura_zona=2;
     }
 
 
-		//En zona seleccion archivos
+        //En zona seleccion archivos
     if (zxvision_si_mouse_zona_archivos(ventana)) {
-							//printf ("En zona seleccion archivos\n");
-							futura_zona=1;
-		}
+                            //printf ("En zona seleccion archivos\n");
+                            futura_zona=1;
+        }
 
 
-	if (futura_zona!=-1) {
-		if (futura_zona!=*filesel_zona_pantalla) {
-			//Cambio de zona
-			menu_reset_counters_tecla_repeticion();
-			*filesel_zona_pantalla=futura_zona;
-			*tecla=0;
-			return 1;
-		}
-	}
+    if (futura_zona!=-1) {
+        if (futura_zona!=*filesel_zona_pantalla) {
+            //Cambio de zona
+            menu_reset_counters_tecla_repeticion();
+            *filesel_zona_pantalla=futura_zona;
+            *tecla=0;
+            return 1;
+        }
+    }
 
 
 
 
-	return 0;
+    return 0;
 }
 
 
@@ -3719,13 +3840,13 @@ void menu_filesel_cambiar_unidad_common(char *destino)
 
 
 
-	char buffer_unidades[100]; //Aunque son 26 maximo, pero por si acaso
+    char buffer_unidades[100]; //Aunque son 26 maximo, pero por si acaso
 #ifdef MINGW
-	int unidades=util_get_available_drives(buffer_unidades);
-	if (unidades==0) {
-		menu_error_message("No available drives");
-		return;
-	}
+    int unidades=util_get_available_drives(buffer_unidades);
+    if (unidades==0) {
+        menu_error_message("No available drives");
+        return;
+    }
 #else
     //En sistemas no windows, no hay unidades.
     //Hago el menor código dependiente de MINGW, por ejemplo el bucle que hay abajo con las unidades
@@ -3735,31 +3856,31 @@ void menu_filesel_cambiar_unidad_common(char *destino)
 
 
 
-	//printf ("total unidades: %d string Unidades: %s 0 %d 1 %d 2 %d 3 %d\n",unidades,buffer_unidades,buffer_unidades[0],buffer_unidades[1],buffer_unidades[2],buffer_unidades[3]);
+    //printf ("total unidades: %d string Unidades: %s 0 %d 1 %d 2 %d 3 %d\n",unidades,buffer_unidades,buffer_unidades[0],buffer_unidades[1],buffer_unidades[2],buffer_unidades[3]);
 
 
         menu_item *array_menu_filesel_unidad;
         menu_item item_seleccionado;
         int retorno_menu;
 
-	int menu_filesel_unidad_opcion_seleccionada=0;
+    int menu_filesel_unidad_opcion_seleccionada=0;
 
 
-	menu_add_item_menu_inicial(&array_menu_filesel_unidad,"",MENU_OPCION_UNASSIGNED,NULL,NULL);
+    menu_add_item_menu_inicial(&array_menu_filesel_unidad,"",MENU_OPCION_UNASSIGNED,NULL,NULL);
 
-	int i;
+    int i;
 
-	for (i=0;i<unidades;i++) {
-		char letra=buffer_unidades[i];
+    for (i=0;i<unidades;i++) {
+        char letra=buffer_unidades[i];
         /*
         Nota: pongo X:/, donde X es la unidad, con la / final
         La / es importante para que cuando estemos en unidad mmc, si cambiamos a c:/, la rutina util_path_is_mmc_fatfs (llamada desde zvfs_chdir)
         detecta que la ruta es absoluta. Si no, detectaria ruta relativa y no cambiaria de unidad
         */
-		menu_add_item_menu_format(array_menu_filesel_unidad,MENU_OPCION_NORMAL,NULL,NULL,"%c:/",letra);
-		//menu_add_item_menu_shortcut(array_menu_filesel_unidad,letra_minuscula(letra));
-		//menu_add_item_menu_valor_opcion(array_menu_filesel_unidad,letra);
-	}
+        menu_add_item_menu_format(array_menu_filesel_unidad,MENU_OPCION_NORMAL,NULL,NULL,"%c:/",letra);
+        //menu_add_item_menu_shortcut(array_menu_filesel_unidad,letra_minuscula(letra));
+        //menu_add_item_menu_valor_opcion(array_menu_filesel_unidad,letra);
+    }
 
 #ifdef MINGW
 //nada
@@ -3767,18 +3888,18 @@ void menu_filesel_cambiar_unidad_common(char *destino)
 
 //Agregar ruta /media (en linux) o a /Volumes en Mac
 
-	#if defined(__APPLE__)
+    #if defined(__APPLE__)
 
 //En Mac
         menu_add_item_menu_format(array_menu_filesel_unidad,MENU_OPCION_NORMAL,NULL,NULL,"/Volumes");
 
-	#else
+    #else
 
 //En Linux
 
-		menu_add_item_menu_format(array_menu_filesel_unidad,MENU_OPCION_NORMAL,NULL,NULL,"/media");
+        menu_add_item_menu_format(array_menu_filesel_unidad,MENU_OPCION_NORMAL,NULL,NULL,"/media");
 
-	#endif
+    #endif
 
 #endif
 
@@ -3802,25 +3923,25 @@ void menu_filesel_cambiar_unidad_common(char *destino)
     }
 
 
-                menu_add_item_menu(array_menu_filesel_unidad,"",MENU_OPCION_SEPARADOR,NULL,NULL);
+                menu_add_item_menu_separator(array_menu_filesel_unidad);
                 menu_add_ESC_item(array_menu_filesel_unidad);
-                retorno_menu=menu_dibuja_menu_no_title_lang(&menu_filesel_unidad_opcion_seleccionada,&item_seleccionado,array_menu_filesel_unidad,"Select Drive" );
+                retorno_menu=menu_dibuja_menu_dialogo_no_title_lang(&menu_filesel_unidad_opcion_seleccionada,&item_seleccionado,array_menu_filesel_unidad,"Select Drive" );
 
                 if ((item_seleccionado.tipo_opcion&MENU_OPCION_ESC)==0 && retorno_menu>=0) {
                     strcpy(destino,item_seleccionado.texto_opcion);
 
-    				return;
+                    return;
                 }
 
 
 
-	return;
+    return;
 }
 
 //Retorna 1 si ha realizado cambio cursor. 0 si no
 int menu_filesel_set_cursor_at_mouse(zxvision_window *ventana)
 {
-								int inicio_y_dir=1+FILESEL_INICIO_DIR;
+                                int inicio_y_dir=1+FILESEL_INICIO_DIR;
                             //if (menu_mouse_y>=inicio_y_dir && menu_mouse_y<inicio_y_dir+(FILESEL_ALTO-10)) {
                             //printf ("Dentro lista archivos\n");
 
@@ -3830,22 +3951,22 @@ int menu_filesel_set_cursor_at_mouse(zxvision_window *ventana)
                             //Si esta en la zona derecha de selector de porcentaje no hacer nada
 
 
-							if (menu_mouse_x==(ventana->visible_width)-1) return 0;
+                            if (menu_mouse_x==(ventana->visible_width)-1) return 0;
 
 
                             //filesel_linea_seleccionada=menu_mouse_y-inicio_y_dir;
 
                             if (si_menu_filesel_no_mas_alla_ultimo_item(linea_final-1)) {
 
-								//Ajustar cursor ventana
+                                //Ajustar cursor ventana
 
 
-								filesel_archivo_seleccionado=ventana->offset_y;
-								zxvision_set_cursor_line(ventana,filesel_archivo_seleccionado);
+                                filesel_archivo_seleccionado=ventana->offset_y;
+                                zxvision_set_cursor_line(ventana,filesel_archivo_seleccionado);
 
 
 
-								//printf ("Seleccionamos item %d\n",linea_final);
+                                //printf ("Seleccionamos item %d\n",linea_final);
                                 filesel_linea_seleccionada=linea_final;
 
                                 int linea_cursor_final=filesel_archivo_seleccionado;
@@ -3853,20 +3974,20 @@ int menu_filesel_set_cursor_at_mouse(zxvision_window *ventana)
                                 zxvision_set_cursor_line(ventana,linea_cursor_final);
 
                                 menu_speech_set_tecla_pulsada();
-								return 1;
+                                return 1;
                             }
                             else {
                                 //printf ("Cursor mas alla del ultimo item\n");
                             }
 
-	return 0;
+    return 0;
 
 }
 
 void menu_filesel_recent_files_clear(MENU_ITEM_PARAMETERS)
 {
-	last_filesused_clear();
-	menu_generic_message_splash("Clear List","OK. List cleared");
+    last_filesused_clear();
+    menu_generic_message_splash("Clear List","OK. List cleared");
 }
 
 //Si tipo=0, files
@@ -3889,13 +4010,15 @@ void menu_filesel_recent_files_folders_enter(MENU_ITEM_PARAMETERS)
 
 char *menu_filesel_recent_files_folders(int *tipo)
 {
-	menu_item *array_menu_recent_files;
+    menu_item *array_menu_recent_files;
     menu_item item_seleccionado;
     int retorno_menu;
 
     int hay_alguno;
 
     menu_filesel_recent_files_folders_seleccionado_enter=0;
+
+    //printf("Entrada recent salir_todos_menus: %d\n",salir_todos_menus);
 
     do {
 
@@ -3947,10 +4070,10 @@ char *menu_filesel_recent_files_folders(int *tipo)
             menu_add_item_menu_es_sencillo(array_menu_recent_files);
         }
 
-        menu_add_item_menu(array_menu_recent_files,"",MENU_OPCION_SEPARADOR,NULL,NULL);
+        menu_add_item_menu_separator(array_menu_recent_files);
         menu_add_item_menu_format(array_menu_recent_files,MENU_OPCION_NORMAL,menu_filesel_recent_files_clear,NULL,"Clear List");
 
-        menu_add_item_menu(array_menu_recent_files,"",MENU_OPCION_SEPARADOR,NULL,NULL);
+        menu_add_item_menu_separator(array_menu_recent_files);
         menu_add_ESC_item(array_menu_recent_files);
 
         char nombre_ventana[30];
@@ -3977,39 +4100,41 @@ char *menu_filesel_recent_files_folders(int *tipo)
     } while ( (item_seleccionado.tipo_opcion&MENU_OPCION_ESC)==0 && retorno_menu!=MENU_RETORNO_ESC &&
         !salir_todos_menus && !menu_filesel_recent_files_folders_seleccionado_enter);
 
+    //printf("Salida recent salir_todos_menus: %d\n",salir_todos_menus);
+
     *tipo=menu_filesel_recent_files_folders_tipo_seleccionado;
 
     if ((item_seleccionado.tipo_opcion&MENU_OPCION_ESC)==0 && retorno_menu>=0 && menu_filesel_recent_files_folders_seleccionado_enter) {
 
 
-		//Seleccion de un archivo
-		if (hay_alguno) {
-        	int indice=menu_recent_files_opcion_seleccionada;
+        //Seleccion de un archivo
+        if (hay_alguno) {
+            int indice=menu_recent_files_opcion_seleccionada;
 
 //lastfilesuser_scrolldown
 //Quitar el que hay ahi, desplazando hacia abajo y ponerlo arriba del todo
 //Copiarlo temporamente a otro sitio
-		char buffer_recent[PATH_MAX];
-		strcpy(buffer_recent,last_files_used_array[indice]);
+        char buffer_recent[PATH_MAX];
+        strcpy(buffer_recent,last_files_used_array[indice]);
 
-		//Movemos el trozo desde ahi hasta arriba
-		lastfilesuser_scrolldown(0,indice);
+        //Movemos el trozo desde ahi hasta arriba
+        lastfilesuser_scrolldown(0,indice);
 
-		//Y lo metemos arriba del todo
-		strcpy(last_files_used_array[0],buffer_recent);
+        //Y lo metemos arriba del todo
+        strcpy(last_files_used_array[0],buffer_recent);
 
-		//Por tanto el indice final sera 0
-		indice=0;
+        //Por tanto el indice final sera 0
+        indice=0;
 
-		//Y cursor ponerlo arriba entonces tambien
-		menu_recent_files_opcion_seleccionada=0;
+        //Y cursor ponerlo arriba entonces tambien
+        menu_recent_files_opcion_seleccionada=0;
 
-			debug_printf (VERBOSE_INFO,"Returning recent file %s",last_files_used_array[indice]);
-			return last_files_used_array[indice];
-		}
-	}
+            debug_printf (VERBOSE_INFO,"Returning recent file %s",last_files_used_array[indice]);
+            return last_files_used_array[indice];
+        }
+    }
 
-	return NULL;
+    return NULL;
 
 }
 
@@ -4120,52 +4245,52 @@ void menu_filesel_mmc_sync(void)
 int old_menu_filesel_cambiar_unidad_o_volumen(void)
 {
 
-	int releer_directorio=0;
+    int releer_directorio=0;
 
 #ifdef MINGW
-	//Mostrar selector de unidades
-						char letra=menu_filesel_cambiar_unidad_windows();
-					//printf ("letra: %d\n",letra);
-					if (letra!=0) {
-						char directorio[3];
-						sprintf (directorio,"%c:",letra);
+    //Mostrar selector de unidades
+                        char letra=menu_filesel_cambiar_unidad_windows();
+                    //printf ("letra: %d\n",letra);
+                    if (letra!=0) {
+                        char directorio[3];
+                        sprintf (directorio,"%c:",letra);
 
-						//printf ("Changing to unit %s\n",directorio);
+                        //printf ("Changing to unit %s\n",directorio);
 
-						zvfs_chdir(directorio);
-						releer_directorio=1;
+                        zvfs_chdir(directorio);
+                        releer_directorio=1;
 
-					}
+                    }
 #else
 
 //Cambiar a ruta /media (en linux) o a /Volumes en Mac
 
-	#if defined(__APPLE__)
+    #if defined(__APPLE__)
 
 //En Mac
-		zvfs_chdir("/Volumes");
-		releer_directorio=1;
+        zvfs_chdir("/Volumes");
+        releer_directorio=1;
 
-	#else
+    #else
 
 //En Linux
 
-		zvfs_chdir("/media");
-		releer_directorio=1;
+        zvfs_chdir("/media");
+        releer_directorio=1;
 
-	#endif
+    #endif
 
 
 #endif
 
-	return releer_directorio;
+    return releer_directorio;
 }
 */
 
 int menu_filesel_cambiar_unidad_o_volumen(void)
 {
 
-	//int releer_directorio=0;
+    //int releer_directorio=0;
 
     char directorio[PATH_MAX];
 
@@ -4197,43 +4322,43 @@ int menu_filesel_cambiar_unidad_o_volumen(void)
 
 /*
 #ifdef MINGW
-	//Mostrar selector de unidades
-						char letra=menu_filesel_cambiar_unidad_windows();
-					//printf ("letra: %d\n",letra);
-					if (letra!=0) {
-						char directorio[3];
-						sprintf (directorio,"%c:",letra);
+    //Mostrar selector de unidades
+                        char letra=menu_filesel_cambiar_unidad_windows();
+                    //printf ("letra: %d\n",letra);
+                    if (letra!=0) {
+                        char directorio[3];
+                        sprintf (directorio,"%c:",letra);
 
-						//printf ("Changing to unit %s\n",directorio);
+                        //printf ("Changing to unit %s\n",directorio);
 
-						zvfs_chdir(directorio);
-						releer_directorio=1;
+                        zvfs_chdir(directorio);
+                        releer_directorio=1;
 
-					}
+                    }
 #else
 
 //Cambiar a ruta /media (en linux) o a /Volumes en Mac
 
-	#if defined(__APPLE__)
+    #if defined(__APPLE__)
 
 //En Mac
-		zvfs_chdir("/Volumes");
-		releer_directorio=1;
+        zvfs_chdir("/Volumes");
+        releer_directorio=1;
 
-	#else
+    #else
 
 //En Linux
 
-		zvfs_chdir("/media");
-		releer_directorio=1;
+        zvfs_chdir("/media");
+        releer_directorio=1;
 
-	#endif
+    #endif
 
 
 #endif
 */
 
-	//return releer_directorio;
+    //return releer_directorio;
 }
 
 //Ultimas coordenadas de filesel
@@ -4245,14 +4370,14 @@ int filesel_primera_vez=1;
 
 void menu_filesel_save_params_window(zxvision_window *ventana)
 {
-				//Guardar anteriores tamaños ventana
-			/*last_filesel_ventana_x=ventana->x;
-			last_filesel_ventana_y=ventana->y;
+                //Guardar anteriores tamaños ventana
+            /*last_filesel_ventana_x=ventana->x;
+            last_filesel_ventana_y=ventana->y;
 
-			last_filesel_ventana_visible_ancho=ventana->visible_width;
-			last_filesel_ventana_visible_alto=ventana->visible_height;*/
+            last_filesel_ventana_visible_ancho=ventana->visible_width;
+            last_filesel_ventana_visible_alto=ventana->visible_height;*/
 
-	util_add_window_geometry_compact(ventana);
+    util_add_window_geometry_compact(ventana);
 }
 
 
@@ -4263,10 +4388,7 @@ int menu_filesel_overlay_valor_contador_segundo_anterior;
 
 //Estructura de memoria para mostrar previews. coordenadas, color
 
-struct s_filesel_preview_mem {
-	int color;
-    int color_flash; //color si en ese momento hay parpadeo
-};
+
 
 //Datos del ultimo preview mostrado
 
@@ -4280,25 +4402,22 @@ struct s_filesel_preview_mem *menu_filesel_overlay_last_preview_memory=NULL;
 void menu_filesel_overlay_assign_memory_preview(int width,int height)
 {
 
-	//Liberar si conviene
-	if (menu_filesel_overlay_last_preview_memory==NULL) free(menu_filesel_overlay_last_preview_memory);
+    //Liberar si conviene
+    if (menu_filesel_overlay_last_preview_memory!=NULL) free(menu_filesel_overlay_last_preview_memory);
 
 
-	int elementos=width*height;
+    int elementos=width*height;
 
-	int total_mem=elementos*sizeof(struct s_filesel_preview_mem);
+    int total_mem=elementos*sizeof(struct s_filesel_preview_mem);
 
-	menu_filesel_overlay_last_preview_memory=malloc(total_mem);
+    menu_filesel_overlay_last_preview_memory=util_malloc(total_mem,"Cannot allocate memory for image preview");
 
-	if (menu_filesel_overlay_last_preview_memory==NULL) cpu_panic("Cannot allocate memory for image preview");
 
-    //printf("Asignar ancho y alto %d %d\n",width,height);
 
-	menu_filesel_overlay_last_preview_width=width;
-	menu_filesel_overlay_last_preview_height=height;
 }
 
-void menu_filesel_overlay_draw_preview_scr(int xorigen,int yorigen,int ancho,int alto,int reducir)
+void menu_filesel_overlay_draw_preview_scr(struct s_filesel_preview_mem *preview_mem,zxvision_window *w,
+int xorigen,int yorigen,int ancho,int alto,int reducir,int tramado)
 {
     //printf("draw preview %d\n",contador_segundo);
     int x,y;
@@ -4320,20 +4439,20 @@ void menu_filesel_overlay_draw_preview_scr(int xorigen,int yorigen,int ancho,int
                 //Sacar los 4 colores de la cuadricula de 2x2
                 int offset_orig;
                 offset_orig=y*ancho+x;
-                if (estado_parpadeo.v) colores_cuadricula[0]=menu_filesel_overlay_last_preview_memory[offset_orig].color_flash;
-                else colores_cuadricula[0]=menu_filesel_overlay_last_preview_memory[offset_orig].color;
+                if (estado_parpadeo.v) colores_cuadricula[0]=preview_mem[offset_orig].color_flash;
+                else colores_cuadricula[0]=preview_mem[offset_orig].color;
 
                 offset_orig=y*ancho+x+1;
-                if (estado_parpadeo.v) colores_cuadricula[1]=menu_filesel_overlay_last_preview_memory[offset_orig].color_flash;
-                else colores_cuadricula[1]=menu_filesel_overlay_last_preview_memory[offset_orig].color;
+                if (estado_parpadeo.v) colores_cuadricula[1]=preview_mem[offset_orig].color_flash;
+                else colores_cuadricula[1]=preview_mem[offset_orig].color;
 
                 offset_orig=(y*ancho+1)+x;
-                if (estado_parpadeo.v) colores_cuadricula[2]=menu_filesel_overlay_last_preview_memory[offset_orig].color_flash;
-                else colores_cuadricula[2]=menu_filesel_overlay_last_preview_memory[offset_orig].color;
+                if (estado_parpadeo.v) colores_cuadricula[2]=preview_mem[offset_orig].color_flash;
+                else colores_cuadricula[2]=preview_mem[offset_orig].color;
 
                 offset_orig=(y*ancho+1)+x+1;
-                if (estado_parpadeo.v) colores_cuadricula[3]=menu_filesel_overlay_last_preview_memory[offset_orig].color_flash;
-                else colores_cuadricula[3]=menu_filesel_overlay_last_preview_memory[offset_orig].color;
+                if (estado_parpadeo.v) colores_cuadricula[3]=preview_mem[offset_orig].color_flash;
+                else colores_cuadricula[3]=preview_mem[offset_orig].color;
 
 
 
@@ -4350,7 +4469,7 @@ void menu_filesel_overlay_draw_preview_scr(int xorigen,int yorigen,int ancho,int
 
                 int i;
 
-                for (i=0;i<3;i++) {
+                for (i=0;i<4;i++) {
 
                     if (colores_cuadricula[i]==color_final1) {
                         veces_color_final1++;
@@ -4373,8 +4492,8 @@ void menu_filesel_overlay_draw_preview_scr(int xorigen,int yorigen,int ancho,int
             }
 
             else {
-                if (estado_parpadeo.v) color_final=menu_filesel_overlay_last_preview_memory[contador].color_flash;
-                else color_final=menu_filesel_overlay_last_preview_memory[contador].color;
+                if (estado_parpadeo.v) color_final=preview_mem[contador].color_flash;
+                else color_final=preview_mem[contador].color;
                 contador++;
                 xdestino=x;
                 ydestino=y;
@@ -4382,7 +4501,17 @@ void menu_filesel_overlay_draw_preview_scr(int xorigen,int yorigen,int ancho,int
 
             //Por si acaso comprobar rangos
             if (color_final<0 || color_final>=EMULATOR_TOTAL_PALETTE_COLOURS) color_final=0;
-            zxvision_putpixel(menu_filesel_overlay_window,xorigen+xdestino,yorigen+ydestino,color_final);
+            //zxvision_putpixel(menu_filesel_overlay_window,xorigen+xdestino,yorigen+ydestino,color_final);
+
+            int dibujar=1;
+
+            if (tramado) {
+                //int calculo_tramado=x+y;
+                //if ( ((x+y) % tramado)!=0) dibujar=0;
+                if ( (x % tramado)!=0 || (y % tramado)!=0 ) dibujar=0;
+            }
+
+            if (dibujar) zxvision_putpixel(w,xorigen+xdestino,yorigen+ydestino,color_final);
         }
     }
 }
@@ -4445,11 +4574,11 @@ void menu_filesel_overlay_draw_preview_sombra_recuadro(int xorigen,int yorigen,i
 
 void menu_filesel_overlay_draw_preview(void)
 {
-	//No hay imagen asignada?
-	if (menu_filesel_overlay_last_preview_memory==NULL) return;
+    //No hay imagen asignada?
+    if (menu_filesel_overlay_last_preview_memory==NULL) return;
 
-	//Pero tiene tamanyo?
-	if (menu_filesel_overlay_last_preview_width<=0 || menu_filesel_overlay_last_preview_height<=0) return;
+    //Pero tiene tamanyo?
+    if (menu_filesel_overlay_last_preview_width<=0 || menu_filesel_overlay_last_preview_height<=0) return;
 
 
     //printf("putpixel preview\n");
@@ -4497,6 +4626,8 @@ void menu_filesel_overlay_draw_preview(void)
     int alto_miniatura;
 
     //printf("%d\n",ancho_ventana);
+
+    //printf("Filesel dibujando preview en ventana filesel. size %d X %d\n",menu_filesel_overlay_last_preview_width,menu_filesel_overlay_last_preview_height);
 
     //En caso de tener un ancho no muy grande, desplazamos el preview a la derecha quitando el margen
     if (ancho_ventana<minimo_ancho+margen_x_coord) {
@@ -4578,7 +4709,8 @@ void menu_filesel_overlay_draw_preview(void)
     yorigen *=menu_char_height;
 
 
-    menu_filesel_overlay_draw_preview_scr(xorigen,yorigen,menu_filesel_overlay_last_preview_width,menu_filesel_overlay_last_preview_height,reducir);
+    menu_filesel_overlay_draw_preview_scr(menu_filesel_overlay_last_preview_memory,menu_filesel_overlay_window,xorigen,yorigen,
+        menu_filesel_overlay_last_preview_width,menu_filesel_overlay_last_preview_height,reducir,0);
 
     menu_filesel_overlay_draw_preview_sombra_recuadro(xorigen,yorigen,ancho_miniatura,alto_miniatura);
 
@@ -4594,42 +4726,42 @@ void menu_filesel_preview_reduce_monochome(int *buffer_intermedio,int ancho, int
 {
 
 
-	int x,y;
+    int x,y;
 
-	int offset_final=0;
+    int offset_final=0;
 
-	for (y=0;y<alto;y+=2) {
-		for (x=0;x<ancho;x+=2) {
+    for (y=0;y<alto;y+=2) {
+        for (x=0;x<ancho;x+=2) {
 
-			int offset_orig;
-			offset_orig=y*ancho+x;
-			int color1=buffer_intermedio[offset_orig];
+            int offset_orig;
+            offset_orig=y*ancho+x;
+            int color1=buffer_intermedio[offset_orig];
 
-			offset_orig=y*ancho+x+1;
-			int color2=buffer_intermedio[offset_orig];
+            offset_orig=y*ancho+x+1;
+            int color2=buffer_intermedio[offset_orig];
 
-			offset_orig=(y*ancho+1)+x;
-			int color3=buffer_intermedio[offset_orig];
+            offset_orig=(y*ancho+1)+x;
+            int color3=buffer_intermedio[offset_orig];
 
-			offset_orig=(y*ancho+1)+x+1;
-			int color4=buffer_intermedio[offset_orig];
+            offset_orig=(y*ancho+1)+x+1;
+            int color4=buffer_intermedio[offset_orig];
 
-			int suma=color1+color2+color3+color4;
+            int suma=color1+color2+color3+color4;
 
-			//maximo sera 4
+            //maximo sera 4
 
-			int color_final=(suma>2 ? 0 : 7);
+            int color_final=(suma>2 ? 0 : 7);
 
-			//int offset_final=(y/2)*ancho_final+x/2;
+            //int offset_final=(y/2)*ancho_final+x/2;
 
-			//buffer_intermedio[offset_final++]=color_final;
+            //buffer_intermedio[offset_final++]=color_final;
 
-			menu_filesel_overlay_last_preview_memory[offset_final].color=color_final;
+            menu_filesel_overlay_last_preview_memory[offset_final].color=color_final;
             menu_filesel_overlay_last_preview_memory[offset_final].color_flash=color_final;
 
             offset_final++;
-		}
-	}
+        }
+    }
 
 
 }
@@ -4640,101 +4772,101 @@ void menu_filesel_preview_reduce_scr_color(int *buffer_intermedio,int ancho, int
 {
 
 
-	int x,y;
+    int x,y;
 
-	int offset_final=0;
-
-
-
-	for (y=0;y<alto;y+=2) {
-		for (x=0;x<ancho;x+=2) {
-
-			int colores_cuadricula[4];
-
-			//Sacar los 4 colores de la cuadricula de 2x2
-			int offset_orig;
-			offset_orig=y*ancho+x;
-			colores_cuadricula[0]=buffer_intermedio[offset_orig];
-
-			offset_orig=y*ancho+x+1;
-			colores_cuadricula[1]=buffer_intermedio[offset_orig];
-
-			offset_orig=(y*ancho+1)+x;
-			colores_cuadricula[2]=buffer_intermedio[offset_orig];
-
-			offset_orig=(y*ancho+1)+x+1;
-			colores_cuadricula[3]=buffer_intermedio[offset_orig];
+    int offset_final=0;
 
 
 
-			//Dado que partimos de una pantalla de spectrum, en una cuadricula de 2x2 habran como mucho 2 colores diferentes
-			//Ver cual de los dos se repite mas
+    for (y=0;y<alto;y+=2) {
+        for (x=0;x<ancho;x+=2) {
 
-			//Asumimos el primer color, para simplificar la comparacion mas abajo
-			int color_final1=colores_cuadricula[0];
-			//Segundo color inicialmente a nada valido
-			int color_final2=-1;
+            int colores_cuadricula[4];
 
-			int veces_color_final1=0;
-			int veces_color_final2=0;
+            //Sacar los 4 colores de la cuadricula de 2x2
+            int offset_orig;
+            offset_orig=y*ancho+x;
+            colores_cuadricula[0]=buffer_intermedio[offset_orig];
 
-			int i;
+            offset_orig=y*ancho+x+1;
+            colores_cuadricula[1]=buffer_intermedio[offset_orig];
 
-			for (i=0;i<3;i++) {
+            offset_orig=(y*ancho+1)+x;
+            colores_cuadricula[2]=buffer_intermedio[offset_orig];
 
-				if (colores_cuadricula[i]==color_final1) {
-					veces_color_final1++;
-				}
-				else {
-					color_final2=colores_cuadricula[i];
-					veces_color_final2++;
-				}
-
-			}
+            offset_orig=(y*ancho+1)+x+1;
+            colores_cuadricula[3]=buffer_intermedio[offset_orig];
 
 
-			int color_final;
 
-			if (veces_color_final1>veces_color_final2) color_final=color_final1;
-			else color_final=color_final2;
+            //Dado que partimos de una pantalla de spectrum, en una cuadricula de 2x2 habran como mucho 2 colores diferentes
+            //Ver cual de los dos se repite mas
 
-			menu_filesel_overlay_last_preview_memory[offset_final].color=color_final;
+            //Asumimos el primer color, para simplificar la comparacion mas abajo
+            int color_final1=colores_cuadricula[0];
+            //Segundo color inicialmente a nada valido
+            int color_final2=-1;
+
+            int veces_color_final1=0;
+            int veces_color_final2=0;
+
+            int i;
+
+            for (i=0;i<3;i++) {
+
+                if (colores_cuadricula[i]==color_final1) {
+                    veces_color_final1++;
+                }
+                else {
+                    color_final2=colores_cuadricula[i];
+                    veces_color_final2++;
+                }
+
+            }
+
+
+            int color_final;
+
+            if (veces_color_final1>veces_color_final2) color_final=color_final1;
+            else color_final=color_final2;
+
+            menu_filesel_overlay_last_preview_memory[offset_final].color=color_final;
             menu_filesel_overlay_last_preview_memory[offset_final].color_flash=color_final;
 
             offset_final++;
 
 
-		}
-	}
+        }
+    }
 
 
 }
 
 
 //Copia imagen preview sin reducir
-void menu_filesel_preview_no_reduce_scr(int *buffer_intermedio,int ancho, int alto)
+void menu_filesel_preview_no_reduce_scr(int *buffer_intermedio,int ancho, int alto,struct s_filesel_preview_mem *preview_memory)
 {
 
 
-	int x,y;
+    int x,y;
 
-	int offset_final=0;
+    int offset_final=0;
     int offset_orig=0;
 
 
-	for (y=0;y<alto;y++) {
-		for (x=0;x<ancho;x++) {
+    for (y=0;y<alto;y++) {
+        for (x=0;x<ancho;x++) {
             int color=buffer_intermedio[offset_orig++];
-			int color_sin_flash=color & 0xF;
+            int color_sin_flash=color & 0xF;
             int color_con_flash=(color >> 4) & 0xF;
 
-			menu_filesel_overlay_last_preview_memory[offset_final].color=color_sin_flash;
-            menu_filesel_overlay_last_preview_memory[offset_final].color_flash=color_con_flash;
+            preview_memory[offset_final].color=color_sin_flash;
+            preview_memory[offset_final].color_flash=color_con_flash;
 
             offset_final++;
         }
 
-	}
+    }
 
 
 }
@@ -4745,7 +4877,7 @@ int menu_filesel_preview_render_scr_ql_count_flash_bits(z80_byte *buf_pantalla)
 
 ////// Trocito extraido de scr_refresca_pantalla_ql y adaptado al preview
         int total_alto;
-        int total_ancho;
+        //int total_ancho;
         int x,y;
 
 
@@ -4758,7 +4890,7 @@ int menu_filesel_preview_render_scr_ql_count_flash_bits(z80_byte *buf_pantalla)
         int total_bit_flash=0;
 
         total_alto=256;
-        total_ancho=512;
+        //total_ancho=512;
 
 
 
@@ -4802,149 +4934,104 @@ int menu_filesel_preview_render_scr_ql_count_flash_bits(z80_byte *buf_pantalla)
     return total_bit_flash;
 }
 
-void menu_filesel_preview_render_scr(char *archivo_scr)
+
+void menu_filesel_preview_convert_scr_ql_to_buf(z80_byte *orig,int *dest)
 {
-			//printf("es pantalla\n");
+    int total_bits_flash=menu_filesel_preview_render_scr_ql_count_flash_bits(orig);
 
-	//Si no existe archivo, liberar preview
-	if (!si_existe_archivo(archivo_scr)) {
-		debug_printf(VERBOSE_DEBUG,"File SCR %s does not exist",archivo_scr);
-		menu_filesel_overlay_last_preview_width=0;
-		menu_filesel_overlay_last_preview_height=0;
-		return;
-	}
+    //Si se pasa de un umbral de flash en toda la pantalla, podemos pensar que realmente
+    //es una pantalla en modo 0 y que por tanto es sin flash. Aun asi la renderizaremos
+    //como pantalla en modo 8 pero sin poner flash, que sera molesto
+    //TODO: en este caso podriamos renderizar como modo 0 (512x256 4 colores) pero
+    //un preview de 512x256 queda demasiado grande, ademas para que la relacion de aspecto fuese
+    //buena, se tendria que hacer de 512x512. Luego, podriamos pensar que si el preview se hace a mitad
+    //256x256 se tendria que ver bien, pero la reducción que hacemos del preview a la mitad no es un algoritmo bueno...
+    int desactivar_flash;
 
-    int file_size=get_file_size(archivo_scr);
-
-    //Si pantalla de QL (32768 bytes) y estamos en QL
-    if (util_preview_file_is_ql_screen(file_size) ) {
-		debug_printf(VERBOSE_DEBUG,"Rendering QL SCR");
-
-
-		//buffer lectura archivo
-		z80_byte *buf_pantalla;
-
-		buf_pantalla=malloc(32768);
-
-		if (buf_pantalla==NULL) cpu_panic("Can not allocate buffer for screen read");
-
-        //printf("Leyendo archivo_scr %s\n",archivo_scr);
-
-		int leidos=lee_archivo(archivo_scr,(char *)buf_pantalla,32768);
-
-		if (leidos<=0) return;
-
-        int total_bits_flash=menu_filesel_preview_render_scr_ql_count_flash_bits(buf_pantalla);
-
-        //Si se pasa de un umbral de flash en toda la pantalla, podemos pensar que realmente
-        //es una pantalla en modo 0 y que por tanto es sin flash. Aun asi la renderizaremos
-        //como pantalla en modo 8 pero sin poner flash, que sera molesto
-        //TODO: en este caso podriamos renderizar como modo 0 (512x256 4 colores) pero
-        //un preview de 512x256 queda demasiado grande, ademas para que la relacion de aspecto fuese
-        //buena, se tendria que hacer de 512x512. Luego, podriamos pensar que si el preview se hace a mitad
-        //256x256 se tendria que ver bien, pero la reducción que hacemos del preview a la mitad no es un algoritmo bueno...
-        int desactivar_flash;
-
-        //Es un umbral detectado viendo muchas imagenes en modo 0 que se activa el parpadeo sin tener que hacerlo
-        //en cambio con una imagen con modo 8 con parpadeo intencionado (una linea de texto) no se llega a ese umbral
-        //y por tanto hara parpadeo
-        if (total_bits_flash>10000) desactivar_flash=1;
-        else desactivar_flash=0;
-
-		//Asignamos primero buffer intermedio
-		int *buffer_intermedio;
-
-		int ancho=256;
-		int alto=256;
-
-        //  Asumimos que son pantallas de QL en modo 8: 8 colores, 256x256
-
-		int elementos=ancho*alto;
-
-		buffer_intermedio=malloc(sizeof(int)*elementos);
-
-		if (buffer_intermedio==NULL)  cpu_panic("Cannot allocate memory for reduce buffer");
-
-
+    //Es un umbral detectado viendo muchas imagenes en modo 0 que se activa el parpadeo sin tener que hacerlo
+    //en cambio con una imagen con modo 8 con parpadeo intencionado (una linea de texto) no se llega a ese umbral
+    //y por tanto hara parpadeo
+    if (total_bits_flash>10000) desactivar_flash=1;
+    else desactivar_flash=0;
 
 ////// Trocito extraido de scr_refresca_pantalla_ql y adaptado al preview
-        int total_alto;
-        int total_ancho;
-        int x,y;
+    int total_alto;
+    //int total_ancho;
+    int x,y;
 
-        unsigned int color1;
-        //unsigned int color2;
+    unsigned int color1;
+    //unsigned int color2;
 
-        z80_byte green,red,blue;
+    z80_byte green,red,blue;
 
-        z80_byte byte_leido_h,byte_leido_l;
-
-
-        int memoria_pantalla_ql=0;
-
-        int offset_destino=0;
+    z80_byte byte_leido_h,byte_leido_l;
 
 
-        total_alto=256;
-        total_ancho=512;
+    int memoria_pantalla_ql=0;
 
-        int flashing_color;
-
-        for (y=0;y<total_alto;y++){
-            //Al principio de cada linea, flash es siempre 0
-            int ql_linea_flashing=0;
-            for (x=0;x<256;) {
-
-    /*
-    In 512-pixel mode, two bits per pixel are used, and the GREEN and BLUE signals are tied together, giving a choice of four colours:
-    black, white, green and red. On a monochrome screen, this will translate as a four level greyscale.
-    In 256-pixel mode, four bits per pixel are used: one bit each for Red, Green and Blue, and one bit for flashing.
-    The flash bit operates as a toggle: when set for the first time, it freezes the background colour at the value set by R, G and B,
-    and starts flashing at the next bit in the line; when set for the second time, it stops flashing.
-    Flashing is always cleared at the beginning of a raster line.
+    int offset_destino=0;
 
 
-    Addressing for display memory starts at the bottom of dynamic RAM and progresses in the order of the raster
-    scan - from left to right and from top to bottom of the picture. Each word in display memory is formatted as follows:
+    total_alto=256;
+    //total_ancho=512;
 
-    High byte (A0=0)						Low Byte (A0=1)						Mode
-    D7 D6 D5 D4 D3 D2 D1 D0			D7 D6 D5 D4 D3 D2 D1 D0
-    G7 G6 G5 G4 G3 G2 G1 G0			R7 R6 R5 R4 R3 R2 R1 R0		512-pixel
-    G3 F3 G2 F2 G1 F1 G0 F0			R3 B3 R2 B2 R1 B1 R0 B0		256-pixel
+    int flashing_color;
 
+    for (y=0;y<total_alto;y++){
+        //Al principio de cada linea, flash es siempre 0
+        int ql_linea_flashing=0;
+        for (x=0;x<256;) {
 
-    R, G, Band F in the above refer to Red, Green, Blue and Flash. The numbering is such that a binary
-    word appears written as it will appear on the display: ie R0 is the value of Red for the rightmost pixel,
-    that is the last pixel to be shifted out onto the raster.
-    10.3 Display Control Register
-    This is a write-only register, which is at $18063 in the QL .
-    One of its bits is available through the Qdos MT.DMODE trap: bit 3, which is 0 for 512-pixel mode and 1 for 256-pixel mode.
-    The other two bits of the display control register are not supported by Qdos, these being bit 1 of the display
-    control register, which can be used to blank the display completely, and bit 7, which can be used to switch the base of
-    screen memory from $20000 to $28000. Future versions of Qdos may allow the system variables to be
-    initialised at $30000 to take advantage of this dual- screen feature: the present version does not.
-    Bits 0,2,4,5 and 6 of the display control register should never be set to anything other than zero, as they are
-    reserved and may have unpredictable results in future versions of the QL hardware.
-    */
-                //En modo 256x256 hay parpadeo
+/*
+In 512-pixel mode, two bits per pixel are used, and the GREEN and BLUE signals are tied together, giving a choice of four colours:
+black, white, green and red. On a monochrome screen, this will translate as a four level greyscale.
+In 256-pixel mode, four bits per pixel are used: one bit each for Red, Green and Blue, and one bit for flashing.
+The flash bit operates as a toggle: when set for the first time, it freezes the background colour at the value set by R, G and B,
+and starts flashing at the next bit in the line; when set for the second time, it stops flashing.
+Flashing is always cleared at the beginning of a raster line.
 
 
-                byte_leido_h=buf_pantalla[memoria_pantalla_ql];
-                memoria_pantalla_ql++;
+Addressing for display memory starts at the bottom of dynamic RAM and progresses in the order of the raster
+scan - from left to right and from top to bottom of the picture. Each word in display memory is formatted as follows:
 
-                byte_leido_l=buf_pantalla[memoria_pantalla_ql];
-                memoria_pantalla_ql++;
-
-
-                int npixel;
-                for (npixel=7;npixel>=0;npixel-=2) {
-
-                    //G3 F3 G2 F2 G1 F1 G0 F0                 R3 B3 R2 B2 R1 B1 R0 B0         256-pixel
+High byte (A0=0)						Low Byte (A0=1)						Mode
+D7 D6 D5 D4 D3 D2 D1 D0			D7 D6 D5 D4 D3 D2 D1 D0
+G7 G6 G5 G4 G3 G2 G1 G0			R7 R6 R5 R4 R3 R2 R1 R0		512-pixel
+G3 F3 G2 F2 G1 F1 G0 F0			R3 B3 R2 B2 R1 B1 R0 B0		256-pixel
 
 
-                    green=((byte_leido_h)>>npixel)&1;
-                    red=((byte_leido_l)>>npixel)&1;
-                    blue=((byte_leido_l)>>(npixel-1))&1;
+R, G, Band F in the above refer to Red, Green, Blue and Flash. The numbering is such that a binary
+word appears written as it will appear on the display: ie R0 is the value of Red for the rightmost pixel,
+that is the last pixel to be shifted out onto the raster.
+10.3 Display Control Register
+This is a write-only register, which is at $18063 in the QL .
+One of its bits is available through the Qdos MT.DMODE trap: bit 3, which is 0 for 512-pixel mode and 1 for 256-pixel mode.
+The other two bits of the display control register are not supported by Qdos, these being bit 1 of the display
+control register, which can be used to blank the display completely, and bit 7, which can be used to switch the base of
+screen memory from $20000 to $28000. Future versions of Qdos may allow the system variables to be
+initialised at $30000 to take advantage of this dual- screen feature: the present version does not.
+Bits 0,2,4,5 and 6 of the display control register should never be set to anything other than zero, as they are
+reserved and may have unpredictable results in future versions of the QL hardware.
+*/
+            //En modo 256x256 hay parpadeo
+
+
+            byte_leido_h=orig[memoria_pantalla_ql];
+            memoria_pantalla_ql++;
+
+            byte_leido_l=orig[memoria_pantalla_ql];
+            memoria_pantalla_ql++;
+
+
+            int npixel;
+            for (npixel=7;npixel>=0;npixel-=2) {
+
+                //G3 F3 G2 F2 G1 F1 G0 F0                 R3 B3 R2 B2 R1 B1 R0 B0         256-pixel
+
+
+                green=((byte_leido_h)>>npixel)&1;
+                red=((byte_leido_l)>>npixel)&1;
+                blue=((byte_leido_l)>>(npixel-1))&1;
 
 
 /*
@@ -4961,57 +5048,181 @@ const int ql_colortable_original[8]={
 };
 */
 
-                    color1=green*4+red*2+blue;	// GRB
-                    //printf ("estado parpadeo: %d\n",estado_parpadeo.v);
+                color1=green*4+red*2+blue;	// GRB
+                //printf ("estado parpadeo: %d\n",estado_parpadeo.v);
 
-                    //TODO: estoy usando colores de la paleta del Spectrum en vez del QL,
-                    //esto es culpa de la manera de almacenar el color con flash y sin flash, que va metido en los 8 bits bajos,
-                    //aun siendo un int, no uso los 8 bits altos
-                    //Aunque usase los 8 bits bajos para color sin flash y los altos para color con flash, el numero de color
-                    //estaria limitado a 0-255, eso vale para Spectrum pero el numero de color en la paleta de QL es mayor que 256
+                //TODO: estoy usando colores de la paleta del Spectrum en vez del QL,
+                //esto es culpa de la manera de almacenar el color con flash y sin flash, que va metido en los 8 bits bajos,
+                //aun siendo un int, no uso los 8 bits altos
+                //Aunque usase los 8 bits bajos para color sin flash y los altos para color con flash, el numero de color
+                //estaria limitado a 0-255, eso vale para Spectrum pero el numero de color en la paleta de QL es mayor que 256
 
-                    //Entonces la mejor solucion es meter el numero de color de spectrum con brillo, que al final
-                    //son los mismos valores RGB que uso para QL
-                    color1 +=8;
+                //Entonces la mejor solucion es meter el numero de color de spectrum con brillo, que al final
+                //son los mismos valores RGB que uso para QL
+                color1 +=8;
+
+                int color_con_flash;
+                int color_sin_flash;
+
+                color_con_flash=color_sin_flash=color1;
+
+                if (ql_linea_flashing && estado_parpadeo.v && !desactivar_flash) {
+                    //color1=flashing_color;
+                    color_con_flash=flashing_color;
+                }
+
+
+
+                dest[offset_destino++]=color_sin_flash | (color_con_flash << 4);
+                x++;
+
+                //ql_putpixel_zoom(x++,y,color1);
+
+
+                //Ver si cambia valor bit flash
+                int bit_flashing=((byte_leido_h)>>(npixel-1))&1;
+                if (bit_flashing) {
+                    ql_linea_flashing ^=1;
+                    flashing_color=color1;
+                }
+
+
+            }
+        }
+    }
+////// Fin Trocito extraido de scr_refresca_pantalla_ql y adaptado al preview
+
+
+
+}
+
+void menu_filesel_preview_convert_scr_spec_to_buf(z80_byte *orig,int *dest)
+{
+
+            int x,y,bit_counter;
+
+        //z80_int offset_lectura=0;
+        for (y=0;y<192;y++) {
+            for (x=0;x<32;x++) {
+                z80_byte leido;
+                int offset_orig=screen_addr_table[y*32+x];
+
+                leido=orig[offset_orig];
+
+
+
+                //offset_lectura++;
+
+                int offset_destino=y*256+x*8;
+
+                int tinta;
+                int papel;
+
+                z80_byte atributo;
+
+                int pos_attr;
+
+
+
+                pos_attr=6144+((y/8)*32)+x;
+                //printf("%d\n",pos_attr);
+
+                atributo=orig[pos_attr];
+
+
+                tinta=(atributo)&7;
+                papel=(atributo>>3)&7;
+
+                if (atributo & 64) {
+                    tinta +=8;
+                    papel +=8;
+                }
+
+
+
+                for (bit_counter=0;bit_counter<8;bit_counter++) {
+
+
+                    int color_sin_flash=(leido & 128 ? tinta : papel);
 
                     int color_con_flash;
-                    int color_sin_flash;
-
-                    color_con_flash=color_sin_flash=color1;
-
-                    if (ql_linea_flashing && estado_parpadeo.v && !desactivar_flash) {
-                        //color1=flashing_color;
-                        color_con_flash=flashing_color;
+                    if (atributo&128) {
+                        color_con_flash=(leido & 128 ? papel : tinta);
+                    }
+                    else {
+                        color_con_flash=color_sin_flash;
                     }
 
 
 
-                    buffer_intermedio[offset_destino++]=color_sin_flash | (color_con_flash << 4);
-                    x++;
-
-                    //ql_putpixel_zoom(x++,y,color1);
-
-
-                    //Ver si cambia valor bit flash
-                    int bit_flashing=((byte_leido_h)>>(npixel-1))&1;
-                    if (bit_flashing) {
-                        ql_linea_flashing ^=1;
-                        flashing_color=color1;
-                    }
-
-
+                    //Codificamos en el nibble bajo el color sin flash, y en el nibble alto el color con flash
+                    dest[offset_destino+bit_counter]=color_sin_flash | (color_con_flash << 4);
+                    leido=leido << 1;
                 }
             }
         }
-    ////// Fin Trocito extraido de scr_refresca_pantalla_ql y adaptado al preview
+
+
+
+}
+
+char menu_filesel_last_preview_scr_filename[PATH_MAX]="";
+
+void menu_filesel_preview_render_scr(char *archivo_scr)
+{
+            //printf("es pantalla\n");
+
+    //Si no existe archivo, liberar preview
+    if (!si_existe_archivo(archivo_scr)) {
+        debug_printf(VERBOSE_DEBUG,"File SCR %s does not exist",archivo_scr);
+        menu_filesel_overlay_last_preview_width=0;
+        menu_filesel_overlay_last_preview_height=0;
+        return;
+    }
 
 
 
 
+    int file_size=get_file_size(archivo_scr);
+
+    //Si pantalla de QL (32768 bytes) y estamos en QL
+    if (util_preview_file_is_ql_screen(file_size) ) {
+        debug_printf(VERBOSE_DEBUG,"Rendering QL SCR");
+
+
+        //buffer lectura archivo
+        z80_byte *buf_pantalla;
+
+        buf_pantalla=malloc(32768);
+
+        if (buf_pantalla==NULL) cpu_panic("Can not allocate buffer for screen read");
+
+        //printf("Leyendo archivo_scr %s\n",archivo_scr);
+
+        int leidos=lee_archivo(archivo_scr,(char *)buf_pantalla,32768);
+
+        if (leidos<=0) return;
 
 
 
-		free(buf_pantalla);
+        //Asignamos primero buffer intermedio
+        int *buffer_intermedio;
+
+        int ancho=256;
+        int alto=256;
+
+        //  Asumimos que son pantallas de QL en modo 8: 8 colores, 256x256
+
+        int elementos=ancho*alto;
+
+        buffer_intermedio=malloc(sizeof(int)*elementos);
+
+        if (buffer_intermedio==NULL)  cpu_panic("Cannot allocate memory for reduce buffer");
+
+        menu_filesel_preview_convert_scr_ql_to_buf(buf_pantalla,buffer_intermedio);
+
+
+        free(buf_pantalla);
 
 
 
@@ -5020,132 +5231,75 @@ const int ql_colortable_original[8]={
         //y si hay que reducirlo se hace sobre la marcha en la funcion de overlay
         menu_filesel_overlay_assign_memory_preview(ancho,alto);
 
-        menu_filesel_preview_no_reduce_scr(buffer_intermedio,ancho,alto);
+        menu_filesel_overlay_last_preview_width=ancho;
+        menu_filesel_overlay_last_preview_height=alto;
 
-		free(buffer_intermedio);
+        menu_filesel_preview_no_reduce_scr(buffer_intermedio,ancho,alto,menu_filesel_overlay_last_preview_memory);
+
+        free(buffer_intermedio);
 
         return;
     }
 
-		//Leemos el archivo en memoria
+    if (menu_filesel_show_previews_on_zxdesktop.v) {
+        //printf("load preview on background\n");
+        strcpy(menu_filesel_last_preview_scr_filename,archivo_scr);
+        zxdesktop_draw_scrfile_load();
+        menu_draw_ext_desktop();
+    }
+
+    //Leemos el archivo en memoria
 
 
-		debug_printf(VERBOSE_DEBUG,"Rendering Spectrum SCR");
+    debug_printf(VERBOSE_DEBUG,"Rendering Spectrum SCR");
 
-		//buffer lectura archivo
-		z80_byte *buf_pantalla;
+    //buffer lectura archivo
+    z80_byte *buf_pantalla;
 
-		buf_pantalla=malloc(6912);
+    buf_pantalla=malloc(6912);
 
-		if (buf_pantalla==NULL) cpu_panic("Can not allocate buffer for screen read");
+    if (buf_pantalla==NULL) cpu_panic("Can not allocate buffer for screen read");
 
-		int leidos=lee_archivo(archivo_scr,(char *)buf_pantalla,6912);
+    int leidos=lee_archivo(archivo_scr,(char *)buf_pantalla,6912);
 
-		if (leidos<=0) return;
+    if (leidos<=0) return;
 
-		//fread(buf_pantalla,1,6912,ptr_scrfile);
+    //fread(buf_pantalla,1,6912,ptr_scrfile);
 
-		//fclose(ptr_scrfile);
-
-
-
-		//Asignamos primero buffer intermedio
-		int *buffer_intermedio;
-
-		int ancho=256;
-		int alto=192;
-
-
-		int elementos=ancho*alto;
-
-		buffer_intermedio=malloc(sizeof(int)*elementos);
-
-		if (buffer_intermedio==NULL)  cpu_panic("Cannot allocate memory for reduce buffer");
-
-
-		int x,y,bit_counter;
-
-		z80_int offset_lectura=0;
-		for (y=0;y<192;y++) {
-			for (x=0;x<32;x++) {
-				z80_byte leido;
-				int offset_orig=screen_addr_table[y*32+x];
-				//fread(&leido,1,1,ptr_scrfile);
-				leido=buf_pantalla[offset_orig];
-
-				//int xdestino,ydestino;
-
-				//esta funcion no es muy rapida pero....
-				//util_spectrumscreen_get_xy(offset_lectura,&xdestino,&ydestino);
-
-				offset_lectura++;
-
-				int offset_destino=y*256+x*8;
-
-				int tinta;
-				int papel;
-
-				z80_byte atributo;
-
-				int pos_attr;
-
-				//pos_attr=(ydestino/8)*32+(xdestino/8);
-
-				pos_attr=6144+((y/8)*32)+x;
-				//printf("%d\n",pos_attr);
-
-				atributo=buf_pantalla[pos_attr];
-
-				//atributo=56;
-
-				tinta=(atributo)&7;
-				papel=(atributo>>3)&7;
-
-				if (atributo & 64) {
-					tinta +=8;
-					papel +=8;
-				}
+    //fclose(ptr_scrfile);
 
 
 
-				for (bit_counter=0;bit_counter<8;bit_counter++) {
+    //Asignamos primero buffer intermedio
+    int *buffer_intermedio;
 
-					//de momento solo 0 o 1
-					int color_sin_flash=(leido & 128 ? tinta : papel);
-
-                    int color_con_flash;
-                    if (atributo&128) {
-                        color_con_flash=(leido & 128 ? papel : tinta);
-                    }
-                    else {
-                        color_con_flash=(leido & 128 ? tinta : papel);
-                    }
+    int ancho=256;
+    int alto=192;
 
 
+    int elementos=ancho*alto;
 
-                    //Codificamos en el nibble bajo el color sin flash, y en el nibble alto el color con flash
-					buffer_intermedio[offset_destino+bit_counter]=color_sin_flash | (color_con_flash << 4);
-					leido=leido << 1;
-				}
-			}
-		}
+    buffer_intermedio=malloc(sizeof(int)*elementos);
+
+    if (buffer_intermedio==NULL)  cpu_panic("Cannot allocate memory for reduce buffer");
 
 
-
-		free(buf_pantalla);
-
+    menu_filesel_preview_convert_scr_spec_to_buf(buf_pantalla,buffer_intermedio);
 
 
-
-        //Ahora siempre se lee el preview a tamaño completo,
-        //y si hay que reducirlo se hace sobre la marcha en la funcion de overlay
-        menu_filesel_overlay_assign_memory_preview(256,192);
-
-        menu_filesel_preview_no_reduce_scr(buffer_intermedio,256,192);
-
-		free(buffer_intermedio);
+    free(buf_pantalla);
 
 
+    //Ahora siempre se lee el preview a tamaño completo,
+    //y si hay que reducirlo se hace sobre la marcha en la funcion de overlay
+    menu_filesel_overlay_assign_memory_preview(256,192);
+
+    menu_filesel_overlay_last_preview_width=256;
+    menu_filesel_overlay_last_preview_height=192;
+
+    menu_filesel_preview_no_reduce_scr(buffer_intermedio,256,192,menu_filesel_overlay_last_preview_memory);
+
+    free(buffer_intermedio);
 
 }
 
@@ -5163,20 +5317,20 @@ int menu_filesel_render_preview_directory_find_file_filter_func(const struct dir
 
     zvfs_chdir(menu_filesel_render_preview_directory_find_file_filter_func_target_dir);
 
-	int tipo_archivo=get_file_type((char *)d->d_name);
+    int tipo_archivo=get_file_type((char *)d->d_name);
 
     //Restaurar directorio
     zvfs_chdir(directorio_actual);
 
     //printf("tipo_archivo: %d name: %s\n",tipo_archivo,d->d_name);
 
-	//Si no es archivo ni link, no ok
+    //Si no es archivo ni link, no ok
 
-	if (tipo_archivo  == 0) {
+    if (tipo_archivo  == 0) {
         //printf("NOOK filesel is not a directory, file or link: %s\n",d->d_name);
-		debug_printf (VERBOSE_DEBUG,"Item is not a directory, file or link");
-		return 0;
-	}
+        debug_printf (VERBOSE_DEBUG,"Item is not a directory, file or link");
+        return 0;
+    }
 
     //printf("OK filesel %s\n",d->d_name);
     return 1;
@@ -5216,7 +5370,7 @@ int menu_filesel_render_preview_directory_find_file(char *directorio,char *archi
 
     struct dirent **namelist;
 
-	struct dirent *nombreactual;
+    struct dirent *nombreactual;
 
     int n;
 
@@ -5230,23 +5384,29 @@ int menu_filesel_render_preview_directory_find_file(char *directorio,char *archi
     else {
 
 #ifndef MINGW
-	n = scandir(directorio, &namelist, menu_filesel_render_preview_directory_find_file_filter_func, menu_filesel_alphasort);
+    #ifdef OTHER_UNIX
+    n = scandir_mingw(directorio, &namelist, menu_filesel_render_preview_directory_find_file_filter_func, menu_filesel_alphasort);
+    #else
+    //Linux, Mac...
+    n = scandir(directorio, &namelist, menu_filesel_render_preview_directory_find_file_filter_func, menu_filesel_alphasort);
+    #endif
 #else
-	//alternativa scandir, creada por mi
-	n = scandir_mingw(directorio, &namelist, menu_filesel_render_preview_directory_find_file_filter_func, menu_filesel_alphasort);
+    //Windows
+    //alternativa scandir, creada por mi
+    n = scandir_mingw(directorio, &namelist, menu_filesel_render_preview_directory_find_file_filter_func, menu_filesel_alphasort);
 #endif
 
     }
 
     if (n < 0) {
-		debug_printf (VERBOSE_ERR,"Error reading directory contents: %s",strerror(errno));
-		return 0;
-	}
+        debug_printf (VERBOSE_ERR,"Error reading directory contents: %s",strerror(errno));
+        return 0;
+    }
 
     else {
         int i;
 
-	//printf("total elementos directorio: %d\n",n);
+    //printf("total elementos directorio: %d\n",n);
 
         for (i=0;i<n;i++) {
             nombreactual=namelist[i];
@@ -5268,12 +5428,12 @@ int menu_filesel_render_preview_directory_find_file(char *directorio,char *archi
 
         }
 
-		free(namelist);
+        free(namelist);
 
     }
 
-	return 0;
-	//free(namelist);
+    return 0;
+    //free(namelist);
 
 }
 
@@ -5300,9 +5460,9 @@ void menu_filesel_render_preview_directory(char *dir_name)
     char archivo_info_pantalla[PATH_MAX];
     sprintf(archivo_info_pantalla,"%s/%s",tmpdir,MENU_SCR_INFO_FILE_NAME);
 
-	//Definimos preview_scr para los que convierten snapshot directo a scr
-	char preview_scr[PATH_MAX];
-	sprintf (preview_scr,"%s/%s.scr",tmpdir,dir_name);
+    //Definimos preview_scr para los que convierten snapshot directo a scr
+    char preview_scr[PATH_MAX];
+    sprintf (preview_scr,"%s/%s.scr",tmpdir,dir_name);
 
 
     if (!si_existe_archivo(archivo_info_pantalla)) {
@@ -5379,8 +5539,8 @@ void menu_filesel_overlay_render_preview_aux(int es_directorio,char *archivo_pre
     //Obtener directorio preview
     char tmpdir[PATH_MAX];
 
-	//Definimos preview_scr para los que convierten snapshot directo a scr
-	char preview_scr[PATH_MAX];
+    //Definimos preview_scr para los que convierten snapshot directo a scr
+    char preview_scr[PATH_MAX];
 
     //quitar del nombre las / o \\ que puedan haber. esto sucede cuando
     //se hace un preview de un archivo zip por ejemplo (y aqui entrara un directorio con ruta a /tmp/zesarux....)
@@ -5412,7 +5572,32 @@ void menu_filesel_overlay_render_preview_aux(int es_directorio,char *archivo_pre
         //strcpy (nombre_sin_barras,archivo_preview);
         sprintf (tmpdir,"%s/%s_previewdir",get_tmpdir_base(),archivo_preview);
 
-        sprintf (preview_scr,"%s/%s.scr",tmpdir,archivo_preview);
+        //En el caso de los archivos README o los txt, dado que pueden haber mas de uno con mismo nombre en diferentes directorios,
+        //generar un nombre unico de preview para tener cada uno con su preview distinto
+        if (!util_compare_file_name(archivo_preview,"README") || !util_compare_file_extension(archivo_preview,"txt")) {
+            char nombre_entero_sin_barras[PATH_MAX];
+            if (dir_name==NULL) {
+                char directorio_actual[PATH_MAX];
+                getcwd(directorio_actual,PATH_MAX);
+                strcpy(nombre_entero_sin_barras,directorio_actual);
+            }
+            else {
+                if (dir_name[0]==0) {
+                    char directorio_actual[PATH_MAX];
+                    getcwd(directorio_actual,PATH_MAX);
+                    strcpy(nombre_entero_sin_barras,directorio_actual);
+                }
+                else {
+                    strcpy(nombre_entero_sin_barras,dir_name);
+                }
+            }
+            util_normalize_file_name_for_temp_dir(nombre_entero_sin_barras);
+            sprintf (preview_scr,"%s/%s-%s.scr",tmpdir,nombre_entero_sin_barras,archivo_preview);
+        }
+
+        else {
+            sprintf (preview_scr,"%s/%s.scr",tmpdir,archivo_preview);
+        }
     }
 
     char archivo_info_pantalla[PATH_MAX];
@@ -5427,7 +5612,7 @@ void menu_filesel_overlay_render_preview_aux(int es_directorio,char *archivo_pre
 
     /*
     if (es_directorio) {
-	    sprintf (preview_scr,"%s/%s.scr",tmpdir,dir_name_sin_barras);
+        sprintf (preview_scr,"%s/%s.scr",tmpdir,dir_name_sin_barras);
 
         //temp mal
         //sprintf (preview_scr,"%s/%s.scr",tmpdir,dir_name);
@@ -5524,13 +5709,13 @@ void menu_filesel_overlay_render_preview_in_memory(void)
 
 
 
-	//de momento nada mas
-	debug_printf(VERBOSE_DEBUG,"Preview File: %s",filesel_nombre_archivo_seleccionado);
+    //de momento nada mas
+    debug_printf(VERBOSE_DEBUG,"Preview File: %s",filesel_nombre_archivo_seleccionado);
 
-	if (!strcmp(menu_filesel_last_preview_file,filesel_nombre_archivo_seleccionado)) {
-		debug_printf(VERBOSE_DEBUG,"File is the same as before. Do not do anything");
-		return;
-	}
+    if (!strcmp(menu_filesel_last_preview_file,filesel_nombre_archivo_seleccionado)) {
+        debug_printf(VERBOSE_DEBUG,"File is the same as before. Do not do anything");
+        return;
+    }
 
     strcpy(menu_filesel_last_preview_file,filesel_nombre_archivo_seleccionado);
 
@@ -5552,7 +5737,7 @@ void menu_filesel_overlay_render_preview_in_memory(void)
     }
 
     else {
-	    debug_printf(VERBOSE_DEBUG,"Rendering file preview");
+        debug_printf(VERBOSE_DEBUG,"Rendering file preview");
 
         long long int file_size;
 
@@ -5568,7 +5753,7 @@ void menu_filesel_overlay_render_preview_in_memory(void)
 
 
         if (menu_filesel_is_compressed(filesel_nombre_archivo_seleccionado)) {
-			debug_printf (VERBOSE_DEBUG,"Rendering Compressed file");
+            debug_printf (VERBOSE_DEBUG,"Rendering Compressed file");
             char tmpdir[PATH_MAX];
 
             menu_filesel_uncompress_get_tmpdir(filesel_nombre_archivo_seleccionado,tmpdir);
@@ -5586,7 +5771,7 @@ void menu_filesel_overlay_render_preview_in_memory(void)
             //esto es solo buffer temporal
             char archivo_preview[PATH_MAX];
             menu_filesel_overlay_render_preview_aux(1,archivo_preview,tmpdir);
-		}
+        }
 
         else {
             menu_filesel_overlay_render_preview_aux(0,filesel_nombre_archivo_seleccionado,NULL);
@@ -5605,13 +5790,13 @@ void old_menu_filesel_overlay_render_preview_in_memory(void)
 
 
 
-	//de momento nada mas
-	debug_printf(VERBOSE_DEBUG,"Preview File: %s",filesel_nombre_archivo_seleccionado);
+    //de momento nada mas
+    debug_printf(VERBOSE_DEBUG,"Preview File: %s",filesel_nombre_archivo_seleccionado);
 
-	if (!strcmp(menu_filesel_last_preview_file,filesel_nombre_archivo_seleccionado)) {
-		debug_printf(VERBOSE_DEBUG,"File is the same as before. Do not do anything");
-		return;
-	}
+    if (!strcmp(menu_filesel_last_preview_file,filesel_nombre_archivo_seleccionado)) {
+        debug_printf(VERBOSE_DEBUG,"File is the same as before. Do not do anything");
+        return;
+    }
 
     strcpy(menu_filesel_last_preview_file,filesel_nombre_archivo_seleccionado);
 
@@ -5632,7 +5817,7 @@ void old_menu_filesel_overlay_render_preview_in_memory(void)
     }
 
 
-	debug_printf(VERBOSE_DEBUG,"Rendering file preview");
+    debug_printf(VERBOSE_DEBUG,"Rendering file preview");
 
     char archivo_preview[PATH_MAX];
     strcpy(archivo_preview,filesel_nombre_archivo_seleccionado);
@@ -5645,9 +5830,9 @@ void old_menu_filesel_overlay_render_preview_in_memory(void)
     char archivo_info_pantalla[PATH_MAX];
     sprintf(archivo_info_pantalla,"%s/%s",tmpdir,MENU_SCR_INFO_FILE_NAME);
 
-	//Definimos preview_scr para los que convierten snapshot directo a scr
-	char preview_scr[PATH_MAX];
-	sprintf (preview_scr,"%s/%s.scr",tmpdir,archivo_preview);
+    //Definimos preview_scr para los que convierten snapshot directo a scr
+    char preview_scr[PATH_MAX];
+    sprintf (preview_scr,"%s/%s.scr",tmpdir,archivo_preview);
 
 
     if (!si_existe_archivo(archivo_info_pantalla)) {
@@ -5711,12 +5896,12 @@ int contador_scroll_current_dir=0;
 
 int menu_filesel_overlay_show_current_dir_aux(zxvision_window *ventana,char *current_dir,char *current_dir_mensaje)
 {
-	//char current_dir[PATH_MAX];
+    //char current_dir[PATH_MAX];
     //char current_dir_rotado[PATH_MAX];
-	//char buffer_dir[OVERLAY_SCREEN_MAX_WIDTH+1];
-	//char buffer3[PATH_MAX+20];
+    //char buffer_dir[OVERLAY_SCREEN_MAX_WIDTH+1];
+    //char buffer3[PATH_MAX+20];
 
-	//getcwd(current_dir,PATH_MAX);
+    //getcwd(current_dir,PATH_MAX);
     zvfs_getcwd(current_dir,PATH_MAX);
 
     strcpy(current_dir_mensaje,"Current dir: ");
@@ -5748,12 +5933,12 @@ void menu_filesel_overlay_show_current_dir_init_scroll(zxvision_window *ventana)
 
 void menu_filesel_overlay_show_current_dir(zxvision_window *ventana,int rotar)
 {
-	char current_dir[PATH_MAX];
+    char current_dir[PATH_MAX];
     char current_dir_rotado[PATH_MAX];
-	//char buffer_dir[OVERLAY_SCREEN_MAX_WIDTH+1];
-	char buffer3[PATH_MAX+20];
+    //char buffer_dir[OVERLAY_SCREEN_MAX_WIDTH+1];
+    char buffer3[PATH_MAX+20];
 
-	//getcwd(current_dir,PATH_MAX);
+    //getcwd(current_dir,PATH_MAX);
     //zvfs_getcwd(current_dir,PATH_MAX);
 
     char current_dir_mensaje[30];
@@ -5795,9 +5980,9 @@ void menu_filesel_overlay_show_current_dir(zxvision_window *ventana,int rotar)
 
 
 
-	sprintf (buffer3,"%s%s",current_dir_mensaje,current_dir_rotado);
+    sprintf (buffer3,"%s%s",current_dir_mensaje,current_dir_rotado);
 
-	zxvision_print_string_defaults_fillspc(ventana,1,0,buffer3);
+    zxvision_print_string_defaults_fillspc(ventana,1,0,buffer3);
 
     if (rotar) {
         contador_scroll_current_dir++;
@@ -5818,21 +6003,22 @@ void menu_filesel_overlay_show_current_dir(zxvision_window *ventana,int rotar)
 //Overlay para mostrar los previews
 void menu_filesel_overlay(void)
 {
-	//Y el procesado de nueva preview no tan seguido
-	//esto hara ejecutar esto 5 veces por segundo
-	if ( ((contador_segundo%200) == 0 && menu_filesel_overlay_valor_contador_segundo_anterior!=contador_segundo) || menu_multitarea==0) {
-		menu_filesel_overlay_valor_contador_segundo_anterior=contador_segundo;
+    //Y el procesado de nueva preview no tan seguido
+    //esto hara ejecutar esto 5 veces por segundo
+    if ( ((contador_segundo%200) == 0 && menu_filesel_overlay_valor_contador_segundo_anterior!=contador_segundo) || menu_multitarea==0 || menu_filesel_overlay_force_render) {
+        menu_filesel_overlay_force_render=0;
+        menu_filesel_overlay_valor_contador_segundo_anterior=contador_segundo;
 
-		//renderizar preview en memoria si conviene
-		if (si_complete_video_driver() && menu_filesel_show_previews.v) menu_filesel_overlay_render_preview_in_memory();
+        //renderizar preview en memoria si conviene
+        if (si_complete_video_driver() && menu_filesel_show_previews.v) menu_filesel_overlay_render_preview_in_memory();
 
         if (menu_multitarea) menu_filesel_overlay_show_current_dir(menu_filesel_overlay_window,1);
 
-	}
+    }
 
 
 
-	//El overlay de la pantalla
+    //El overlay de la pantalla
     if (si_complete_video_driver() && menu_filesel_show_previews.v) menu_filesel_overlay_draw_preview();
 
     //Realmente no tiene contenido de texto este overlay, pero dado que estamos
@@ -5853,6 +6039,11 @@ void menu_filesel_preexit(zxvision_window *ventana)
     zxvision_reset_window_overlay(ventana);
 
     zxvision_destroy_window(ventana);
+
+    if (menu_filesel_show_previews_on_zxdesktop.v) {
+        //Quitar el preview de scr del fondo y dejar lo que hubiera
+        if (zxdesktop_draw_scrfile_enabled) zxdesktop_draw_scrfile_load();
+    }
 
 }
 
@@ -5899,30 +6090,41 @@ void menu_filesel_chdir(char *directorio)
 
 }
 
+//Meter en lista de recientes si se está pidiendo un directorio
+void menu_filesel_add_recent_dir(int si_directorio)
+{
+    if (si_directorio) {
+        char buffer[PATH_MAX];
+        sprintf(buffer,"%s/nofile",menu_filesel_last_directory_seen);
+        last_filesused_insert(buffer);
+    }
+}
+
 //Retorna 1 si seleccionado archivo. Retorna 0 si sale con ESC
 //Si seleccionado archivo, lo guarda en variable *archivo
 //Si sale con ESC, devuelve en menu_filesel_last_directory_seen ultimo directorio
 //si_save indica a 1 que es operacion de grabar y facilitamos al usuario poniendo el cursor en el campo de nombre de archivo
-int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
+//si_directorio indica que se acabará seleccionando un directorio con ESC y por tanto se agregará dicho directorio a la lista de recientes
+int menu_filesel_all_parameters(char *titulo,char *filtros[],char *archivo,int si_save,int si_directorio)
 {
 
-	//En el caso de stdout es mucho mas simple
+    //En el caso de stdout es mucho mas simple
     if (!strcmp(scr_new_driver_name,"stdout")) {
-		printf ("%s :\n",titulo);
-		scrstdout_menu_print_speech_macro(titulo);
-		scanf("%s",archivo);
-		return 1;
+        printf ("%s :\n",titulo);
+        scrstdout_menu_print_speech_macro(titulo);
+        scanf("%s",archivo);
+        return 1;
     }
 
     //quitar preview del anterior archivo
     menu_filesel_overlay_last_preview_width=0;
     menu_filesel_overlay_last_preview_height=0;
 
-	menu_reset_counters_tecla_repeticion();
+    menu_reset_counters_tecla_repeticion();
 
     //menu_filesel_overlay_show_current_dir_init_scroll();
 
-	int tecla;
+    int tecla;
 
     menu_filesel_select_filters_opcion_seleccionada=0;
 
@@ -5933,116 +6135,116 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
         primera_vez_input_file_blanco=1;
     }
 
-	else {
+    else {
         filesel_zona_pantalla=1;
     }
 
-	getcwd(filesel_directorio_inicial,PATH_MAX);
+    getcwd(filesel_directorio_inicial,PATH_MAX);
 
 
     //printf ("confirm\n");
 
-	//printf ("antes menu_espera_no_tecla en menu filesel\n");
+    //printf ("antes menu_espera_no_tecla en menu filesel\n");
 
-	menu_espera_no_tecla();
+    menu_espera_no_tecla();
 
-	//printf ("despues menu_espera_no_tecla en menu filesel\n");
+    //printf ("despues menu_espera_no_tecla en menu filesel\n");
 
-	zxvision_window ventana_filesel;
-	zxvision_window *ventana;
+    zxvision_window ventana_filesel;
+    zxvision_window *ventana;
 
-	//Inicialmente a NULL
-	ventana=NULL;
+    //Inicialmente a NULL
+    ventana=NULL;
 
 
-	//guardamos filtros originales
-	filesel_filtros_iniciales=filtros;
+    //guardamos filtros originales
+    filesel_filtros_iniciales=filtros;
 
     filtros_todos_archivos[0]=filesel_todos_archivos_primero;
     filtros_todos_archivos[1]=filesel_todos_archivos_segundo;
 
-	filesel_filtros=filtros;
+    filesel_filtros=filtros;
 
-	filesel_item *item_seleccionado;
+    filesel_item *item_seleccionado;
 
-	int aux_pgdnup;
-	//menu_active_item_primera_vez=1;
+    int aux_pgdnup;
+    //menu_active_item_primera_vez=1;
 
-	//Decir directorio activo
-	menu_textspeech_say_current_directory();
+    //Decir directorio activo
+    menu_textspeech_say_current_directory();
 
-	//Inicializar mouse wheel a 0, por si acaso
-	mouse_wheel_vertical=mouse_wheel_horizontal=0;
+    //Inicializar mouse wheel a 0, por si acaso
+    mouse_wheel_vertical=mouse_wheel_horizontal=0;
 
 
 //Esto lo hago para poder debugar facilmente la opcion de cambio de unidad
 /*#ifdef MINGW
-	int we_are_windows=1;
+    int we_are_windows=1;
 #else
-	int we_are_windows=0;
+    int we_are_windows=0;
 
 #endif*/
 
 
-	do {
-		menu_speech_reset_tecla_pulsada();
+    do {
+        menu_speech_reset_tecla_pulsada();
         //printf("menu_speech_reset_tecla_pulsada filesel linea 5547\n");
-		menu_active_item_primera_vez=1;
-		filesel_linea_seleccionada=0;
-		filesel_archivo_seleccionado=0;
-		//leer todos archivos
-		int ret=menu_filesel_readdir();
-		if (ret) {
-			//Error leyendo directorio
-			//restauramos modo normal de texto de menu
-     		//set_menu_overlay_function(normal_overlay_texto_menu);
+        menu_active_item_primera_vez=1;
+        filesel_linea_seleccionada=0;
+        filesel_archivo_seleccionado=0;
+        //leer todos archivos
+        int ret=menu_filesel_readdir();
+        if (ret) {
+            //Error leyendo directorio
+            //restauramos modo normal de texto de menu
+             //set_menu_overlay_function(normal_overlay_texto_menu);
             zxvision_reset_window_overlay(ventana);
 
-			menu_espera_no_tecla();
-			zvfs_chdir(filesel_directorio_inicial);
-			menu_filesel_free_mem();
-			zxvision_destroy_window(ventana);
-			return 0;
+            menu_espera_no_tecla();
+            zvfs_chdir(filesel_directorio_inicial);
+            menu_filesel_free_mem();
+            zxvision_destroy_window(ventana);
+            return 0;
 
-		}
-
-
-		//printf ("Total archivos en directorio: %d\n",filesel_total_items);
-		//printf ("despues leer directorio\n");
-		//Crear ventana. Si ya existia, borrarla
-		if (ventana!=NULL) {
-			//printf ("Destroy previous filesel window\n");
+        }
 
 
-			//Guardar anteriores tamaños ventana
-			menu_filesel_save_params_window(ventana);
+        //printf ("Total archivos en directorio: %d\n",filesel_total_items);
+        //printf ("despues leer directorio\n");
+        //Crear ventana. Si ya existia, borrarla
+        if (ventana!=NULL) {
+            //printf ("Destroy previous filesel window\n");
+
+
+            //Guardar anteriores tamaños ventana
+            menu_filesel_save_params_window(ventana);
 
             menu_filesel_preexit(ventana);
-		}
-		ventana=&ventana_filesel;
+        }
+        ventana=&ventana_filesel;
 
-		int alto_total=filesel_total_items+ZXVISION_FILESEL_INITIAL_MARGIN; //Sumarle las leyendas, etc
+        int alto_total=filesel_total_items+ZXVISION_FILESEL_INITIAL_MARGIN; //Sumarle las leyendas, etc
 
 
-		//Usar ultimas coordenadas y tamaño, sin comprobar rango de maximo ancho y alto 32x24
-		//Si no hay ultimas, poner las de por defecto
+        //Usar ultimas coordenadas y tamaño, sin comprobar rango de maximo ancho y alto 32x24
+        //Si no hay ultimas, poner las de por defecto
 
         int is_minimized,is_maximized,ancho_antes_minimize,alto_antes_minimize;  //aunque no usamos estos parametros
 
-		if (!util_find_window_geometry("filesel",&last_filesel_ventana_x,&last_filesel_ventana_y,
+        if (!util_find_window_geometry("filesel",&last_filesel_ventana_x,&last_filesel_ventana_y,
             &last_filesel_ventana_visible_ancho,&last_filesel_ventana_visible_alto,&is_minimized,&is_maximized,&ancho_antes_minimize,&alto_antes_minimize)) {
-			last_filesel_ventana_x=FILESEL_INICIAL_X;
-			last_filesel_ventana_y=FILESEL_INICIAL_Y;
-			last_filesel_ventana_visible_ancho=FILESEL_INICIAL_ANCHO;
-			last_filesel_ventana_visible_alto=FILESEL_INICIAL_ALTO;
-		}
+            last_filesel_ventana_x=FILESEL_INICIAL_X;
+            last_filesel_ventana_y=FILESEL_INICIAL_Y;
+            last_filesel_ventana_visible_ancho=FILESEL_INICIAL_ANCHO;
+            last_filesel_ventana_visible_alto=FILESEL_INICIAL_ALTO;
+        }
 
 
-		//zxvision_new_window_check_range(&last_filesel_ventana_x,&last_filesel_ventana_y,&last_filesel_ventana_visible_ancho,&last_filesel_ventana_visible_alto);
-		//zxvision_new_window_no_check_range(ventana,last_filesel_ventana_x,last_filesel_ventana_y,last_filesel_ventana_visible_ancho,last_filesel_ventana_visible_alto,last_filesel_ventana_visible_ancho-1,alto_total,titulo);
+        //zxvision_new_window_check_range(&last_filesel_ventana_x,&last_filesel_ventana_y,&last_filesel_ventana_visible_ancho,&last_filesel_ventana_visible_alto);
+        //zxvision_new_window_no_check_range(ventana,last_filesel_ventana_x,last_filesel_ventana_y,last_filesel_ventana_visible_ancho,last_filesel_ventana_visible_alto,last_filesel_ventana_visible_ancho-1,alto_total,titulo);
 
         //Desactivado: le damos mas de alto para rellenar zona no usada de debajo (el +last_filesel_ventana_visible_alto)
-		zxvision_new_window_nocheck_staticsize(ventana,last_filesel_ventana_x,last_filesel_ventana_y,
+        zxvision_new_window_nocheck_staticsize(ventana,last_filesel_ventana_x,last_filesel_ventana_y,
             last_filesel_ventana_visible_ancho,last_filesel_ventana_visible_alto,
             last_filesel_ventana_visible_ancho-1,alto_total/*+last_filesel_ventana_visible_alto*/,
             titulo);
@@ -6050,11 +6252,11 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
 
 
         //printf("alto: %d\n",ventana->total_height);
-	    ventana->upper_margin=FILESEL_UPPER_MARGIN; //4;
-	    ventana->lower_margin=FILESEL_LOWER_MAGIN; //4;
-		zxvision_set_visible_cursor(ventana);
+        ventana->upper_margin=FILESEL_UPPER_MARGIN; //4;
+        ventana->lower_margin=FILESEL_LOWER_MAGIN; //4;
+        zxvision_set_visible_cursor(ventana);
         ventana->acortar_cursor=1;
-		strcpy(ventana->geometry_name,"filesel");
+        strcpy(ventana->geometry_name,"filesel");
 
         //no indicar que se ha escrito mas alla del tamanyo
         ventana->do_not_warn_tried_write_beyond_size=1;
@@ -6067,59 +6269,59 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
         ventana->beyond_height=last_filesel_ventana_visible_alto-(FILESEL_UPPER_MARGIN+FILESEL_LOWER_MAGIN+FILESEL_INICIO_DIR-1); //-11
         ventana->beyond_color=ESTILO_GUI_PAPEL_CAMPO_SELECCIONABLE;
 
-		if (menu_filesel_show_utils.v) {
-			//Activar los hotkeys desde raton en el caso de file utilities
-			ventana->can_mouse_send_hotkeys=1;
-		}
+        if (menu_filesel_show_utils.v) {
+            //Activar los hotkeys desde raton en el caso de file utilities
+            ventana->can_mouse_send_hotkeys=1;
+        }
 
         //Para que elimine restos de anteriores previews
         ventana->must_clear_cache_on_draw=1;
 
-		zxvision_draw_window(ventana);
+        zxvision_draw_window(ventana);
 
         menu_filesel_overlay_show_current_dir_init_scroll(ventana);
 
 
-		//Overlay para los previews. Siempre que tengamos video driver completo
+        //Overlay para los previews. Siempre que tengamos video driver completo
         menu_filesel_set_overlay(ventana);
 
-		zxvision_menu_filesel_print_filters(ventana,filesel_filtros);
-		zxvision_menu_filesel_print_text_contents(ventana);
-		zxvision_menu_filesel_print_legend(ventana);
-		int releer_directorio=0;
+        zxvision_menu_filesel_print_filters(ventana,filesel_filtros);
+        zxvision_menu_filesel_print_text_contents(ventana);
+        zxvision_menu_filesel_print_legend(ventana);
+        int releer_directorio=0;
 
 
 
-		//El menu_print_dir aqui no hace falta porque ya entrara en el switch (filesel_zona_pantalla) inicialmente cuando filesel_zona_pantalla vale 1
-		//menu_print_dir(filesel_archivo_seleccionado);
+        //El menu_print_dir aqui no hace falta porque ya entrara en el switch (filesel_zona_pantalla) inicialmente cuando filesel_zona_pantalla vale 1
+        //menu_print_dir(filesel_archivo_seleccionado);
 
-		zxvision_draw_window_contents(ventana);
+        zxvision_draw_window_contents(ventana);
 
-		menu_refresca_pantalla();
-
-
-		if (menu_filesel_posicionar_archivo.v) {
-			zxvision_menu_filesel_localiza_archivo(ventana,menu_filesel_posicionar_archivo_nombre);
-
-			menu_filesel_posicionar_archivo.v=0;
-		}
+        menu_refresca_pantalla();
 
 
-		do {
-			//printf ("\nReleer directorio\n");
-			//printf ("cursor_line: %d filesel_linea_seleccionada: %d filesel_archivo_seleccionado %d\n",
-			//	ventana->cursor_line,filesel_linea_seleccionada,filesel_archivo_seleccionado);
+        if (menu_filesel_posicionar_archivo.v) {
+            zxvision_menu_filesel_localiza_archivo(ventana,menu_filesel_posicionar_archivo_nombre);
 
-			//printf("filesel_linea_seleccionada: %d\n",filesel_linea_seleccionada);
+            menu_filesel_posicionar_archivo.v=0;
+        }
 
 
-			//printf ("(FILESEL_ALTO-10): %d zxvision_get_filesel_alto_dir: %d\n",(FILESEL_ALTO-10),zxvision_get_filesel_alto_dir(ventana) );
+        do {
+            //printf ("\nReleer directorio\n");
+            //printf ("cursor_line: %d filesel_linea_seleccionada: %d filesel_archivo_seleccionado %d\n",
+            //	ventana->cursor_line,filesel_linea_seleccionada,filesel_archivo_seleccionado);
 
-			switch (filesel_zona_pantalla) {
-				case 0:
-				//zona superior de nombre de archivo
-				zxvision_reset_visible_cursor(ventana);
-		                zxvision_menu_print_dir(filesel_archivo_seleccionado,ventana);
+            //printf("filesel_linea_seleccionada: %d\n",filesel_linea_seleccionada);
+
+
+            //printf ("(FILESEL_ALTO-10): %d zxvision_get_filesel_alto_dir: %d\n",(FILESEL_ALTO-10),zxvision_get_filesel_alto_dir(ventana) );
+
+            switch (filesel_zona_pantalla) {
+                case 0:
+                //zona superior de nombre de archivo
+                zxvision_reset_visible_cursor(ventana);
+                        zxvision_menu_print_dir(filesel_archivo_seleccionado,ventana);
 
                 int forzar_cursor=0;
 
@@ -6151,158 +6353,175 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
                     primera_vez_input_file_blanco=0;
                 }
 
-				zxvision_draw_window_contents(ventana);
-                		//para que haga lectura del edit box
-		                menu_speech_reset_tecla_pulsada();
+                zxvision_draw_window_contents(ventana);
+                        //para que haga lectura del edit box
+                        menu_speech_reset_tecla_pulsada();
                         //printf("menu_speech_reset_tecla_pulsada filesel linea 5716\n");
 
-				int ancho_mostrado=ventana->visible_width-6-2;
-				if (ancho_mostrado<2) {
-					//La ventana es muy pequeña como para editar
-					menu_reset_counters_tecla_repeticion();
-					filesel_zona_pantalla=1;
-					//no releer todos archivos
-					menu_speech_set_tecla_pulsada();
+                int ancho_mostrado=ventana->visible_width-6-2;
+                if (ancho_mostrado<2) {
+                    //La ventana es muy pequeña como para editar
+                    menu_reset_counters_tecla_repeticion();
+                    filesel_zona_pantalla=1;
+                    //no releer todos archivos
+                    menu_speech_set_tecla_pulsada();
 
-				}
+                }
 
-				else {
+                else {
 
 
-				tecla=zxvision_scanf(ventana,filesel_nombre_archivo_seleccionado,PATH_MAX,ancho_mostrado,7,1,0,0,forzar_cursor);
-				//); //6 ocupa el texto "File: "
+                tecla=zxvision_scanf(ventana,filesel_nombre_archivo_seleccionado,PATH_MAX,ancho_mostrado,7,1,1,0,forzar_cursor);
+                //); //6 ocupa el texto "File: "
 
-				if (tecla==15) {
-					//printf ("TAB. siguiente seccion\n");
-					menu_reset_counters_tecla_repeticion();
-					filesel_zona_pantalla=1;
-					//no releer todos archivos
-					menu_speech_set_tecla_pulsada();
-				}
+                if (tecla==13 && mouse_left) {
+                    //El clic fuera del campo cambia de zona sin confirmar el nombre del archivo.
+                    if (menu_filesel_change_zone_if_clicked(ventana,&filesel_zona_pantalla,&tecla) &&
+                        filesel_zona_pantalla==1) {
+                        menu_filesel_set_cursor_at_mouse(ventana);
+                    }
+                    tecla=0;
+                    menu_espera_no_tecla_con_repeticion();
+                }
 
-				//ESC
+                if (tecla==15) {
+                    //printf ("TAB. siguiente seccion\n");
+                    menu_reset_counters_tecla_repeticion();
+                    filesel_zona_pantalla=1;
+                    //no releer todos archivos
+                    menu_speech_set_tecla_pulsada();
+                }
+
+                //ESC
                 if (tecla==2) {
-                	menu_filesel_exist_ESC();
+                    //meter en menu_filesel_last_directory_seen nombre directorio
+                    zvfs_getcwd(menu_filesel_last_directory_seen,PATH_MAX);
+
+                    menu_filesel_add_recent_dir(si_directorio);
+                    //printf("Salir con ESC\n");
+                    menu_filesel_exist_ESC();
 
                     menu_filesel_preexit(ventana);
                     return 0;
-				}
+                }
 
-				if (tecla==13) {
+                if (tecla==13) {
 
-					//Si es Windows y se escribe unidad: (ejemplo: "D:") hacer chdir
-					int unidadwindows=0;
+                    //Si es Windows y se escribe unidad: (ejemplo: "D:") hacer chdir
+                    int unidadwindows=0;
 #ifdef MINGW
 
                     if (strlen(filesel_nombre_archivo_seleccionado)==3 &&
                     util_path_is_windows_with_drive(filesel_nombre_archivo_seleccionado)
                     ) {
 
-					//if (filesel_nombre_archivo_seleccionado[0] &&
-					//	filesel_nombre_archivo_seleccionado[1]==':' &&
-					//	filesel_nombre_archivo_seleccionado[2]==0 )
-					//	{
-						debug_printf (VERBOSE_INFO,"%s is a Windows drive",filesel_nombre_archivo_seleccionado);
-						unidadwindows=1;
-					}
+                    //if (filesel_nombre_archivo_seleccionado[0] &&
+                    //	filesel_nombre_archivo_seleccionado[1]==':' &&
+                    //	filesel_nombre_archivo_seleccionado[2]==0 )
+                    //	{
+                        debug_printf (VERBOSE_INFO,"%s is a Windows drive",filesel_nombre_archivo_seleccionado);
+                        unidadwindows=1;
+                    }
 #endif
 
 
-					//si es directorio, cambiamos
+                    //si es directorio, cambiamos
                     /*
-					struct stat buf_stat;
-					int stat_valor;
-					stat_valor=stat(filesel_nombre_archivo_seleccionado, &buf_stat);
-					if (
-						(stat_valor==0 && S_ISDIR(buf_stat.st_mode) ) ||
-						(unidadwindows)
-						) {
+                    struct stat buf_stat;
+                    int stat_valor;
+                    stat_valor=stat(filesel_nombre_archivo_seleccionado, &buf_stat);
+                    if (
+                        (stat_valor==0 && S_ISDIR(buf_stat.st_mode) ) ||
+                        (unidadwindows)
+                        ) {
                     */
                     //printf("tipo archivo: %s: %d\n",filesel_nombre_archivo_seleccionado,get_file_type(filesel_nombre_archivo_seleccionado));
                     //TODO: esto no funciona para raiz 0:/ pero si para 0:/DOCS por ejemplo
                     if (get_file_type(filesel_nombre_archivo_seleccionado)==2 || unidadwindows) {
 
 
-						debug_printf (VERBOSE_DEBUG,"%s Is a directory or windows drive. Change",filesel_nombre_archivo_seleccionado);
+                        debug_printf (VERBOSE_DEBUG,"%s Is a directory or windows drive. Change",filesel_nombre_archivo_seleccionado);
                                                 zvfs_chdir(filesel_nombre_archivo_seleccionado);
-						menu_filesel_free_mem();
+                        menu_filesel_free_mem();
                                                 releer_directorio=1;
-						filesel_zona_pantalla=1;
+                        filesel_zona_pantalla=1;
 
-					        //Decir directorio activo
-						//Esperar a liberar tecla si no la tecla invalida el speech
-						menu_espera_no_tecla();
-					        menu_textspeech_say_current_directory();
-
-
-					}
+                            //Decir directorio activo
+                        //Esperar a liberar tecla si no la tecla invalida el speech
+                        menu_espera_no_tecla();
+                            menu_textspeech_say_current_directory();
 
 
-					//sino, devolvemos nombre con path, siempre que extension sea conocida
-					else {
+                    }
+
+
+                    //sino, devolvemos nombre con path, siempre que extension sea conocida
+                    else {
 
                         menu_espera_no_tecla();
 
-						if (menu_avisa_si_extension_no_habitual(filtros,filesel_nombre_archivo_seleccionado)) {
+                        if (menu_avisa_si_extension_no_habitual(filtros,filesel_nombre_archivo_seleccionado)) {
 
-                        //unimos directorio y nombre archivo. siempre que inicio != '/'
-						if (filesel_nombre_archivo_seleccionado[0]!='/') {
-                        	//getcwd(archivo,PATH_MAX);
-                            zvfs_getcwd(archivo,PATH_MAX);
-                            sprintf(&archivo[strlen(archivo)],"/%s",filesel_nombre_archivo_seleccionado);
-						}
+                            //unimos directorio y nombre archivo. siempre que inicio != '/'
+                            if (filesel_nombre_archivo_seleccionado[0]!='/') {
+                                //getcwd(archivo,PATH_MAX);
+                                zvfs_getcwd(archivo,PATH_MAX);
+                                sprintf(&archivo[strlen(archivo)],"/%s",filesel_nombre_archivo_seleccionado);
+                            }
 
-						else sprintf(archivo,"%s",filesel_nombre_archivo_seleccionado);
-
-
-                        zvfs_chdir(filesel_directorio_inicial);
-						menu_filesel_free_mem();
-
-						menu_filesel_preexit(ventana);
-						last_filesused_insert(archivo);
-						return 1;
-
-						}
-
-						else {
-							//Extension no conocida. No modificar variable archivo
-							//printf ("Unknown extension. Do not modify archivo. Contents: %s\n",archivo);
-							//restauramos modo normal de texto de menu
-     						menu_filesel_preexit(ventana);
-							return 0;
-						}
+                            else sprintf(archivo,"%s",filesel_nombre_archivo_seleccionado);
 
 
+                            zvfs_chdir(filesel_directorio_inicial);
+                            menu_filesel_free_mem();
+
+                            menu_filesel_preexit(ventana);
+                            last_filesused_insert(archivo);
+                            return 1;
+
+                        }
+
+                        /*
+                        No salir si el usuario no quiere usar ese archivo
+                        else {
+                            //Extension no conocida. No modificar variable archivo
+                            //printf ("Unknown extension. Do not modify archivo. Contents: %s\n",archivo);
+                            //restauramos modo normal de texto de menu
+                             menu_filesel_preexit(ventana);
+                            return 0;
+                        }
+                        */
 
 
-						//Volver con OK
+
+                        //Volver con OK
                         //return 1;
 
-					}
-				}
+                    }
+                }
 
-				}
+                }
 
-				break;
+                break;
 
-			case 1:
-				//zona selector de archivos
+            case 1:
+                //zona selector de archivos
 
-				debug_printf (VERBOSE_DEBUG,"Read directory. menu_speech_tecla_pulsada=%d",menu_speech_tecla_pulsada);
-				zxvision_set_visible_cursor(ventana);
-				zxvision_menu_print_dir(filesel_archivo_seleccionado,ventana);
+                debug_printf (VERBOSE_DEBUG,"Read directory. menu_speech_tecla_pulsada=%d",menu_speech_tecla_pulsada);
+                zxvision_set_visible_cursor(ventana);
+                zxvision_menu_print_dir(filesel_archivo_seleccionado,ventana);
 
                 //Queremos que actualice la leyenda sobretodo en el caso de fileutils, para mostrar/ocultar
                 //opciones segun si seleccionado archivo o directorio
                 zxvision_menu_filesel_print_legend(ventana);
-				zxvision_draw_window_contents(ventana);
+                zxvision_draw_window_contents(ventana);
 
-				//Para no releer todas las entradas
-				menu_speech_set_tecla_pulsada();
+                //Para no releer todas las entradas
+                menu_speech_set_tecla_pulsada();
 
 
-				tecla=zxvision_common_getkey_refresh();
-				//printf ("Despues lee tecla\n");
+                tecla=zxvision_common_getkey_refresh();
+                //printf ("Despues lee tecla\n");
 
                 //Teclas para teclados simples
                 if (zxvision_setting_use_speccy_keys.v && tecla=='5') tecla=8;
@@ -6311,32 +6530,32 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
                 else if (zxvision_setting_use_speccy_keys.v && tecla=='8') tecla=9;
 
 
-				//Si se ha pulsado boton de raton
+                //Si se ha pulsado boton de raton
                                 if (mouse_left) {
-					//printf ("Pulsado boton raton izquierdo\n");
+                    //printf ("Pulsado boton raton izquierdo\n");
 
-					 //Si en linea de "File"
-					menu_filesel_change_zone_if_clicked(ventana,&filesel_zona_pantalla,&tecla);
+                     //Si en linea de "File"
+                    menu_filesel_change_zone_if_clicked(ventana,&filesel_zona_pantalla,&tecla);
                                         /*if (menu_mouse_y==2 && menu_mouse_x<ventana->visible_width-1) {
-						printf ("Pulsado zona File\n");
+                        printf ("Pulsado zona File\n");
                                                                 menu_reset_counters_tecla_repeticion();
                                                                 filesel_zona_pantalla=0;
                                                                 tecla=0;
                                         }*/
 
-					if (si_menu_mouse_en_ventana() && zxvision_si_mouse_zona_archivos(ventana) ) {
-						//Ubicamos cursor donde indica raton
-						if (menu_filesel_set_cursor_at_mouse(ventana)) {
-							//Como pulsar enter
-							tecla=13;
-						}
-					}
-				}
+                    if (si_menu_mouse_en_ventana() && zxvision_si_mouse_zona_archivos(ventana) ) {
+                        //Ubicamos cursor donde indica raton
+                        if (menu_filesel_set_cursor_at_mouse(ventana)) {
+                            //Como pulsar enter
+                            tecla=13;
+                        }
+                    }
+                }
 
 
-				//Si se ha movido raton. Asumimos que ha vuelto de leer tecla, tecla=0 y no se ha pulsado mouse
-				if (!tecla && !mouse_left) {
-				 //if (mouse_movido) {
+                //Si se ha movido raton. Asumimos que ha vuelto de leer tecla, tecla=0 y no se ha pulsado mouse
+                if (!tecla && !mouse_left) {
+                 //if (mouse_movido) {
                     //printf ("mouse x: %d y: %d menu mouse x: %d y: %d\n",mouse_x,mouse_y,menu_mouse_x,menu_mouse_y);
                     //printf ("ventana x %d y %d ancho %d alto %d\n",ventana_x,ventana_y,ventana_ancho,ventana_alto);
                     if (si_menu_mouse_en_ventana() ) {
@@ -6344,7 +6563,7 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
                         //Ver en que zona esta
 
                         if (zxvision_si_mouse_zona_archivos(ventana)) {
-							menu_filesel_set_cursor_at_mouse(ventana);
+                            menu_filesel_set_cursor_at_mouse(ventana);
 
                         }
 
@@ -6362,22 +6581,22 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
 
 
 
-				switch (tecla) {
-					//abajo
-					case 10:
-						zxvision_menu_filesel_cursor_abajo(ventana);
-						//Para no releer todas las entradas
-						menu_speech_set_tecla_pulsada();
+                switch (tecla) {
+                    //abajo
+                    case 10:
+                        zxvision_menu_filesel_cursor_abajo(ventana);
+                        //Para no releer todas las entradas
+                        menu_speech_set_tecla_pulsada();
                         zxvision_sound_event_cursor_movement();
-					break;
+                    break;
 
-					//arriba
-					case 11:
-						zxvision_menu_filesel_cursor_arriba(ventana);
-						//Para no releer todas las entradas
-						menu_speech_set_tecla_pulsada();
+                    //arriba
+                    case 11:
+                        zxvision_menu_filesel_cursor_arriba(ventana);
+                        //Para no releer todas las entradas
+                        menu_speech_set_tecla_pulsada();
                         zxvision_sound_event_cursor_movement();
-					break;
+                    break;
 
                     //izquierda. igual que "cd .."
                     case 8:
@@ -6393,58 +6612,59 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
 
                     break;
 
-					//PgDn
-					case 25:
-						for (aux_pgdnup=0;aux_pgdnup<zxvision_get_filesel_alto_dir(ventana);aux_pgdnup++)
-							zxvision_menu_filesel_cursor_abajo(ventana);
-						//releer todas entradas
-						menu_speech_reset_tecla_pulsada();
+                    //PgDn
+                    case 25:
+                        for (aux_pgdnup=0;aux_pgdnup<zxvision_get_filesel_alto_dir(ventana);aux_pgdnup++)
+                            zxvision_menu_filesel_cursor_abajo(ventana);
+                        //releer todas entradas
+                        menu_speech_reset_tecla_pulsada();
                         //printf("menu_speech_reset_tecla_pulsada filesel linea 5959\n");
-						//y decir selected item
-						menu_active_item_primera_vez=1;
+                        //y decir selected item
+                        menu_active_item_primera_vez=1;
                         zxvision_sound_event_cursor_movement();
                     break;
 
-					//PgUp
-					case 24:
-						for (aux_pgdnup=0;aux_pgdnup<zxvision_get_filesel_alto_dir(ventana);aux_pgdnup++)
-							zxvision_menu_filesel_cursor_arriba(ventana);
-						//releer todas entradas
-						menu_speech_reset_tecla_pulsada();
+                    //PgUp
+                    case 24:
+                        for (aux_pgdnup=0;aux_pgdnup<zxvision_get_filesel_alto_dir(ventana);aux_pgdnup++)
+                            zxvision_menu_filesel_cursor_arriba(ventana);
+                        //releer todas entradas
+                        menu_speech_reset_tecla_pulsada();
                         //printf("menu_speech_reset_tecla_pulsada filesel linea 5971\n");
-						//y decir selected item
-						menu_active_item_primera_vez=1;
+                        //y decir selected item
+                        menu_active_item_primera_vez=1;
                         zxvision_sound_event_cursor_movement();
                     break;
 
 
-					case 15:
-					//tabulador
-						menu_reset_counters_tecla_repeticion();
-						if (menu_filesel_show_utils.v==0) filesel_zona_pantalla=2;
-						else filesel_zona_pantalla=0; //Si hay utils, cursor se va arriba
+                    case 15:
+                    //tabulador
+                        menu_reset_counters_tecla_repeticion();
+                        if (menu_filesel_show_utils.v==0) filesel_zona_pantalla=2;
+                        else filesel_zona_pantalla=0; //Si hay utils, cursor se va arriba
                         zxvision_sound_event_cursor_movement();
-					break;
+                    break;
 
-					//ESC
-					case 2:
-						//meter en menu_filesel_last_directory_seen nombre directorio
-						//getcwd(archivo,PATH_MAX);
-						zvfs_getcwd(menu_filesel_last_directory_seen,PATH_MAX);
-						//printf ("salimos con ESC. nombre directorio: %s\n",archivo);
+                    //ESC
+                    case 2:
+                        //meter en menu_filesel_last_directory_seen nombre directorio
+                        zvfs_getcwd(menu_filesel_last_directory_seen,PATH_MAX);
+
+                        menu_filesel_add_recent_dir(si_directorio);
+                        //printf("Salir con ESC\n");
                         menu_filesel_exist_ESC();
 
                         //Guardamos geometria al pulsar Escape
                         menu_filesel_save_params_window(ventana);
 
-						menu_filesel_preexit(ventana);
+                        menu_filesel_preexit(ventana);
                         return 0;
 
-					break;
+                    break;
 
-					//Expandir archivos
-					case 32:
-						menu_first_aid("filesel_enter_key");
+                    //Expandir archivos
+                    case 32:
+                        menu_first_aid("filesel_enter_key");
 
                         item_seleccionado=menu_get_filesel_item(filesel_archivo_seleccionado+filesel_linea_seleccionada);
                         menu_reset_counters_tecla_repeticion();
@@ -6460,15 +6680,15 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
 
                         }
 
-						if (get_file_type(item_seleccionado->d_name)==2) {
-							debug_printf(VERBOSE_INFO,"Can't expand directories");
-						}
+                        if (get_file_type(item_seleccionado->d_name)==2) {
+                            debug_printf(VERBOSE_INFO,"Can't expand directories");
+                        }
 
-						else {
+                        else {
                             debug_printf(VERBOSE_DEBUG,"Expanding file %s",item_seleccionado->d_name);
                             char tmpdir[PATH_MAX];
 
-                            if (menu_filesel_expand(item_seleccionado->d_name,tmpdir) ) {
+                            if (menu_filesel_expand(item_seleccionado->d_name,tmpdir,NULL) ) {
                                 //TODO: Si lanzo este warning se descuadra el dibujado de ventana
                                 //menu_warn_message("Don't know how to expand that file");
                                 debug_printf(VERBOSE_INFO,"Don't know how to expand that file");
@@ -6478,132 +6698,148 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
                                 menu_filesel_change_to_tmp(tmpdir);
                                 releer_directorio=1;
                             }
-						}
+                        }
 
 
-					break;
+                    break;
 
-					case 13:
+                    case 13:
 
-						menu_first_aid("filesel_enter_key");
+                        menu_first_aid("filesel_enter_key");
 
-						//si seleccion es directorio
-						item_seleccionado=menu_get_filesel_item(filesel_archivo_seleccionado+filesel_linea_seleccionada);
-						menu_reset_counters_tecla_repeticion();
+                        //si seleccion es directorio
+                        item_seleccionado=menu_get_filesel_item(filesel_archivo_seleccionado+filesel_linea_seleccionada);
+                        menu_reset_counters_tecla_repeticion();
 
-						//printf ("despues de get filesel item. item_seleccionado=%p\n",item_seleccionado);
+                        //printf ("despues de get filesel item. item_seleccionado=%p\n",item_seleccionado);
 
-						if (item_seleccionado==NULL) {
-							//Esto pasa en las carpetas vacias, como /home en Mac OS
+                        if (item_seleccionado==NULL) {
+                            //Esto pasa en las carpetas vacias, como /home en Mac OS
                                                                         menu_filesel_exist_ESC();
-																		menu_filesel_preexit(ventana);
+                                                                        menu_filesel_preexit(ventana);
                                                                         return 0;
 
 
-						}
+                        }
 
-						if (get_file_type(item_seleccionado->d_name)==2) {
-							debug_printf (VERBOSE_DEBUG,"Is a directory. Change");
+                        if (get_file_type(item_seleccionado->d_name)==2) {
+                            debug_printf (VERBOSE_DEBUG,"Is a directory. Change");
                             menu_filesel_chdir(item_seleccionado->d_name);
 
 
-							menu_filesel_free_mem();
-							releer_directorio=1;
+                            menu_filesel_free_mem();
+                            releer_directorio=1;
 
-						        //Decir directorio activo
-							//Esperar a liberar tecla si no la tecla invalida el speech
-							menu_espera_no_tecla();
-						        menu_textspeech_say_current_directory();
+                                //Decir directorio activo
+                            //Esperar a liberar tecla si no la tecla invalida el speech
+                            menu_espera_no_tecla();
+                                menu_textspeech_say_current_directory();
 
-						}
+                        }
 
-						else {
+                        else {
 
-							//Si seleccion es archivo comprimido
-							if (menu_util_file_is_compressed(item_seleccionado->d_name) ) {
-								debug_printf (VERBOSE_DEBUG,"Is a compressed file");
+                            //Si seleccion es archivo comprimido
+                            if (menu_util_file_is_compressed(item_seleccionado->d_name) ) {
+                                debug_printf (VERBOSE_DEBUG,"Is a compressed file");
 
-								char tmpdir[PATH_MAX];
+                                char tmpdir[PATH_MAX];
 
-								if (menu_filesel_uncompress(item_seleccionado->d_name,tmpdir) ) {
-									menu_filesel_exist_ESC();
-									menu_filesel_preexit(ventana);
-									return 0;
-								}
+                                if (menu_filesel_uncompress(item_seleccionado->d_name,tmpdir) ) {
+                                    menu_filesel_exist_ESC();
+                                    menu_filesel_preexit(ventana);
+                                    return 0;
+                                }
 
-								else {
-									menu_filesel_change_to_tmp(tmpdir);
-                        	                                        releer_directorio=1;
-								}
+                                else {
+                                    menu_filesel_change_to_tmp(tmpdir);
+                                                                    releer_directorio=1;
+                                }
 
-							}
+                            }
 
-							else {
-								//Enter. No es directorio ni archivo comprimido
-								//Si estan las file utils, enter no hace nada
-								if (menu_filesel_show_utils.v==0) {
+                            else {
+                                //Enter. No es directorio ni archivo comprimido
+                                //Si estan las file utils, enter no hace nada
+                                if (menu_filesel_show_utils.v==0) {
 
 
-        	                        menu_espera_no_tecla();
+                                    menu_espera_no_tecla();
 
-									if (menu_avisa_si_extension_no_habitual(filtros,filesel_nombre_archivo_seleccionado)) {
+                                    if (menu_avisa_si_extension_no_habitual(filtros,filesel_nombre_archivo_seleccionado)) {
 
-									//unimos directorio y nombre archivo
-									//getcwd(archivo,PATH_MAX);
-                                    zvfs_getcwd(archivo,PATH_MAX);
-									sprintf(&archivo[strlen(archivo)],"/%s",item_seleccionado->d_name);
+                                        //unimos directorio y nombre archivo
+                                        //getcwd(archivo,PATH_MAX);
+                                        zvfs_getcwd(archivo,PATH_MAX);
+                                        sprintf(&archivo[strlen(archivo)],"/%s",item_seleccionado->d_name);
 
-									zvfs_chdir(filesel_directorio_inicial);
-									menu_filesel_free_mem();
+                                        zvfs_chdir(filesel_directorio_inicial);
+                                        menu_filesel_free_mem();
 
-									//return menu_avisa_si_extension_no_habitual(filtros,archivo);
-									//Guardar anteriores tamaños ventana
-									menu_filesel_save_params_window(ventana);
+                                        //Guardar anteriores tamaños ventana
+                                        menu_filesel_save_params_window(ventana);
 
-									menu_filesel_preexit(ventana);
-									last_filesused_insert(archivo);
-									return 1;
+                                        menu_filesel_preexit(ventana);
+                                        last_filesused_insert(archivo);
+                                        return 1;
 
-									}
-
+                                    }
+                                    /*
+                                    No salir si el usuario no quiere usar ese archivo
                                     else {
                                                         //Extension no conocida. No modificar variable archivo
                                                         //printf ("Unknown extension. Do not modify archivo. Contents: %s\n",archivo);
 
-														menu_filesel_preexit(ventana);
+                                                        menu_filesel_preexit(ventana);
                                                         return 0;
                                     }
+                                    */
+
+                                    //Volver con OK
+                                    //return 1;
+                                }
+                            }
+
+                        }
+                    break;
+                }
+
+                //entre a y z y numeros
+                if ( (tecla>='a' && tecla<='z') || (tecla>='0' && tecla<='9') ) {
+                    menu_first_aid("filesel_uppercase_keys");
+                    zxvision_menu_filesel_localiza_letra(ventana,tecla);
+                }
 
 
-									//Volver con OK
-									//return 1;
-								}
-							}
+                if (tecla=='D') {
 
-						}
-					break;
-				}
+                    //conservar estado de salir todos menus, por si se sale de drivers con ESC, que no se habilite
+                    int antes_salir_todos_menus=salir_todos_menus;
 
-				//entre a y z y numeros
-				if ( (tecla>='a' && tecla<='z') || (tecla>='0' && tecla<='9') ) {
-					menu_first_aid("filesel_uppercase_keys");
-					zxvision_menu_filesel_localiza_letra(ventana,tecla);
-				}
+                    releer_directorio=menu_filesel_cambiar_unidad_o_volumen();
 
+                    salir_todos_menus=antes_salir_todos_menus;
 
-				if (tecla=='D') {
-					releer_directorio=menu_filesel_cambiar_unidad_o_volumen();
+                }
 
-				}
+                if (tecla=='R') {
 
-				if (tecla=='R') {
-
-					//Archivos y carpetas recientes
+                    //Archivos y carpetas recientes
                     int tipo;
-					char *archivo_reciente=menu_filesel_recent_files_folders(&tipo);
+
+                    //conservar estado de salir todos menus, por si se sale de recent con ESC, que no se habilite
+                    int antes_salir_todos_menus=salir_todos_menus;
+
+                    //Y no queremos que se herede salir_todos_menus al entrar aqui, por si venimos por ejemplo de tape input donde
+                    //se habilita para cerrar todos los menus despues de elegir archivo
+                    salir_todos_menus=0;
+
+                    char *archivo_reciente=menu_filesel_recent_files_folders(&tipo);
+
+                    salir_todos_menus=antes_salir_todos_menus;
 
 
-					if (archivo_reciente!=NULL) {
+                    if (archivo_reciente!=NULL) {
                         if (tipo==0) {
                             //printf ("Loading file %s\n",archivo_reciente);
                             strcpy(archivo,archivo_reciente);
@@ -6611,7 +6847,6 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
                             zvfs_chdir(filesel_directorio_inicial);
                             menu_filesel_free_mem();
 
-                            //return menu_avisa_si_extension_no_habitual(filtros,archivo);
 
                             menu_filesel_preexit(ventana);
                             return 1;
@@ -6627,57 +6862,57 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
                             releer_directorio=1;
 
 
-					    }
+                        }
                     }
-				}
+                }
 
-				//Si esta filesel, opciones en mayusculas
-				if (menu_filesel_show_utils.v) {
+                //Si esta filesel, opciones en mayusculas
+                if (menu_filesel_show_utils.v) {
 
-					if ( (tecla>='A' && tecla<='Z') ) {
-						menu_espera_no_tecla();
-						//TODO: Si no se pone espera_no_tecla,
-						//al aparecer menu de, por ejemplo truncate, el texto se fusiona con el fondo de manera casi transparente,
-						//como si no borrase el putpixel cache
-						//esto también sucede en otras partes del código del menú pero no se por que es
+                    if ( (tecla>='A' && tecla<='Z') ) {
+                        menu_espera_no_tecla();
+                        //TODO: Si no se pone espera_no_tecla,
+                        //al aparecer menu de, por ejemplo truncate, el texto se fusiona con el fondo de manera casi transparente,
+                        //como si no borrase el putpixel cache
+                        //esto también sucede en otras partes del código del menú pero no se por que es
 
-						menu_reset_counters_tecla_repeticion();
+                        menu_reset_counters_tecla_repeticion();
 
-						//Comun para acciones que usan archivo seleccionado
-						if (tecla=='V' || tecla=='T' || tecla=='E' || tecla=='M' || tecla=='N' || tecla=='C'
-                            || tecla=='P' || tecla=='F' || tecla=='O' || tecla=='I' || tecla=='U' || tecla=='S') {
+                        //Comun para acciones que usan archivo seleccionado
+                        if (tecla=='V' || tecla=='T' || tecla=='E' || tecla=='M' || tecla=='N' || tecla=='C'
+                            || tecla=='P' || tecla=='F' || tecla=='O' || tecla=='I' || tecla=='U' || tecla=='S' || tecla=='L') {
 
 
-						    //releer con speech
-						    menu_speech_reset_tecla_pulsada();
+                            //releer con speech
+                            menu_speech_reset_tecla_pulsada();
                             //printf("menu_speech_reset_tecla_pulsada filesel linea 6209\n");
 
-							//Obtener nombre del archivo al que se apunta
-							char file_utils_file_selected[PATH_MAX]="";
-							item_seleccionado=menu_get_filesel_item_cursor();
-							if (item_seleccionado!=NULL) {
+                            //Obtener nombre del archivo al que se apunta
+                            char file_utils_file_selected[PATH_MAX]="";
+                            item_seleccionado=menu_get_filesel_item_cursor();
+                            if (item_seleccionado!=NULL) {
 
                                 int tipo_archivo_seleccionado=get_file_type(item_seleccionado->d_name);
 
-								//Esto pasa en las carpetas vacias, como /home en Mac OS
-									//unimos directorio y nombre archivo
-									//getcwd(file_utils_file_selected,PATH_MAX);
+                                //Esto pasa en las carpetas vacias, como /home en Mac OS
+                                    //unimos directorio y nombre archivo
+                                    //getcwd(file_utils_file_selected,PATH_MAX);
                                     zvfs_getcwd(file_utils_file_selected,PATH_MAX);
 
 
-									sprintf(&file_utils_file_selected[strlen(file_utils_file_selected)],"/%s",item_seleccionado->d_name);
-								//Info para cualquier tipo de archivo
-								if (tecla=='I') file_utils_info_file(file_utils_file_selected);
+                                    sprintf(&file_utils_file_selected[strlen(file_utils_file_selected)],"/%s",item_seleccionado->d_name);
+                                //Info para cualquier tipo de archivo
+                                if (tecla=='I') file_utils_info_file(file_utils_file_selected);
 
 
                                 //Rename para cualquier tipo de archivo
-                                if (tecla=='N') {
+                                if (tecla=='N' && menu_filesel_show_only_read_only_utils.v==0) {
                                     file_utils_move_rename_copy_file(file_utils_file_selected,1,ventana);
                                     releer_directorio=1;
                                 }
 
                                 //Copy para cualquier tipo de origen. Si es directorio, hara copy recursive
-                                if (tecla=='C') {
+                                if (tecla=='C' && menu_filesel_show_only_read_only_utils.v==0) {
                                     file_utils_move_rename_copy_file(file_utils_file_selected,2,ventana);
                                     //Restaurar variables globales que se alteran al llamar al otro filesel
                                     //TODO: hacer que estas variables no sean globales sino locales de esta funcion menu_filesel
@@ -6688,7 +6923,7 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
                                 }
 
                                 //Move para cualquier tipo de origen. Aunque no permitimos mover carpetas entre diferentes filesystems
-                                if (tecla=='M') {
+                                if (tecla=='M' && menu_filesel_show_only_read_only_utils.v==0) {
                                     file_utils_move_rename_copy_file(file_utils_file_selected,0,ventana);
                                     //Restaurar variables globales que se alteran al llamar al otro filesel
                                     //TODO: hacer que estas variables no sean globales sino locales de esta funcion menu_filesel
@@ -6701,7 +6936,7 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
 
 
                                 //Delete para cualquier tipo de archivo
-                                if (tecla=='E') {
+                                if (tecla=='E' && menu_filesel_show_only_read_only_utils.v==0) {
                                     if (menu_confirm_yesno_texto("Delete","Sure?")) {
                                         file_utils_delete(file_utils_file_selected);
 
@@ -6737,114 +6972,131 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
                                 }
 
                                 //Sync mmc image
-                                if (tecla=='S' && menu_mmc_image_montada) {
+                                if (tecla=='S' && menu_mmc_image_montada && menu_filesel_show_only_read_only_utils.v==0) {
                                     if (menu_confirm_yesno_texto("Sync changes","Sure?")) menu_filesel_mmc_sync();
                                 }
 
-								//Si no es directorio
-								if (tipo_archivo_seleccionado!=2) {
-									//unimos directorio y nombre archivo
-									//getcwd(file_utils_file_selected,PATH_MAX);
-									//sprintf(&file_utils_file_selected[strlen(file_utils_file_selected)],"/%s",item_seleccionado->d_name);
+                                //Si no es directorio
+                                if (tipo_archivo_seleccionado!=2) {
+                                    //unimos directorio y nombre archivo
+                                    //getcwd(file_utils_file_selected,PATH_MAX);
+                                    //sprintf(&file_utils_file_selected[strlen(file_utils_file_selected)],"/%s",item_seleccionado->d_name);
 
-									//Visor de archivos
-									if (tecla=='V') {
+                                    //Visor de archivos
+                                    if (tecla=='V') {
                                         menu_file_viewer_read_file("Text file view",file_utils_file_selected);
                                         menu_muestra_pending_error_message(); //Si se genera un error derivado del view
                                     }
 
-									//Truncate
-									if (tecla=='T') {
-										if (menu_confirm_yesno_texto("Truncate","Sure?")) util_truncate_file(file_utils_file_selected);
-									}
+                                    //Truncate
+                                    if (tecla=='T' && menu_filesel_show_only_read_only_utils.v==0) {
+                                        if (menu_confirm_yesno_texto("Truncate","Sure?")) util_truncate_file(file_utils_file_selected);
+                                    }
 
 
-									//Filemem
-									if (tecla=='F') {
-										file_utils_file_mem_load(file_utils_file_selected);
-									}
+                                    //Filemem
+                                    if (tecla=='F') {
+                                        file_utils_file_mem_load(file_utils_file_selected);
+                                    }
 
-									//Convert
-									if (tecla=='O') {
-										file_utils_file_convert(file_utils_file_selected);
-										releer_directorio=1;
-									}
+                                    //Link to ZX Desktop
+                                    if (tecla=='L') {
+                                        //Creamos enlace directo en escritorio
+                                        zxvision_create_configurable_icon_file_type(F_FUNCION_DESKTOP_GENERIC_SMARTLOAD,file_utils_file_selected);
+                                        menu_generic_message_splash("Create link","Ok created link on ZX Desktop");
+                                    }
+
+                                    //Convert
+                                    if (tecla=='O' && menu_filesel_show_only_read_only_utils.v==0) {
+                                        file_utils_file_convert(file_utils_file_selected);
+                                        releer_directorio=1;
+                                    }
 
 
 
-								}
-							}
+                                }
+                            }
 
 
-						}
+                        }
 
-						//Mkdir
-						if (tecla=='K') {
-							char string_carpeta[200];
-							string_carpeta[0]=0;
-							menu_ventana_scanf("Folder name",string_carpeta,200);
-							if (string_carpeta[0]) {
+                        //Mkdir
+                        if (tecla=='K' && menu_filesel_show_only_read_only_utils.v==0) {
+                            char string_carpeta[200];
+                            string_carpeta[0]=0;
+                            menu_ventana_scanf("Folder name",string_carpeta,200);
+                            if (string_carpeta[0]) {
                                 zvfs_mkdir(string_carpeta);
-								//menu_filesel_mkdir(string_carpeta);
-								releer_directorio=1;
-							}
-						}
+                                //menu_filesel_mkdir(string_carpeta);
+                                releer_directorio=1;
+                            }
+                        }
 
 
-						//Paste text
-						if (tecla=='P') {
-							file_utils_paste_clipboard();
+                        //Paste text
+                        if (tecla=='P' && menu_filesel_show_only_read_only_utils.v==0) {
+                            file_utils_paste_clipboard();
 
 
-							releer_directorio=1;
-						}
-
-
-
-						//Redibujar ventana
-						//releer_directorio=1;
-
-						zxvision_menu_filesel_print_filters(ventana,filesel_filtros);
-						zxvision_menu_filesel_print_legend(ventana);
-
-						zxvision_menu_filesel_print_text_contents(ventana);
-					}
-
-				}
-
-				//menu_espera_no_tecla();
-				menu_espera_no_tecla_con_repeticion();
+                            releer_directorio=1;
+                        }
 
 
 
+                        if (!releer_directorio) {
+                            //Redibujar ventana en el caso que no haya que releer directorio
+                            //porque si hay que releer directorio, puede pasar en casos como copiar archivos,
+                            //en que se rellama a filesel para la carpeta de destino, sobreescribiendo
+                            //la información del directorio inicial (pues esta rutina de menu_filesel no es reentrante)
+                            //Y por tanto accederiamos a memoria no disponible generando un posible segfault
 
-			break;
+                            zxvision_menu_filesel_print_filters(ventana,filesel_filtros);
+                            zxvision_menu_filesel_print_legend(ventana);
 
-			case 2:
-				//zona filtros
-				zxvision_reset_visible_cursor(ventana);
+                            zxvision_menu_filesel_print_text_contents(ventana);
+                        }
+                    }
+
+                }
+
+                //menu_espera_no_tecla();
+                menu_espera_no_tecla_con_repeticion();
+
+
+
+
+            break;
+
+            case 2:
+                //zona filtros
+                zxvision_reset_visible_cursor(ventana);
                                 zxvision_menu_print_dir(filesel_archivo_seleccionado,ventana);
 
                                 //para que haga lectura de los filtros
                                 menu_speech_reset_tecla_pulsada();
                                 //printf("menu_speech_reset_tecla_pulsada filesel linea 6386\n");
 
-				zxvision_menu_filesel_print_filters(ventana,filesel_filtros);
-				zxvision_draw_window_contents(ventana);
+                zxvision_menu_filesel_print_filters(ventana,filesel_filtros);
+                zxvision_draw_window_contents(ventana);
 
 
-				tecla=zxvision_common_getkey_refresh();
+                tecla=zxvision_common_getkey_refresh();
 
 
-				if (menu_filesel_change_zone_if_clicked(ventana,&filesel_zona_pantalla,&tecla)) {
-					zxvision_menu_filesel_print_filters(ventana,filesel_filtros);
+                if (menu_filesel_change_zone_if_clicked(ventana,&filesel_zona_pantalla,&tecla)) {
+                    zxvision_menu_filesel_print_filters(ventana,filesel_filtros);
                                          releer_directorio=1;
 
                                                 menu_espera_no_tecla();
-				}
+                }
 
                 //ESC
                 else if (tecla==2) {
+                    //meter en menu_filesel_last_directory_seen nombre directorio
+                    zvfs_getcwd(menu_filesel_last_directory_seen,PATH_MAX);
+
+                    menu_filesel_add_recent_dir(si_directorio);
+                    //printf("Salir con ESC\n");
 
                     menu_espera_no_tecla();
                     zvfs_chdir(filesel_directorio_inicial);
@@ -6854,103 +7106,122 @@ int menu_filesel_if_save(char *titulo,char *filtros[],char *archivo,int si_save)
                     return 0;
                 }
 
-				//cambiar de zona con tab
-				else if (tecla==15) {
-					menu_reset_counters_tecla_repeticion();
-					filesel_zona_pantalla=0;
-					zxvision_menu_filesel_print_filters(ventana,filesel_filtros);
-					//no releer todos archivos
-					menu_speech_set_tecla_pulsada();
-				}
+                //cambiar de zona con tab
+                else if (tecla==15) {
+                    menu_reset_counters_tecla_repeticion();
+                    filesel_zona_pantalla=0;
+                    zxvision_menu_filesel_print_filters(ventana,filesel_filtros);
+                    //no releer todos archivos
+                    menu_speech_set_tecla_pulsada();
+                }
 
 
-				else {
+                else {
 
-					//printf ("conmutar filtros\n");
-					if (tecla==13 || (tecla==0 && mouse_left)) {
+                    //printf ("conmutar filtros\n");
+                    if (tecla==13 || (tecla==0 && mouse_left)) {
 
-						//cambiar filtros
-						menu_filesel_select_filters();
+                        //conservar estado de salir todos menus, por si se sale de filters con ESC, que no se habilite
+                        int antes_salir_todos_menus=salir_todos_menus;
 
-					        zxvision_menu_filesel_print_filters(ventana,filesel_filtros);
-						releer_directorio=1;
+                        //cambiar filtros
+                        menu_filesel_select_filters();
+
+                        salir_todos_menus=antes_salir_todos_menus;
+
+                            zxvision_menu_filesel_print_filters(ventana,filesel_filtros);
+                        releer_directorio=1;
 
                         //cambiar zona pantalla
                         filesel_zona_pantalla=1;
 
-						menu_espera_no_tecla();
-					}
-				}
+                        menu_espera_no_tecla();
+                    }
+                }
 
-			break;
-			}
+            break;
+            }
 
-		} while (releer_directorio==0);
+        } while (releer_directorio==0);
 
         menu_filesel_overlay_show_current_dir_init_scroll(ventana);
-	} while (1);
+    } while (1);
 
 
-	//Aqui no se va a llegar nunca
+    //Aqui no se va a llegar nunca
 
 
 }
 
+//Retorna 1 si seleccionado archivo. Retorna 0 si sale con ESC
+//Si seleccionado archivo, lo guarda en variable *archivo
+//Si sale con ESC, devuelve en menu_filesel_last_directory_seen ultimo directorio
+//filtros tienen el formato:
+//Si primer caracter es ^, es nombre de archivo entero. ejemplo "^boot" mostrará archivos que se llamen "boot"
+//Si primer caracter es _, indica extension "tipo" QL, o sea, guion bajo separador para extension. ejemplo "_exe" mostrará archivos que sean *_exe, como "prueba_exe"
+//Si filtro es "nofiles" no muestra ningun archivo
+//Si filtro es "autosnap", mostrara archivos de nombre (variable snapshot_autosave_interval_quicksave_name)*.zsf",
+//por defecto snapshot_autosave_interval_quicksave_name tiene "autosnap", por tanto mostraria archivos como autosnap-0708206.zsf,etc
+//si filtro es "", significa todo (*)
+//En cualquier otro caso, indica extension tal cual. Ejemplo "scr" mostrará archivos *.scr, como "pantalla.scr"
+//De todas maneras consultar funcion menu_file_filter para ver todas las combinaciones
 int menu_filesel(char *titulo,char *filtros[],char *archivo)
 {
-    //dialogo comun no de grabar
-    return menu_filesel_if_save(titulo,filtros,archivo,0);
+    return menu_filesel_all_parameters(titulo,filtros,archivo,0,0);
 }
 
+//Retorna 1 si seleccionado archivo. Retorna 0 si sale con ESC
+//Si seleccionado archivo, lo guarda en variable *archivo
+//Si sale con ESC, devuelve en menu_filesel_last_directory_seen ultimo directorio
+//Decimos que es operacion de grabar y facilitamos al usuario poniendo el cursor en el campo de nombre de archivo
 int menu_filesel_save(char *titulo,char *filtros[],char *archivo)
 {
-    //dialogo comun no de grabar
-    return menu_filesel_if_save(titulo,filtros,archivo,1);
+    return menu_filesel_all_parameters(titulo,filtros,archivo,1,0);
 }
 
 //Inicializar vacio
 void last_filesused_clear(void)
 {
 
-	int i;
-	for (i=0;i<MAX_LAST_FILESUSED;i++) {
-		last_files_used_array[i][0]=0;
-	}
+    int i;
+    for (i=0;i<MAX_LAST_FILESUSED;i++) {
+        last_files_used_array[i][0]=0;
+    }
 }
 
 //Desplazar hacia abajo desde posicion superior indicada. La posicion indicada sera un duplicado de la siguiente posicion por tanto
 void lastfilesuser_scrolldown(int posicion_up,int posicion_down)
 {
-	int i;
-	for (i=posicion_down;i>=posicion_up+1;i--) {
-		strcpy(last_files_used_array[i],last_files_used_array[i-1]);
-	}
+    int i;
+    for (i=posicion_down;i>=posicion_up+1;i--) {
+        strcpy(last_files_used_array[i],last_files_used_array[i-1]);
+    }
 }
 
 //Insertar entrada en last smartload
 void last_filesused_insert(char *s)
 {
-	//Desplazar todos hacia abajo e insertar en posicion 0
-	//Desde abajo a arriba
+    //Desplazar todos hacia abajo e insertar en posicion 0
+    //Desde abajo a arriba
 
-	//int i;
-	/*for (i=MAX_LAST_FILESUSED-1;i>=1;i--) {
-		strcpy(last_files_used_array[i],last_files_used_array[i-1]);
-	}*/
+    //int i;
+    /*for (i=MAX_LAST_FILESUSED-1;i>=1;i--) {
+        strcpy(last_files_used_array[i],last_files_used_array[i-1]);
+    }*/
 
-	lastfilesuser_scrolldown(0,MAX_LAST_FILESUSED-1);
+    lastfilesuser_scrolldown(0,MAX_LAST_FILESUSED-1);
 
 
-	//Meter en posicion 0
-	strcpy(last_files_used_array[0],s);
+    //Meter en posicion 0
+    strcpy(last_files_used_array[0],s);
 
-	debug_printf (VERBOSE_INFO,"Inserting recent file %s at position 0",s);
+    debug_printf (VERBOSE_INFO,"Inserting recent file %s at position 0",s);
 
-	//printf ("Dump smartload:\n");
+    //printf ("Dump smartload:\n");
 
-	//for (i=0;i<MAX_LAST_FILESUSED;i++) {
-	//	printf ("Entry %d: [%s]\n",i,last_files_used_array[i]);
-	//}
+    //for (i=0;i<MAX_LAST_FILESUSED;i++) {
+    //	printf ("Entry %d: [%s]\n",i,last_files_used_array[i]);
+    //}
 }
 
 

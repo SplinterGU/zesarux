@@ -49,7 +49,7 @@ extern void debug_view_z88_basic_from_memory(char *results_buffer,int dir_inicio
 extern void debug_tiempo_inicial(void);
 extern void debug_tiempo_final(void);
 
-extern void debug_printf (int debuglevel,__const char *__restrict __format, ...);
+extern void debug_printf (int debuglevel, const char * format , ...);
 extern void debug_printf_source (int debuglevel, char *archivo, int linea, const char *funcion, const char * format , ...);
 #define VERBOSE_DEBUG_SOURCE VERBOSE_DEBUG, __FILE__, __LINE__, __FUNCTION__
 
@@ -153,21 +153,27 @@ extern int core_spectrum_executed_halt_in_this_scanline;
 #define VERBOSE_ONLY_DEBUG_CONSOLE_WINDOW 99
 
 //Clasificacion de mensajes por tipo. Uso de mascaras con valores altos. Valores a partir de 256 indica que hay mascara
-#define VERBOSE_CLASS_DSK   (1<<8)
-#define VERBOSE_CLASS_PD765 (1<<9)
-#define VERBOSE_CLASS_PCW   (1<<10)
-#define VERBOSE_CLASS_ZENG_ONLINE   (1<<11)
-#define VERBOSE_CLASS_ZENG_ONLINE_CLIENT   (1<<12)
-#define VERBOSE_CLASS_IF1 (1<<13)
-#define VERBOSE_CLASS_MDR (1<<14)
-#define VERBOSE_CLASS_ZXVISION_EVENTS (1<<15)
-#define VERBOSE_CLASS_DMA (1<<16)
+#define VERBOSE_CLASS_DSK                   (1<<8)
+#define VERBOSE_CLASS_PD765                 (1<<9)
+#define VERBOSE_CLASS_PCW                   (1<<10)
+#define VERBOSE_CLASS_ZENG_ONLINE           (1<<11)
+#define VERBOSE_CLASS_ZENG_ONLINE_CLIENT    (1<<12)
+#define VERBOSE_CLASS_IF1                   (1<<13)
+#define VERBOSE_CLASS_MDR                   (1<<14)
+#define VERBOSE_CLASS_ZXVISION_EVENTS       (1<<15)
+#define VERBOSE_CLASS_ZXVISION_TOPMENU      (1<<16)
+#define VERBOSE_CLASS_DMA                   (1<<17)
+#define VERBOSE_CLASS_MIDI_OUT              (1<<18)
+#define VERBOSE_CLASS_ESXDOS                (1<<19)
+#define VERBOSE_CLASS_ESXDOS_HANDLER        (1<<20)
 
 //Mensajes sin clase indicada. Bit 31 que seria de signo no lo toco. Uso bit 30 para el de anythingelse
 #define VERBOSE_CLASS_ANYTHINGELSE (1<<30)
 
 #define VERBOSE_MASK_CLASS_TYPE_EXCLUDE 0
 #define VERBOSE_MASK_CLASS_TYPE_INCLUDE 1
+
+#define DBG_PRINT_MIDI_OUT debug_printf(VERBOSE_CLASS_MIDI_OUT|
 
 //Listado de mascaras
 struct s_debug_masks_class {
@@ -438,6 +444,9 @@ extern int si_cpu_step_over_jpret(void);
 extern int debug_get_opcode_length(unsigned int direccion);
 
 extern void debug_cpu_step_over(void);
+extern void debug_cpu_run_until_ret(void);
+
+extern int debug_get_condicion_satisfy(z80_byte opcode,z80_byte byte2,char *buffer);
 
 extern int debug_return_brk_pc_dir_condition(menu_z80_moto_int direccion);
 extern int debug_return_brk_pc_dir_condition_enabled_or_not(menu_z80_moto_int direccion);
@@ -512,6 +521,11 @@ extern unsigned int anterior_debug_mmu_mwa;
 extern unsigned int anterior_debug_mmu_mrv;
 extern unsigned int anterior_debug_mmu_mwv;
 
+#define DEBUG_TOTAL_USER_VARIABLES 10
+extern int debug_user_variables[];
+
+extern void init_debug_user_variables(void);
+
 
 //4 MB maximo
 #define MEMORY_ZONE_DEBUG_MAX_SIZE 4194304
@@ -583,7 +597,9 @@ extern int remote_load_source_code(char *archivo);
 
 extern int debug_load_source_code_skip_columns;
 extern void debug_view_basic_variables(char *results_buffer,int maxima_longitud_texto);
-extern void debug_view_basic_gosub_stack(char *results_buffer,int maxima_longitud_texto);
+extern z80_int debug_view_basic_variables_get_start(void);
+extern int debug_view_basic_gosub_stack(char *results_buffer,int maxima_longitud_texto);
+extern z80_int debug_get_eline_value(void);
 
 
 

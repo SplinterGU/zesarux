@@ -2,7 +2,8 @@
 
 *** Video ***
 
--nombre ultimo juego cargado en titulo ventana
+-revisar parpadeos en linux en top buttons al moverse por los menus
+->parece que solo pasa con driver xwindow, con sdl no pasa
 
 
 
@@ -18,18 +19,16 @@ el refresco de pantalla y por tanto, se ralentiza todo y acaba yendo mas o menos
 
 -watermark sin realvideo no hace zoom. importante???
 
+-otros efectos de video aprovechando el metodo de zoom 0.75/0.50/0.25?
 
 
--Joystick SDL: Soporte joystick SDL2
-
--sdl2 peta con easter-egg en linux
-
--Drag drop con menú abierto en sdl2 no parece funcionar bien
+-Soportar azerty en Sdl, en Cocoa, fbdev
 
 
 -Contador fps cuando speed es 200% debería mostrar 100 fps
 
--Soportar azerty en Sdl, en Cocoa, fbdev
+-modo dither, sin realvideo, no lo hace en el border
+
 
 -OCR con colores y codigos ansi? para F4 y ZRCP
 
@@ -40,7 +39,6 @@ http://www.worldofspectrum.org/forums/discussion/44669/clashbasher-a-new-interfa
 -Mejorar frameskip con tiempo acumulativo
 
 
--Drag -  Drop en X11
 
 -sin multitask, con filtro color azul por ejemplo, en menu, la pantalla de spectrum no aplica filtro color
 
@@ -49,10 +47,7 @@ http://www.worldofspectrum.org/forums/discussion/44669/clashbasher-a-new-interfa
 
 -Splash en drivers stdout? -> no tiene sentido
 
--Pantalla completa con resolución menor de lo habitual en sdl peta con seg fault
 
--lightgun no se deberian leer cuando menu abierto:
-upara lightgun la mayoria de puertos son teclado o kempston, en que ya se controla menu abierto. en puerto DF seria la excepcion
 
 -Poder activar dos drivers de video a la vez, en especial un grafico (sdl, x11) y otro de texto (stdout o simpletext).
 
@@ -80,7 +75,6 @@ upara lightgun la mayoria de puertos son teclado o kempston, en que ya se contro
 
 -Salida de texto en simpletext y otros drivers texto: carácter 127 no es imprimible
 
--Imagen estereoscopica. Tanto anaglifo (azul + rojo) como imagen separada en dos ventanas para dos ojos
 
 -En video init debe establecer a 1 o 0 cualquier variable de parámetro de video, como tiene-colores
 
@@ -128,6 +122,10 @@ ahora sale por consola del sistema operativo, quiza se podria tener una ventana 
 
 -Doble buffer fbdev copia más ancho del que realmente ocupa. Considerar totalspectrumancho x bits pixel?
 
+
+-driver fbdev en pc , con "zesarux --noconfigfile --vo fbdev > /dev/null". al desactivar border, genera panic. tambien desactivando border
+-fbdev en linux, fbdev_cls peta al cambiar de maquina. Ejemplo de 48k a +3
+
 -hacer zoom a traves de xwindows con extensiones de... xvideo? opengl? libxv-dev?. Esto serviria para todo excepto para modo scanlines
 
 -proponer formato .scr animado... un archivo con frames de 6912 bytes
@@ -140,6 +138,17 @@ Ver http://www.atc.us.es/svn/zxuno/software/modo_radastan/videos_radastanianos/ 
 -Impresión caracteres en consola texto nunca debe mostrar el 127. Es Delete
 Quizá mostrar C en caso de 127
 ->Hecho de momento en chardetect y speech
+
+-Posible driver nuevo u opción en curses en que el menú siga siendo estándar pero el output de la máquina emulada sea el mismo que stdout
+
+
+-FX de pantalla emulada que en vez de aplicarlos al rainbow buffer, lo aplique a un buffer posterior que ya tiene el zoom aplicado
+Esto permitiria que efectos como scanlines se vieran mejor (al no aplicarse el zoom despues del efecto, sino que el zoom vendria antes). El flujo seria:
+*maquina emulada genera rainbow buffer -> se genera otro buffer de tamaño * zoom -> se aplica FX a ese nuevo buffer-> se renderiza en pantalla ese buffer, teniendo en cuenta
+que ya no habrán varias rutinas putpixel segun si zoom 1 o zoom >1, sino que siempre seria zoom a 1 (porque ya ha escalado en el buffer anterior)
+*efectos que leen posicion raton/zoom, ya no se dividira por zoom
+*hay algunos efectos que no quedaran tambien aplicandolos en el buffer con el zoom, cuales?
+
 
 *************
 
@@ -173,3 +182,27 @@ Ver funcion prueba_scrcurses_putchar_zx8081
 
 -x11: poder implementar X11_KeyRepeat de SDL1.2 para eliminar lectura de teclas repetidas
 de momento esto afecta a zeng online y se solventa con zoc_keys_tecla_repetida
+
+
+
+--sdl---
+
+-fadeout en sdl2 con modo de color 8 bit no se ve bien
+
+-sdl2 peta con easter-egg en linux
+
+-Drag drop con menú abierto en sdl2 no parece funcionar bien
+
+
+-Sdl2 refresco menús y quitar multitarea no refresca siempre (le sucede a David Carrión)
+*comprobado y a mi no me pasa. quiza es cuando se usa sdl2 sobre framebuffer? quiza falta algun comando mas de sdl en
+scrsdl_refresca_pantalla_solo_driver?
+Posibles cosas:
+
+**doble comando
+SDL_RenderPresent(renderer);
+SDL_RenderPresent(renderer);
+
+**meter un hint:
+SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
+antes de commonsdl_init

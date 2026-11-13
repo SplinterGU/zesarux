@@ -30,7 +30,8 @@ typedef unsigned short z80_int;
 //Tipos propios para motorola, para intentar evitar z80_
 typedef unsigned char moto_byte; // 8 bits
 typedef unsigned short moto_int; // 16 bits
-typedef unsigned int moto_long;
+typedef unsigned int moto_long; // 32 bits
+typedef unsigned long long moto_long_long; // 64 bits
 
 
 
@@ -40,6 +41,13 @@ struct s_moto_bit {
 
 
 typedef struct s_moto_bit moto_bit;
+
+extern int ql_total_frames;
+
+extern int ql_cpu_turbo;
+extern int ql_extension_cpu_turbo_enabled;
+extern void ql_basext_reset(void);
+extern void ql_basext_poll(void);
 
 //128kb de ROM + 1920 KB de RAM
 #define QL_MAXIMUM_MEM_LIMIT ((1024*2048)-1)
@@ -55,7 +63,7 @@ extern unsigned char (*ql_readbyte_no_ports_function)(unsigned int Address);
 extern unsigned char ql_readbyte_no_ports_vacio(unsigned int Address);
 
 
-//En principio no hay border. ponemos solo de ejemplo
+//QL no tiene border como tal. Pero ponemos algo para dejar margen y porque ademas es requisito de ZEsarUX que todas las máquinas tengan border
 #define QL_LEFT_BORDER_NO_ZOOM 8
 #define QL_TOP_BORDER_NO_ZOOM 8
 
@@ -67,7 +75,22 @@ extern unsigned char ql_readbyte_no_ports_vacio(unsigned int Address);
 //Resolucion maxima es 512*256. Para que sea pantalla cuadrada, haremos 512x512 poniendo pixeles doble de alto
 #define QL_DISPLAY_WIDTH 512
 #define QL_DISPLAY_HEIGHT 512
+//Para cumplir proporcion 4:3 -> (512/3)*4=682.66666
+#define QL_133_DISPLAY_WIDTH 682
+//Proporcion real 1.476
+#define QL_1476_DISPLAY_WIDTH 755
 
+
+#define QL_SIZE_TYPE_1476 0
+#define QL_SIZE_TYPE_133 1
+#define QL_SIZE_TYPE_1_1 2
+
+extern int ql_pantalla_proporcion_real;
+extern int ql_get_display_width_with_proportion(void);
+
+extern void scr_refresca_pantalla_y_border_ql(void);
+
+extern int ql_border_color;
 
 #define m68k_read_memory_8 GetMemB
 #define m68k_read_memory_16 GetMemW
@@ -99,6 +122,38 @@ extern z80_byte fetch_opcode_legacy_ql(void);
 extern void motorola_get_flags_string(char *texto);
 
 
+extern void ql_load_and_execute(char *nombre);
+extern void ql_handle_boot_file(char *filename);
+extern void ql_expand_mdv_and_boot(char *archivo);
+extern void ql_expand_win_and_boot(char *archivo);
 
+extern char ql_nombre_autorun[];
+
+extern int ql_use_visionql_color_palette;
+
+extern int ql_qimi_mouse_enabled;
+
+extern void ql_qimi_reset(void);
+
+extern void ql_qimi_handle_irq(int scanline);
+
+extern int ql_qimi_irq_enabled;
+
+extern unsigned char ql_qimi_movement_register_114620;
+extern unsigned char ql_qimi_buttons_register_114588;
+
+extern int ql_qimi_mouse_sensibilidad;
+
+#define QL_QIMI_MOUSE_MAX_SENSIBILITY 10
+
+extern void ql_load_extra_roms(void);
+
+extern int ql_extra_rom_c000_enabled;
+
+extern char ql_extra_rom_c000[];
+
+
+
+extern void ql_expand_img_and_boot(char *archivo);
 
 #endif

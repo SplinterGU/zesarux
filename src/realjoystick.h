@@ -27,6 +27,9 @@
 
 #include "compileoptions.h"
 
+//Para usar PATH_MAX
+#include "zesarux.h"
+
 
 #ifdef USE_LINUXREALJOYSTICK
         //Es un linux con soporte realjoystick
@@ -68,6 +71,7 @@ typedef unsigned char __u8;
 #define REALJOYSTICK_INPUT_EVENT_AXIS           0x08    /* joystick moved */
 #define REALJOYSTICK_INPUT_EVENT_INIT           0x40    /* initial state of device */
 
+#define REALJOYSTICK_INPUT_EVENT_DPAD           128
 
 extern int (*realjoystick_init)(void);
 extern void (*realjoystick_main)(void);
@@ -128,21 +132,18 @@ extern z80_bit realjoystick_disabled;
 #define REALJOYSTICK_EVENT_ENTER                10
 #define REALJOYSTICK_EVENT_MENU_TAB             11
 #define REALJOYSTICK_EVENT_QUICKLOAD            12
-#define REALJOYSTICK_EVENT_QUICKSAVE            13
-#define REALJOYSTICK_EVENT_OSDKEYBOARD          14
-#define REALJOYSTICK_EVENT_OSD_TEXT_KEYBOARD    15
-#define REALJOYSTICK_EVENT_NUMBERSELECT         16
-#define REALJOYSTICK_EVENT_NUMBERACTION         17
-#define REALJOYSTICK_EVENT_JOYSELECT            18
-#define REALJOYSTICK_EVENT_AUX1                 19
-#define REALJOYSTICK_EVENT_AUX2                 20
-#define REALJOYSTICK_EVENT_AUX3                 21
-#define REALJOYSTICK_EVENT_AUX4                 22
-#define REALJOYSTICK_EVENT_REWIND               23
-#define REALJOYSTICK_EVENT_FFORWARD             24
+#define REALJOYSTICK_EVENT_OSDKEYBOARD          13
+#define REALJOYSTICK_EVENT_OSD_TEXT_KEYBOARD    14
+#define REALJOYSTICK_EVENT_NUMBERSELECT         15
+#define REALJOYSTICK_EVENT_NUMBERACTION         16
+#define REALJOYSTICK_EVENT_JOYSELECT            17
+#define REALJOYSTICK_EVENT_AUX1                 18
+#define REALJOYSTICK_EVENT_AUX2                 19
+#define REALJOYSTICK_EVENT_AUX3                 20
+#define REALJOYSTICK_EVENT_AUX4                 21
 
 //este valor es el numero de ultimo REALJOYSTICK_EVENT_XX +1
-#define MAX_EVENTS_JOYSTICK 25
+#define MAX_EVENTS_JOYSTICK 22
 
 extern char *realjoystick_event_names[];
 
@@ -155,17 +156,48 @@ struct s_realjoystick_event_key_function {
 	//numero de boton
 	int button;
 
-	//tipo de boton: 0-boton normal, +1 axis positivo, -1 axis negativo
+	//tipo de boton: 0-boton normal, +1 axis positivo o dpad, -1 axis negativo
 	int button_type;
 
-        //caracter a enviar, usado en array de keys pero no en array de eventos
-        z80_byte caracter;
+    //caracter a enviar, usado en array de keys pero no en array de eventos
+    z80_byte caracter;
 
 };
 
 typedef struct s_realjoystick_event_key_function realjoystick_events_keys_function;
 
 extern realjoystick_events_keys_function realjoystick_events_array[];
+
+
+struct s_realjoystick_button_action {
+
+	//si esta asignada esa funcion o no
+	z80_bit asignado;
+
+	//numero de boton
+	int button;
+
+	//tipo de boton: 0-boton normal, +1 axis positivo o dpad, -1 axis negativo
+	int button_type;
+
+    //El indice a la accion en el array defined_direct_functions_array
+    int index_accion;
+
+    //Ultimo valor recibido de joystick correspondiente a ese boton, para poder evitar repeticiones
+    int ultimo_valor;
+
+    //Parametros de esa accion, como el nombre de la ventana en accion OpenWindow
+    char parametros[PATH_MAX];
+
+};
+
+typedef struct s_realjoystick_button_action realjoystick_button_action;
+
+
+#define MAX_ACTIONS_JOYSTICK 30
+
+extern realjoystick_button_action realjoystick_actions_array[];
+
 
 extern int realjoystick_redefine_event(int indice);
 extern int realjoystick_redefine_event_no_wait(int indice,int button,int type,int value);
@@ -183,6 +215,8 @@ extern void realjoystick_clear_keys_array(void);
 
 extern void realjoystick_clear_events_array(void);
 
+extern void realjoystick_clear_actions_array(void);
+
 extern void realjoystick_print_event_keys(void);
 
 extern void realjoystick_get_button_string(char *texto, int *button,int *button_type);
@@ -198,6 +232,10 @@ extern int realjoystick_set_button_event(char *text_button, char *text_event);
 extern int realjoystick_set_button_key(char *text_button,char *text_key);
 
 extern int realjoystick_set_event_key(char *text_event,char *text_key);
+
+extern void realjoystick_add_button_action(char *text_button,char *text_action,char *parameters);
+
+extern int realjoystick_find_if_already_defined_button_action(int button,int type);
 
 extern void realjoystick_common_set_event(int button,int type,int value,int value_axis);
 extern void realjoystick_common_set_hat(int boton,int direccion);
@@ -215,6 +253,7 @@ extern void realjoystick_start_driver(void);
 
 extern int realjoystick_total_buttons;
 extern int realjoystick_total_axes;
+extern int realjoystick_total_dpad;
 #define REALJOYSTICK_MAX_NAME 32
 
 extern char realjoystick_joy_name[];
